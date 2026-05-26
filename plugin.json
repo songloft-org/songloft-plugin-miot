@@ -1,7 +1,7 @@
 {
   "$schema": "https://raw.githubusercontent.com/mimusic-org/plugin-toolchain/main/schemas/plugin.schema.json",
   "name": "小米音箱",
-  "version": "2026.5.24",
+  "version": "2026.5.26",
   "description": "小爱同学播放歌曲",
   "author": "MiMusic Team",
   "homepage": "https://github.com/mimusic-org/mimusic",
