@@ -2830,6 +2830,8 @@ html.embed .tab-bar {
     padding-top: 0 !important;
 }
 html.embed .tab-item {
+    flex: 1 !important;
+    width: auto !important;
     flex-direction: row !important;
     gap: 8px !important;
     font-size: 14px !important;
