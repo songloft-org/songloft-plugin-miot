@@ -2805,6 +2805,7 @@
 
 /* ── embed 模式：嵌入 App Tab 时的布局 ── */
 html.embed .app-bar {
+    display: flex !important;
     top: 48px !important;
     height: 44px !important;
     box-shadow: none !important;
