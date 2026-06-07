@@ -3,7 +3,7 @@
  * 负责索引状态显示和刷新操作
  */
 
-import { apiGet, apiPost } from './common.js';
+const { apiGet, apiPost } = SongloftPlugin;
 import { showSnackbar } from './utils.js';
 
 /**

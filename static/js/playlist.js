@@ -3,7 +3,7 @@
  * 负责歌单加载、歌曲列表加载、歌单播放
  */
 
-import { apiGet, apiPost } from './common.js';
+const { apiGet, apiPost } = SongloftPlugin;
 import { showSnackbar, showLoading, hideLoading, showResult, getAccountId, getDeviceId, formatDuration } from './utils.js';
 import { loadDeviceStatus } from './playback.js';
 import { initPlaylistSearch, initSongSearch } from './search.js';

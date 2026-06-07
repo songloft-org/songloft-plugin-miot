@@ -3,7 +3,7 @@
  * 负责定时任务的 CRUD、开关控制、执行日志展示
  */
 
-import { apiGet, apiPost, apiDelete } from './common.js';
+const { apiGet, apiPost, apiDelete } = SongloftPlugin;
 import { showSnackbar } from './utils.js';
 import { getAllAccountDevices } from './device.js';
 

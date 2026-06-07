@@ -3,7 +3,7 @@
  * 负责设备列表加载、设备选择更新、设备状态管理
  */
 
-import { apiGet, apiPost } from './common.js';
+const { apiGet, apiPost } = SongloftPlugin;
 import { showSnackbar, showLoading, hideLoading, showResult, updateControlState, escapeHtml } from './utils.js';
 import { closePlayModePanel, closeVolumePanel, initializePlaybackControls, syncVolumeFromDevice } from './playback.js';
 

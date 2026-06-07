@@ -3,7 +3,7 @@
  * 负责账号列表加载、渲染、设备管理、账号增删
  */
 
-import { apiGet, apiPost, apiDelete } from './common.js';
+const { apiGet, apiPost, apiDelete } = SongloftPlugin;
 import { showSnackbar, escapeHtml } from './utils.js';
 import { handleLoginResult } from './auth.js';
 import { showDialog } from './modal.js';

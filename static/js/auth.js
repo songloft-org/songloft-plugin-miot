@@ -3,7 +3,7 @@
  * 负责处理登录结果、验证码、二次验证等流程
  */
 
-import { apiPost } from './common.js';
+const { apiPost } = SongloftPlugin;
 import { showSnackbar, escapeHtml } from './utils.js';
 import { loadAccounts } from './account.js';
 

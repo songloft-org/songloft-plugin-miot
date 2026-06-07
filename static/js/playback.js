@@ -3,7 +3,7 @@
  * 负责播放/停止/切歌/播放模式/音量控制/设备状态
  */
 
-import { apiGet, apiPost } from './common.js';
+const { apiGet, apiPost } = SongloftPlugin;
 import { showSnackbar, showLoading, hideLoading, showResult, getAccountId, getDeviceId } from './utils.js';
 import { getAllAccountDevices, getDeviceInfo, closeDeviceSelectPanel } from './device.js';
 import { loadPlaylistSongs, highlightSongItem } from './playlist.js';

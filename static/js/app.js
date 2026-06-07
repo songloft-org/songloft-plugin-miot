@@ -246,9 +246,7 @@ document.addEventListener('DOMContentLoaded', () => {
             loadDevices(true);
             loadPlaylists();
             // 同时刷新歌曲/歌单索引
-            import('./common.js').then(({ apiPost }) => {
-                apiPost('/indexing/refresh', {}).catch(() => {});
-            });
+            SongloftPlugin.apiPost('/indexing/refresh', {}).catch(() => {});
             showSnackbar('正在刷新...', 'info');
         });
     }
