@@ -364,6 +364,9 @@ export class VoiceEngine {
       return;
     }
 
+    // 立即停止定时器和重置状态，防止后续异步操作期间旧定时器触发
+    pm.prepareForNewPlayback();
+
     // 打断音箱当前播报
     await this.interruptBroadcast(accountId, deviceId);
 
@@ -442,6 +445,9 @@ export class VoiceEngine {
       songloft.log.warn('[VoiceEngine] No song name specified and no active playlist');
       return;
     }
+
+    // 立即停止定时器和重置状态，防止后续异步操作期间旧定时器触发
+    pm.prepareForNewPlayback();
 
     // 打断音箱当前播报
     await this.interruptBroadcast(accountId, deviceId);

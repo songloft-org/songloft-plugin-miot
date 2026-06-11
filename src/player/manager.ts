@@ -86,6 +86,11 @@ export class PlaylistManager {
    * @returns 是否成功
    */
   async play(playlistId: number, startIndex?: number, mode?: PlayMode): Promise<boolean> {
+    // 立即停止定时器和重置状态，防止 loadPlaylistSongs 期间旧定时器触发 onSongFinished
+    this.stopCheckTimer();
+    this.state = 'idle';
+    this.playStartTimeMs = 0;
+
     // 加载歌单歌曲
     const loaded = await this.loadPlaylistSongs(playlistId);
     if (!loaded) {
@@ -97,9 +102,6 @@ export class PlaylistManager {
       songloft.log.warn('[PlaylistManager] Playlist is empty: ' + playlistId);
       return false;
     }
-
-    // 停止当前播放
-    this.stopCheckTimer();
 
     // 设置播放参数
     this.playlistId = playlistId;
@@ -143,6 +145,7 @@ export class PlaylistManager {
    * @returns 是否成功
    */
   async next(): Promise<boolean> {
+    this.stopCheckTimer();
     if (this.songs.length === 0) {
       songloft.log.warn('[PlaylistManager] No playlist loaded for next');
       return false;
@@ -168,6 +171,7 @@ export class PlaylistManager {
    * @returns 是否成功
    */
   async previous(): Promise<boolean> {
+    this.stopCheckTimer();
     if (this.songs.length === 0) {
       songloft.log.warn('[PlaylistManager] No playlist loaded for previous');
       return false;
@@ -268,6 +272,8 @@ export class PlaylistManager {
       return false;
     }
 
+    this.stopCheckTimer();
+
     const ok = await this.minaService.resumePlay(this.accountId, this.deviceId);
     if (!ok) {
       songloft.log.warn('[PlaylistManager] resumePlay failed');
@@ -276,7 +282,6 @@ export class PlaylistManager {
 
     const song = this.getCurrentSong();
     if (song && song.duration > 0 && this.playStartTimeMs > 0) {
-      this.stopCheckTimer();
       const elapsedSec = (Date.now() - this.playStartTimeMs) / 1000;
       const remaining = song.duration - elapsedSec;
       if (remaining > 0) {
@@ -308,6 +313,17 @@ export class PlaylistManager {
    */
   cleanup(): void {
     this.stopCheckTimer();
+  }
+
+  /**
+   * 准备播放新内容：立即清除定时器并重置状态
+   * 用于 VoiceEngine 在 interruptBroadcast 之前调用，
+   * 防止搜索/加载期间旧定时器触发 onSongFinished
+   */
+  prepareForNewPlayback(): void {
+    this.stopCheckTimer();
+    this.state = 'idle';
+    this.playStartTimeMs = 0;
   }
 
   /**
@@ -355,6 +371,8 @@ export class PlaylistManager {
       return false;
     }
 
+    this.stopCheckTimer();
+
     const song = this.songs[this.currentIndex];
 
     // 检查服务器地址
@@ -376,9 +394,6 @@ export class PlaylistManager {
     }
 
     songloft.log.info(`[PlaylistManager] Playing song index=${this.currentIndex} title=${song.title} artist=${song.artist} duration=${song.duration}`);
-
-    // 停止旧定时器
-    this.stopCheckTimer();
 
     // 调用小爱音箱播放
     const ok = await this.minaService.playURL(this.accountId, this.deviceId, songURL);
