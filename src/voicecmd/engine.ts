@@ -481,7 +481,8 @@ export class VoiceEngine {
       return;
     }
 
-    // 从索引中模糊匹配歌曲，获取歌单ID和歌曲索引
+    // 从索引中模糊匹配歌曲，获取歌单ID和歌曲索引（使用预加载缓存，纯内存操作）
+    songloft.log.info(`[VoiceEngine] Searching song: "${songName}"`);
     let loc = await this.indexingManager.findSongByName(songName);
     if (!loc) {
       // 尝试查找独立远程歌曲（不在任何歌单中的外部导入歌曲）

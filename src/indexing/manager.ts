@@ -211,6 +211,7 @@ const MAX_SEARCH_RESULTS = 10;
 export class IndexingManager {
   private songs: IndexedSong[] = [];
   private playlists: IndexedPlaylist[] = [];
+  private playlistSongsCache: Map<number, Array<{ id: number; title: string; artist: string }>> = new Map();
   private lastRefreshTime: number = 0;
   private isRefreshing: boolean = false;
   private indexReady: boolean = false;
@@ -250,13 +251,31 @@ export class IndexingManager {
         artistLower: (song.artist ?? '').toLowerCase(),
       }));
 
-      // 5. 更新索引
+      // 5. 预加载歌单歌曲（避免搜歌时逐个桥接调用）
+      const newPlaylistSongsCache = new Map<number, Array<{ id: number; title: string; artist: string }>>();
+      const plSongsStart = Date.now();
+      for (const pl of newPlaylists) {
+        try {
+          const plSongs = (await songloft.playlists.getSongs(pl.id, { limit: 100000 })) ?? [];
+          newPlaylistSongsCache.set(pl.id, plSongs.map(s => ({
+            id: s.id,
+            title: (s as any).title ?? '',
+            artist: (s as any).artist ?? '',
+          })));
+        } catch (e) {
+          songloft.log.warn(`索引刷新: 获取歌单歌曲失败 playlist_id=${pl.id}: ${e instanceof Error ? e.message : String(e)}`);
+        }
+      }
+      const plSongsMs = Date.now() - plSongsStart;
+
+      // 6. 更新索引
       this.playlists = newPlaylists;
       this.songs = newSongs;
+      this.playlistSongsCache = newPlaylistSongsCache;
       this.lastRefreshTime = Date.now();
       this.indexReady = true;
 
-      songloft.log.info(`索引构建完成: playlists=${newPlaylists.length} songs=${newSongs.length}`);
+      songloft.log.info(`索引构建完成: playlists=${newPlaylists.length} songs=${newSongs.length} playlistSongs=${newPlaylistSongsCache.size} (${plSongsMs}ms)`);
       return { success: true, songCount: newSongs.length, playlistCount: newPlaylists.length };
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -365,26 +384,13 @@ export class IndexingManager {
       return { index: 0, found: false };
     }
 
-    // 获取歌单歌曲列表
-    let songs: Array<{ id: number; title?: string; artist?: string }> = [];
-    try {
-      const result = await songloft.playlists.getSongs(playlistId);
-      if (result && Array.isArray(result)) {
-        songs = result;
-      }
-    } catch (e) {
-      songloft.log.warn(`[IndexingManager] 获取歌单歌曲失败: ${e instanceof Error ? e.message : String(e)}`);
-      return { index: 0, found: false };
-    }
-
+    const songs = this.playlistSongsCache.get(playlistId) ?? [];
     if (songs.length === 0) {
       return { index: 0, found: false };
     }
 
-    // 收集候选列表用于模糊匹配
-    const candidates = songs.map((s, i) => ({ title: s.title ?? '', index: i }));
+    const candidates = songs.map((s, i) => ({ title: s.title, index: i }));
 
-    // 使用 fuzzySearchList 搜索最佳匹配
     const matched = fuzzySearchList(
       songName,
       candidates,
@@ -408,11 +414,15 @@ export class IndexingManager {
   async findSongByName(songName: string): Promise<SongLocation | null> {
     if (!this.indexReady || !songName) return null;
 
+    const startMs = Date.now();
+
     // 1. 用内存歌曲索引模糊搜索匹配歌曲（按评分降序）
     const matchedSongs = this.searchSong(songName);
     const matchedSongIds = new Set(matchedSongs.map(s => s.id));
 
-    // 2. 遍历歌单，同时做两件事：
+    songloft.log.info(`[IndexingManager] findSongByName query="${songName}" indexMatches=${matchedSongs.length}`);
+
+    // 2. 遍历缓存的歌单歌曲，同时做两件事：
     //    a) 收集全局索引命中歌曲的位置
     //    b) 对歌单内歌曲直接模糊评分，记录最佳匹配（兜底用）
     const songLocationMap = new Map<number, SongLocation>();
@@ -420,49 +430,55 @@ export class IndexingManager {
     let bestDirectScore = 0;
 
     for (const pl of this.playlists) {
-      try {
-        const plSongs = (await songloft.playlists.getSongs(pl.id, { limit: 100000 })) ?? [];
-        for (let idx = 0; idx < plSongs.length; idx++) {
-          const s = plSongs[idx];
+      const plSongs = this.playlistSongsCache.get(pl.id) ?? [];
+      for (let idx = 0; idx < plSongs.length; idx++) {
+        const s = plSongs[idx];
 
-          // a) 全局索引命中
-          if (matchedSongIds.has(s.id) && !songLocationMap.has(s.id)) {
-            songLocationMap.set(s.id, {
-              playlistId: pl.id,
-              playlistName: pl.name,
-              songIndex: idx,
-              songTitle: s.title ?? '',
-              artist: s.artist ?? '',
-            });
-          }
-
-          // b) 直接模糊评分（title + artist 取较高分）
-          const titleScore = fuzzyScore(songName, s.title ?? '');
-          const artistScore = fuzzyScore(songName, s.artist ?? '');
-          const score = Math.max(titleScore, artistScore);
-          if (score > bestDirectScore) {
-            bestDirectScore = score;
-            bestDirectLoc = {
-              playlistId: pl.id,
-              playlistName: pl.name,
-              songIndex: idx,
-              songTitle: s.title ?? '',
-              artist: s.artist ?? '',
-            };
-          }
+        // a) 全局索引命中
+        if (matchedSongIds.has(s.id) && !songLocationMap.has(s.id)) {
+          songLocationMap.set(s.id, {
+            playlistId: pl.id,
+            playlistName: pl.name,
+            songIndex: idx,
+            songTitle: s.title,
+            artist: s.artist,
+          });
         }
-      } catch (e) {
-        songloft.log.warn(`findSongByName: 获取歌单歌曲失败 playlist_id=${pl.id}: ${e instanceof Error ? e.message : String(e)}`);
+
+        // b) 直接模糊评分（title + artist 取较高分）
+        const titleScore = fuzzyScore(songName, s.title);
+        const artistScore = fuzzyScore(songName, s.artist);
+        const score = Math.max(titleScore, artistScore);
+        if (score > bestDirectScore) {
+          bestDirectScore = score;
+          bestDirectLoc = {
+            playlistId: pl.id,
+            playlistName: pl.name,
+            songIndex: idx,
+            songTitle: s.title,
+            artist: s.artist,
+          };
+        }
       }
     }
+
+    const elapsedMs = Date.now() - startMs;
 
     // 3. 优先返回全局索引命中（保持 searchSong 的评分排序）
     for (const song of matchedSongs) {
       const loc = songLocationMap.get(song.id);
-      if (loc) return loc;
+      if (loc) {
+        songloft.log.info(`[IndexingManager] findSongByName done (${elapsedMs}ms) → "${loc.songTitle}" in playlist="${loc.playlistName}"`);
+        return loc;
+      }
     }
 
     // 4. 兜底：全局索引命中歌曲均不在歌单中，使用歌单内直接模糊匹配的最佳结果
+    if (bestDirectLoc) {
+      songloft.log.info(`[IndexingManager] findSongByName done (${elapsedMs}ms) → fallback "${bestDirectLoc.songTitle}" in playlist="${bestDirectLoc.playlistName}"`);
+    } else {
+      songloft.log.info(`[IndexingManager] findSongByName done (${elapsedMs}ms) → no match`);
+    }
     return bestDirectLoc;
   }
 
