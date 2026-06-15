@@ -5,7 +5,7 @@ import { jsonResponse, parseQuery } from '@songloft/plugin-sdk';
 import type { Router, HTTPRequest } from '@songloft/plugin-sdk';
 import { MinaService } from '../service/service';
 import { AccountManager } from '../account/manager';
-import { updateVolumeCache } from './playlist';
+import { updateDeviceStatusCache } from './playlist';
 
 /** 解析请求体（兼容 Uint8Array 和 string） */
 function parseBody(req: HTTPRequest): any {
@@ -88,7 +88,7 @@ export function registerDeviceHandlers(
       if (!ok) {
         return jsonResponse({ success: false, error: 'failed to set volume' });
       }
-      updateVolumeCache(account_id, device_id, vol);
+      updateDeviceStatusCache(account_id, device_id, { volume: vol });
       return jsonResponse({ success: true, data: { message: 'success' } });
     } catch (e: any) {
       return jsonResponse({ success: false, error: e.message || String(e) });
@@ -131,6 +131,7 @@ export function registerDeviceHandlers(
       if (!ok) {
         return jsonResponse({ success: false, error: 'failed to pause' });
       }
+      updateDeviceStatusCache(account_id, device_id, { state: 'paused' });
       return jsonResponse({ success: true, data: { message: 'paused' } });
     } catch (e: any) {
       return jsonResponse({ success: false, error: e.message || String(e) });
@@ -152,6 +153,7 @@ export function registerDeviceHandlers(
       if (!ok) {
         return jsonResponse({ success: false, error: 'failed to resume' });
       }
+      updateDeviceStatusCache(account_id, device_id, { state: 'playing' });
       return jsonResponse({ success: true, data: { message: 'resumed' } });
     } catch (e: any) {
       return jsonResponse({ success: false, error: e.message || String(e) });

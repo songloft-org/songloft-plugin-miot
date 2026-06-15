@@ -36,13 +36,6 @@ function isLoopbackAddress(host: string): boolean {
   return hostname === 'localhost' || hostname.startsWith('127.') || hostname === '::1';
 }
 
-const volumeCache: Map<string, { volume: number; timestamp: number }> = new Map();
-const VOLUME_CACHE_TTL = 5000;
-
-export function updateVolumeCache(accountId: string, deviceId: string, volume: number): void {
-  volumeCache.set(accountId + ':' + deviceId, { volume, timestamp: Date.now() });
-}
-
 /** 设备播放状态缓存（避免多调用方重复查询设备） */
 interface DeviceStatusCache {
   volume: number;
@@ -293,6 +286,16 @@ export function registerPlaylistHandlers(
           const elapsed = (now - cached.timestamp) / 1000;
           position = Math.min(cached.position + elapsed, cached.duration);
         }
+
+        // 设备状态与本地 PlaylistManager 不一致时同步（防止外部操作如"小爱同学停止"后本地定时器仍在跑）
+        if (cached.state !== localStatus.state) {
+          if (localStatus.state === 'playing' && cached.state === 'paused') {
+            manager.suspendForVoiceInteraction();
+          } else if (localStatus.state === 'playing' && cached.state === 'stopped') {
+            manager.prepareForNewPlayback();
+          }
+        }
+
         return jsonResponse({
           success: true,
           data: { ...localStatus, state: cached.state, position, duration: cached.duration, volume: cached.volume },
@@ -319,7 +322,9 @@ export function registerPlaylistHandlers(
             if (typeof d.duration === 'number') realDuration = Math.floor(d.duration / 1000);
           }
         }
-      } catch {}
+      } catch (e: any) {
+        songloft.log.warn('[player/status] getPlayerStatus failed: ' + String(e));
+      }
 
       // 更新缓存
       deviceStatusCache.set(cacheKey, { volume, state: realState, position: realPosition, duration: realDuration, timestamp: now });
