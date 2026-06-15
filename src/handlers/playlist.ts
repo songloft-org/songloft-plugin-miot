@@ -36,11 +36,28 @@ function isLoopbackAddress(host: string): boolean {
   return hostname === 'localhost' || hostname.startsWith('127.') || hostname === '::1';
 }
 
-const volumeCache: Map<string, { volume: number; timestamp: number }> = new Map();
-const VOLUME_CACHE_TTL = 5000;
+/** 设备播放状态缓存（避免多调用方重复查询设备） */
+interface DeviceStatusCache {
+  volume: number;
+  state: string;
+  position: number;  // 秒
+  duration: number;  // 秒
+  timestamp: number;
+}
+const deviceStatusCache: Map<string, DeviceStatusCache> = new Map();
+const DEVICE_STATUS_TTL = 4000; // 4秒缓存，略短于前端5秒轮询间隔
 
-export function updateVolumeCache(accountId: string, deviceId: string, volume: number): void {
-  volumeCache.set(accountId + ':' + deviceId, { volume, timestamp: Date.now() });
+/** 主动更新设备状态缓存（供外部调用，如 playURL 成功后刷新） */
+export function updateDeviceStatusCache(accountId: string, deviceId: string, data: Partial<DeviceStatusCache>): void {
+  const key = accountId + ':' + deviceId;
+  const existing = deviceStatusCache.get(key);
+  deviceStatusCache.set(key, {
+    volume: data.volume ?? existing?.volume ?? -1,
+    state: data.state ?? existing?.state ?? 'idle',
+    position: data.position ?? existing?.position ?? 0,
+    duration: data.duration ?? existing?.duration ?? 0,
+    timestamp: Date.now(),
+  });
 }
 
 /**
@@ -245,7 +262,7 @@ export function registerPlaylistHandlers(
     }
   });
 
-  // GET /player/status - 获取播放状态
+  // GET /player/status - 获取播放状态（设备真实数据优先，带缓存避免重复查询）
   router.get('/player/status', async (req: HTTPRequest) => {
     try {
       const query = parseQuery(req.query);
@@ -256,20 +273,75 @@ export function registerPlaylistHandlers(
       }
 
       const manager = await playlistManagerMap.getOrCreate(account_id, device_id);
-      const status = manager.getStatus();
-
-      let volume = -1;
+      const localStatus = manager.getStatus();
       const cacheKey = account_id + ':' + device_id;
-      const cached = volumeCache.get(cacheKey);
       const now = Date.now();
-      if (cached && (now - cached.timestamp) < VOLUME_CACHE_TTL) {
-        volume = cached.volume;
-      } else {
-        volume = await minaService.getVolume(account_id, device_id);
-        volumeCache.set(cacheKey, { volume, timestamp: now });
+
+      // 检查设备状态缓存（4秒内直接复用，避免多调用方重复查询设备）
+      const cached = deviceStatusCache.get(cacheKey);
+      if (cached && (now - cached.timestamp) < DEVICE_STATUS_TTL) {
+        // 播放中时用缓存position + 已过时间推算当前位置，避免返回过时进度
+        let position = cached.position;
+        if (cached.state === 'playing' && cached.duration > 0) {
+          const elapsed = (now - cached.timestamp) / 1000;
+          position = Math.min(cached.position + elapsed, cached.duration);
+        }
+
+        // 设备状态与本地 PlaylistManager 不一致时同步（防止外部操作如"小爱同学停止"后本地定时器仍在跑）
+        if (cached.state !== localStatus.state) {
+          if (localStatus.state === 'playing' && cached.state === 'paused') {
+            manager.suspendForVoiceInteraction();
+          } else if (localStatus.state === 'playing' && cached.state === 'stopped') {
+            manager.prepareForNewPlayback();
+          }
+        }
+
+        return jsonResponse({
+          success: true,
+          data: { ...localStatus, state: cached.state, position, duration: cached.duration, volume: cached.volume },
+        });
       }
 
-      return jsonResponse({ success: true, data: { ...status, volume } });
+      // 缓存过期，从设备获取真实播放状态
+      let volume = cached?.volume ?? -1;
+      let realPosition = localStatus.position;
+      let realDuration = localStatus.duration;
+      let realState = localStatus.state;
+      try {
+        const raw = await minaService.getPlayerStatus(account_id, device_id);
+        const info = raw?.data?.info;
+        if (typeof info === 'string') {
+          const parsed = JSON.parse(info);
+          if (typeof parsed.volume === 'number') volume = parsed.volume;
+          if (parsed.status === 1) realState = 'playing';
+          else if (parsed.status === 2) realState = 'paused';
+          else if (parsed.status === 0) realState = 'stopped';
+          if (parsed.play_song_detail) {
+            const d = parsed.play_song_detail;
+            if (typeof d.position === 'number') realPosition = Math.floor(d.position / 1000);
+            if (typeof d.duration === 'number') realDuration = Math.floor(d.duration / 1000);
+          }
+        }
+      } catch (e: any) {
+        songloft.log.warn('[player/status] getPlayerStatus failed: ' + String(e));
+      }
+
+      // 更新缓存
+      deviceStatusCache.set(cacheKey, { volume, state: realState, position: realPosition, duration: realDuration, timestamp: now });
+
+      // 设备状态与本地不一致时同步（同缓存命中路径逻辑）
+      if (realState !== localStatus.state) {
+        if (localStatus.state === 'playing' && realState === 'paused') {
+          manager.suspendForVoiceInteraction();
+        } else if (localStatus.state === 'playing' && realState === 'stopped') {
+          manager.prepareForNewPlayback();
+        }
+      }
+
+      return jsonResponse({
+        success: true,
+        data: { ...localStatus, state: realState, position: realPosition, duration: realDuration, volume },
+      });
     } catch (e: any) {
       return jsonResponse({ success: false, error: e.message || String(e) });
     }
