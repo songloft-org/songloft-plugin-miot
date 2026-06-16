@@ -251,7 +251,7 @@ export interface PlayerStatus {
   play_mode: PlayMode;
   playlist_id: number;
   current_index: number;
-  current_song?: { id: number; title: string; artist: string };
+  current_song?: { id: number; title: string; artist: string; cover_url?: string; lyric_url?: string };
   position: number;
   duration: number;
   is_playing: boolean;

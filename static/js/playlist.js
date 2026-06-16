@@ -9,6 +9,24 @@ import { loadDeviceStatus } from './playback.js';
 import { initPlaylistSearch, initSongSearch } from './search.js';
 
 /**
+ * 用插件 token 认证 fetch 封面资源
+ * @param {string} url
+ * @returns {Promise<Blob|null>}
+ */
+function fetchCoverWithAuth(url) {
+    const { getAuthToken } = SongloftPlugin;
+    const token = getAuthToken();
+    const headers = {};
+    if (token) {
+        headers['Authorization'] = token.startsWith('Bearer ') ? token : `Bearer ${token}`;
+    }
+    return fetch(url, { headers }).then(res => {
+        if (!res.ok) throw new Error('fetch failed: ' + res.status);
+        return res.blob();
+    });
+}
+
+/**
  * HTML 转义辅助函数
  * @param {string} text - 需要转义的文本
  * @returns {string} 转义后的安全 HTML 文本
@@ -207,6 +225,24 @@ export function loadPlaylistSongs(playlistId) {
             const item = document.createElement('div');
             item.className = 'song-item';
             item.setAttribute('data-index', index);
+
+            // 封面 - 用认证 fetch 获取
+            if (song.cover_url) {
+                const coverImg = document.createElement('img');
+                coverImg.className = 'song-item-cover';
+                coverImg.alt = song.title;
+                // 延迟获取封面，避免阻塞列表渲染
+                fetchCoverWithAuth(song.cover_url).then(blob => {
+                    if (blob) {
+                        const reader = new FileReader();
+                        reader.onload = () => { coverImg.src = reader.result; };
+                        reader.readAsDataURL(blob);
+                    }
+                }).catch(() => {
+                    // 封面获取失败
+                });
+                item.appendChild(coverImg);
+            }
 
             // 序号
             const indexSpan = document.createElement('span');

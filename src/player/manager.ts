@@ -220,11 +220,11 @@ export class PlaylistManager {
    * 获取播放状态
    */
   getStatus(): PlayerStatus {
-    let currentSong: { id: number; title: string; artist: string } | undefined;
+    let currentSong: { id: number; title: string; artist: string; cover_url?: string; lyric_url?: string } | undefined;
     let duration = 0;
     if (this.currentIndex >= 0 && this.currentIndex < this.songs.length) {
       const song = this.songs[this.currentIndex];
-      currentSong = { id: song.id, title: song.title, artist: song.artist };
+      currentSong = { id: song.id, title: song.title, artist: song.artist, cover_url: song.cover_url, lyric_url: song.lyric_url };
       duration = song.duration;
     }
 

@@ -658,6 +658,15 @@
     border-bottom: 1px solid var(--md-outline-variant);
 }
 
+/* 歌曲列表封面 */
+.song-item-cover {
+    width: 48px;
+    height: 48px;
+    border-radius: var(--md-radius-sm);
+    object-fit: cover;
+    flex-shrink: 0;
+}
+
 /* 最后一项不要底部边框 */
 .song-item:last-child {
     border-bottom: none;
@@ -2891,4 +2900,75 @@ html.embed #tab-player {
 html.embed .playlist-selector {
     top: 92px !important;
     left: 0 !important;
+}
+
+/* ============================================ */
+/* Cover & Lyrics Styles                        */
+/* ============================================ */
+
+/* Player bar cover */
+.player-bar-cover-wrap {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 56px;
+    height: 56px;
+    border-radius: var(--md-radius-md);
+    overflow: hidden;
+    cursor: pointer;
+    flex-shrink: 0;
+    margin-right: 12px;
+    position: relative;
+}
+
+.player-bar-cover {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: none;
+}
+
+.player-bar-cover-wrap:has(.player-bar-cover[src]):not(.player-bar-cover[src=""]) .player-bar-cover {
+    display: block;
+}
+
+.player-bar-cover-wrap:hover {
+    background: var(--md-surface-variant);
+}
+
+/* Player bar info - lyric line */
+.player-bar-info {
+    flex: 1;
+    min-width: 0;
+}
+
+.player-bar-lyric {
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--md-on-surface);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-height: 20px;
+    line-height: 20px;
+}
+
+.player-bar-meta {
+    display: none;
+}
+
+.player-bar-cover-wrap:has(.player-bar-cover[src]):not(.player-bar-cover[src=""]) ~ .player-bar-info .player-bar-meta {
+    display: none;
+}
+
+/* Embed mode adjustments */
+html.embed .player-bar-cover-wrap {
+    width: 48px;
+    height: 48px;
+    margin-right: 8px;
+}
+
+html.embed .player-bar-cover {
+    width: 100%;
+    height: 100%;
 }

@@ -3,10 +3,11 @@
  * 负责播放/停止/切歌/播放模式/音量控制/设备状态
  */
 
-const { apiGet, apiPost } = SongloftPlugin;
+const { apiGet, apiPost, getAuthToken } = SongloftPlugin;
 import { showSnackbar, showLoading, hideLoading, showResult, getAccountId, getDeviceId } from './utils.js';
 import { getAllAccountDevices, getDeviceInfo, closeDeviceSelectPanel } from './device.js';
 import { loadPlaylistSongs, highlightSongItem } from './playlist.js';
+import { parseLrc, getCurrentLyricIndex } from './lrc-parser.js';
 
 /** 播放进度相关状态 */
 let currentPosition = 0;    // 当前播放位置（秒）
@@ -14,6 +15,11 @@ let currentDuration = 0;    // 歌曲总时长（秒）
 let isCurrentlyPlaying = false; // 当前是否正在播放
 let lastUpdateTime = 0;     // 上次同步时的 performance.now() 时间戳
 let progressRAF = null;     // requestAnimationFrame ID
+
+/** 歌词相关状态 */
+let currentLyrics = [];     // 解析后的歌词数组
+let currentLyricUrl = '';   // 当前歌词 URL
+let lyricFetchTimer = null; // 歌词获取防抖定时器
 
 /**
  * 格式化时间为 m:ss 格式
@@ -236,17 +242,35 @@ export function togglePlayPause() {
 export function updatePlayerUI(status) {
     if (!status) return;
 
-    // 更新当前歌曲名称和歌手
+    // 更新歌词
+    const playerBarLyric = document.getElementById('playerBarLyric');
+    if (status.current_song && status.current_song.lyric_url) {
+        const lyricUrl = status.current_song.lyric_url;
+        if (lyricUrl !== currentLyricUrl) {
+            currentLyricUrl = lyricUrl;
+            fetchLyrics(lyricUrl);
+        }
+    } else {
+        currentLyricUrl = '';
+        currentLyrics = [];
+        if (playerBarLyric) playerBarLyric.textContent = '暂无歌词';
+    }
+
+    // 更新当前歌词行
+    if (currentLyrics.length > 0) {
+        const lyricIdx = getCurrentLyricIndex(currentLyrics, currentPosition);
+        if (lyricIdx >= 0) {
+            if (playerBarLyric) playerBarLyric.textContent = currentLyrics[lyricIdx].text;
+        }
+    }
+
+    // 更新歌曲信息
     const currentSongTitleEl = document.getElementById('currentSongTitle');
     const currentSongArtistEl = document.getElementById('currentSongArtist');
 
     if (status.current_song) {
-        if (currentSongTitleEl) {
-            currentSongTitleEl.textContent = status.current_song.title || '未知歌曲';
-        }
-        if (currentSongArtistEl) {
-            currentSongArtistEl.textContent = status.current_song.artist || '未知艺术家';
-        }
+        if (currentSongTitleEl) currentSongTitleEl.textContent = status.current_song.title || '未知歌曲';
+        if (currentSongArtistEl) currentSongArtistEl.textContent = status.current_song.artist || '未知艺术家';
     } else {
         if (currentSongTitleEl) currentSongTitleEl.textContent = '暂无播放';
         if (currentSongArtistEl) currentSongArtistEl.textContent = '-';
@@ -752,4 +776,72 @@ export function closeVolumePanel() {
     const backdrop = document.getElementById('volumeBackdrop');
     if (panel) panel.classList.remove('show');
     if (backdrop) backdrop.style.display = 'none';
+}
+
+// ========== 认证请求辅助 ==========
+
+/**
+ * 用插件 token 认证 fetch 资源（封面、歌词等）
+ * @param {string} url - 主程序 API 路径（如 /api/v1/songs/4/cover）
+ * @returns {Promise<Blob|null>}
+ */
+function fetchWithAuth(url) {
+    const token = getAuthToken();
+    const headers = {};
+    if (token) {
+        headers['Authorization'] = token.startsWith('Bearer ') ? token : `Bearer ${token}`;
+    }
+    return fetch(url, { headers }).then(res => {
+        if (!res.ok) throw new Error('fetch failed: ' + res.status);
+        return res.blob();
+    });
+}
+
+// ========== 歌词相关 ==========
+
+/**
+ * 获取并解析歌词
+ * @param {string} lyricUrl - 歌词 URL
+ */
+function fetchLyrics(lyricUrl) {
+    if (!lyricUrl) return;
+
+    if (lyricFetchTimer) {
+        clearTimeout(lyricFetchTimer);
+        lyricFetchTimer = null;
+    }
+
+    lyricFetchTimer = setTimeout(() => {
+        lyricFetchTimer = null;
+        fetchWithAuth(lyricUrl).then(blob => {
+            if (!blob) return;
+            blob.text().then(rawText => {
+                let lrcText = rawText;
+                try {
+                    const json = JSON.parse(rawText);
+                    if (json.lyric) {
+                        lrcText = json.lyric;
+                    } else if (json.success && json.data && json.data.lyric) {
+                        lrcText = json.data.lyric;
+                    } else if (json.data) {
+                        lrcText = typeof json.data === 'string' ? json.data : '';
+                    }
+                } catch {
+                    // 不是 JSON，直接使用原始文本
+                }
+                currentLyrics = parseLrc(lrcText);
+            });
+        }).catch(err => {
+            console.warn('获取歌词失败:', err);
+        });
+    }, 500);
+}
+
+/**
+ * HTML 转义
+ */
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
 }
