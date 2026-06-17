@@ -88,7 +88,7 @@ export function registerDeviceHandlers(
       if (!ok) {
         return jsonResponse({ success: false, error: 'failed to set volume' });
       }
-      updateDeviceStatusCache(account_id, device_id, { volume: vol });
+      updateDeviceStatusCache(account_id, device_id, { volume: vol, lockVolume: true });
       return jsonResponse({ success: true, data: { message: 'success' } });
     } catch (e: any) {
       return jsonResponse({ success: false, error: e.message || String(e) });

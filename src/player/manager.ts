@@ -341,6 +341,10 @@ export class PlaylistManager {
     }
   }
 
+  isVoiceSuspended(): boolean {
+    return this.voiceSuspendedAt > 0;
+  }
+
   isVoiceSuspendStale(): boolean {
     return this.voiceSuspendedAt > 0 && (Date.now() - this.voiceSuspendedAt) > 60000;
   }

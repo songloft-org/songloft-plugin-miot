@@ -12,6 +12,7 @@ import { IndexingManager } from '../indexing/manager';
 import { URLBuilder } from '../player/url_builder';
 import { AIAnalyzer } from './ai_analyzer';
 import { OnlineSearcher } from './online_searcher';
+import { updateDeviceStatusCache } from '../handlers/playlist';
 import type { ConversationMessage, VoiceCommand, PlayMode, AIAnalysisResult } from '../types';
 
 // ===== 类型定义 =====
@@ -614,6 +615,7 @@ export class VoiceEngine {
 
     const ok = await this.minaService.setVolume(accountId, deviceId, targetVolume);
     if (ok) {
+      updateDeviceStatusCache(accountId, deviceId, { volume: targetVolume, lockVolume: true });
       songloft.log.info(`[VoiceEngine] Volume set to: ${targetVolume}`);
     } else {
       songloft.log.error(`[VoiceEngine] Failed to set volume: ${targetVolume}`);

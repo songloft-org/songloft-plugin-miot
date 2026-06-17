@@ -43,12 +43,13 @@ interface DeviceStatusCache {
   position: number;  // 秒
   duration: number;  // 秒
   timestamp: number;
+  volumeLockedUntil: number;  // 用户显式设置音量后锁定期截止时间戳
 }
 const deviceStatusCache: Map<string, DeviceStatusCache> = new Map();
 const DEVICE_STATUS_TTL = 4000; // 4秒缓存，略短于前端5秒轮询间隔
 
 /** 主动更新设备状态缓存（供外部调用，如 playURL 成功后刷新） */
-export function updateDeviceStatusCache(accountId: string, deviceId: string, data: Partial<DeviceStatusCache>): void {
+export function updateDeviceStatusCache(accountId: string, deviceId: string, data: Partial<DeviceStatusCache> & { lockVolume?: boolean }): void {
   const key = accountId + ':' + deviceId;
   const existing = deviceStatusCache.get(key);
   deviceStatusCache.set(key, {
@@ -57,6 +58,7 @@ export function updateDeviceStatusCache(accountId: string, deviceId: string, dat
     position: data.position ?? existing?.position ?? 0,
     duration: data.duration ?? existing?.duration ?? 0,
     timestamp: Date.now(),
+    volumeLockedUntil: data.lockVolume ? Date.now() + 10000 : (existing?.volumeLockedUntil ?? 0),
   });
 }
 
@@ -353,6 +355,11 @@ export function registerPlaylistHandlers(
           }
         }
 
+        // 设备和本地都是 playing 但定时器被挂起时，重启定时器
+        if (localStatus.state === 'playing' && cached.state === 'playing' && manager.isVoiceSuspended()) {
+          manager.resetAutoNextTimer(cached.position);
+        }
+
         return jsonResponse({
           success: true,
           data: { ...localStatus, state: cached.state, position, duration, volume: cached.volume },
@@ -369,7 +376,11 @@ export function registerPlaylistHandlers(
         const info = raw?.data?.info;
         if (typeof info === 'string') {
           const parsed = JSON.parse(info);
-          if (typeof parsed.volume === 'number') volume = parsed.volume;
+          if (typeof parsed.volume === 'number') {
+            if (!cached?.volumeLockedUntil || Date.now() > cached.volumeLockedUntil) {
+              volume = parsed.volume;
+            }
+          }
           if (parsed.status === 1) realState = 'playing';
           else if (parsed.status === 2) realState = 'paused';
           else if (parsed.status === 0) realState = 'stopped';
@@ -390,7 +401,7 @@ export function registerPlaylistHandlers(
       }
 
       // 更新缓存
-      deviceStatusCache.set(cacheKey, { volume, state: realState, position: realPosition, duration: realDuration, timestamp: now });
+      deviceStatusCache.set(cacheKey, { volume, state: realState, position: realPosition, duration: realDuration, timestamp: now, volumeLockedUntil: cached?.volumeLockedUntil ?? 0 });
 
       // 设备状态与本地不一致时同步（同缓存命中路径逻辑）
       if (realState !== localStatus.state) {
@@ -403,6 +414,11 @@ export function registerPlaylistHandlers(
             manager.suspendForVoiceInteraction();
           }
         }
+      }
+
+      // 设备和本地都是 playing 但定时器被挂起时，重启定时器
+      if (localStatus.state === 'playing' && realState === 'playing' && manager.isVoiceSuspended()) {
+        manager.resetAutoNextTimer(realPosition);
       }
 
       return jsonResponse({
