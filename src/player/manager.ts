@@ -126,6 +126,23 @@ export class PlaylistManager {
   }
 
   /**
+   * 暂停播放（保持状态，可恢复）
+   */
+  async pause(): Promise<void> {
+    this.stopCheckTimer();
+    this.clearVoiceSuspend();
+    this.state = 'paused';
+    // 不重置 playStartTimeMs，保持当前播放进度
+
+    // 调用设备暂停
+    if (this.accountId && this.deviceId) {
+      await this.minaService.pausePlay(this.accountId, this.deviceId);
+    }
+
+    songloft.log.info('[PlaylistManager] Playback paused');
+  }
+
+  /**
    * 停止播放
    */
   async stop(): Promise<void> {
@@ -270,7 +287,7 @@ export class PlaylistManager {
    * 同时重置切歌定时器以补偿暂停时间
    */
   async resumePlayback(): Promise<boolean> {
-    if (this.state !== 'playing' || this.songs.length === 0) {
+    if ((this.state !== 'playing' && this.state !== 'paused') || this.songs.length === 0) {
       return false;
     }
 
@@ -281,6 +298,8 @@ export class PlaylistManager {
       songloft.log.warn('[PlaylistManager] resumePlay failed');
       return false;
     }
+
+    this.state = 'playing';
 
     const song = this.getCurrentSong();
     if (song && song.duration > 0 && this.playStartTimeMs > 0) {

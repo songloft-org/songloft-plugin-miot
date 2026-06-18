@@ -197,16 +197,35 @@ export function registerPlaylistHandlers(
       }
 
       const manager = await playlistManagerMap.getOrCreate(account_id, device_id);
+      const status = manager.getStatus();
 
       if (manager.isPlaying()) {
+        // 正在播放，暂停
         const lastPosition = manager.getStatus().position;
-        await manager.stop();
-        updateDeviceStatusCache(account_id, device_id, { state: 'stopped', position: lastPosition });
-        return jsonResponse({ success: true, data: { message: 'playlist paused', state: 'stopped' } });
+        await manager.pause();
+        updateDeviceStatusCache(account_id, device_id, { state: 'paused', position: lastPosition });
+        return jsonResponse({ success: true, data: { message: 'playlist paused', state: 'paused' } });
       }
 
       if (!manager.hasPlaylist()) {
         return jsonResponse({ success: false, error: 'no playlist loaded, please select a playlist first' });
+      }
+
+      // 检查是否处于 paused 状态，如果是则恢复
+      if (status.state === 'paused') {
+        const ok = await manager.resumePlayback();
+        if (ok) {
+          updateDeviceStatusCache(account_id, device_id, { state: 'playing', position: manager.getStatus().position });
+          return jsonResponse({
+            success: true,
+            data: {
+              message: 'playlist resumed',
+              state: 'playing',
+              current_song: manager.getCurrentSong(),
+            },
+          });
+        }
+        // 如果 resumePlayback 失败，回退到重新播放
       }
 
       // 检查服务器地址
@@ -218,12 +237,13 @@ export function registerPlaylistHandlers(
         return jsonResponse({ success: false, error: '服务器地址为本地回环地址，MIoT 智能音箱无法访问。请在「设置」中修改为局域网 IP 地址。' });
       }
 
-      const status = manager.getStatus();
+      // 处于 stopped 状态或 resumePlayback 失败，重新播放
       const ok = await manager.play(status.playlist_id, status.current_index, status.play_mode as PlayMode);
       if (!ok) {
         return jsonResponse({ success: false, error: 'failed to resume playback' });
       }
 
+      updateDeviceStatusCache(account_id, device_id, { state: 'playing', position: 0 });
       return jsonResponse({
         success: true,
         data: {
@@ -356,6 +376,9 @@ export function registerPlaylistHandlers(
             } else {
               manager.suspendForVoiceInteraction();
             }
+          } else if (localStatus.state === 'paused' && cached.state === 'playing') {
+            // 本地显示暂停但设备在播放，同步设备状态
+            manager.resetAutoNextTimer(cached.position);
           }
         }
 
@@ -417,6 +440,9 @@ export function registerPlaylistHandlers(
           } else {
             manager.suspendForVoiceInteraction();
           }
+        } else if (localStatus.state === 'paused' && realState === 'playing') {
+          // 本地显示暂停但设备在播放，同步设备状态
+          manager.resetAutoNextTimer(realPosition);
         }
       }
 
