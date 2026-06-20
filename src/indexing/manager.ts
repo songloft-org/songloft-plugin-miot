@@ -208,6 +208,32 @@ const MAX_SEARCH_RESULTS = 10;
 const MIN_MATCH_SCORE = 40;
 
 /**
+ * 计算歌曲综合匹配得分，联合评估标题和歌手
+ *
+ * 解决"林俊杰的她说"误匹配已入库歌手"林俊杰"的其他歌曲（如"小酒窝"）的问题：
+ * 当查询词仅匹配歌手而标题完全未命中，且查询词明显长于歌手名时
+ * （说明用户同时指定了歌名），判定为未命中，返回 0 分。
+ */
+function scoreSongMatch(query: string, songTitle: string, songArtist: string): number {
+  const titleScore = fuzzyScore(query, songTitle);
+  const artistScore = fuzzyScore(query, songArtist);
+
+  if (titleScore >= MIN_MATCH_SCORE) {
+    return titleScore;
+  }
+
+  if (artistScore >= MIN_MATCH_SCORE && titleScore === 0) {
+    const queryLen = Array.from(query).length;
+    const artistLen = Array.from(songArtist).length;
+    if (queryLen > artistLen + 1) {
+      return 0;
+    }
+  }
+
+  return Math.max(titleScore, artistScore);
+}
+
+/**
  * 索引管理器
  * 从 Songloft 宿主API获取歌曲/歌单数据，建立内存索引，提供模糊搜索
  */
@@ -332,11 +358,7 @@ export class IndexingManager {
     const scored: ScoredResult<IndexedSong>[] = [];
 
     for (const song of this.songs) {
-      // 分别对 title 和 artist 评分，取较高分
-      const titleScore = fuzzyScore(queryTrimmed, song.title);
-      const artistScore = fuzzyScore(queryTrimmed, song.artist);
-      const score = Math.max(titleScore, artistScore);
-
+      const score = scoreSongMatch(queryTrimmed, song.title, song.artist);
       if (score > 0) {
         scored.push({ item: song, score });
       }
@@ -448,10 +470,8 @@ export class IndexingManager {
           });
         }
 
-        // b) 直接模糊评分（title + artist 取较高分）
-        const titleScore = fuzzyScore(songName, s.title);
-        const artistScore = fuzzyScore(songName, s.artist);
-        const score = Math.max(titleScore, artistScore);
+        // b) 直接模糊评分（联合标题+歌手）
+        const score = scoreSongMatch(songName, s.title, s.artist);
         if (score >= MIN_MATCH_SCORE && score > bestDirectScore) {
           bestDirectScore = score;
           bestDirectLoc = {
@@ -479,10 +499,7 @@ export class IndexingManager {
     // 4a. 全局索引有高质量命中但不在任何歌单中 → 返回 null 让调用方走独立歌曲路径
     if (matchedSongs.length > 0) {
       const bestGlobal = matchedSongs[0];
-      const bestGlobalScore = Math.max(
-        fuzzyScore(songName, bestGlobal.title),
-        fuzzyScore(songName, bestGlobal.artist),
-      );
+      const bestGlobalScore = scoreSongMatch(songName, bestGlobal.title, bestGlobal.artist);
       if (bestGlobalScore >= MIN_MATCH_SCORE) {
         songloft.log.info(
           `[IndexingManager] findSongByName done (${elapsedMs}ms) → global match "${bestGlobal.title}" by "${bestGlobal.artist}" (score=${bestGlobalScore.toFixed(1)}) not in any playlist, deferring to standalone`
@@ -517,10 +534,7 @@ export class IndexingManager {
     const matched = this.searchSong(songName);
     if (matched.length === 0) return null;
 
-    const bestScore = Math.max(
-      fuzzyScore(songName, matched[0].title),
-      fuzzyScore(songName, matched[0].artist),
-    );
+    const bestScore = scoreSongMatch(songName, matched[0].title, matched[0].artist);
     if (bestScore < MIN_MATCH_SCORE) {
       songloft.log.info(`[IndexingManager] findStandaloneSongByName: best match "${matched[0].title}" by "${matched[0].artist}" score=${bestScore.toFixed(1)} below threshold, skipping`);
       return null;
