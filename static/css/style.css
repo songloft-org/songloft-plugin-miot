@@ -825,14 +825,14 @@
 /* Player Bar - 固定底部播放控制栏 */
 .player-bar {
     position: fixed;
-    bottom: env(safe-area-inset-bottom, 0px);
+    bottom: 0;
     left: 0;
     right: 0;
     background: var(--md-surface);
     border-top: 1px solid var(--md-outline-variant);
     box-shadow: 0 -2px 8px rgba(0,0,0,.08);
     z-index: 98;
-    padding: 6px 16px 4px;
+    padding: 6px 16px calc(4px + env(safe-area-inset-bottom, 0px));
 }
 
 .player-bar-info {
@@ -2701,6 +2701,7 @@ html.embed .snackbar {
 html.embed .player-bar {
     left: 0 !important;
     bottom: 0 !important;
+    padding-bottom: 4px !important;
 }
 html.embed #tab-player {
     padding-top: 100px !important;
