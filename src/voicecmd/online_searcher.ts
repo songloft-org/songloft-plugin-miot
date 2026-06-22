@@ -15,22 +15,19 @@ interface SearchOneRequest {
   quality?: string;
 }
 
-// 外部搜索 API 成功响应 data
-// source_data 为可选，外部接口不一定返回
+// 外部搜索 API 成功响应 data（provider 中立，不解读内部字段）
 interface SearchOneData {
   title: string;
   artist: string;
-  album: string;
-  duration: number;
-  cover_url: string;
-  url: string;
-  source_data?: LxSourceData;
-}
-
-interface LxSourceData {
-  platform: string;
-  quality: string;
-  songInfo: Record<string, unknown>;
+  album?: string;
+  duration?: number;
+  cover_url?: string;
+  url?: string;                                      // 直链型 provider 提供
+  plugin_entry_path?: string;                        // provider 自身 entryPath；缺省纯外链
+  source_data?: string | Record<string, unknown>;   // 不透明；对象则由 MIoT 序列化
+  dedup_key?: string;
+  lyric?: string;
+  lyric_source?: string;
 }
 
 // 外部搜索 API 响应
@@ -40,17 +37,19 @@ interface SearchOneResponse {
   data: SearchOneData | null;
 }
 
-// songloft /api/v1/songs/remote 请求体
+// songloft /api/v1/songs/remote 请求体（provider 中立）
 interface RemoteSongItem {
   title: string;
   artist: string;
   album: string;
   cover_url: string;
   duration: number;
-  url: string;               // 绝对 URL，lxmusic topone 已返回
-  plugin_entry_path: string; // 空字符串表示直接用 url 字段
+  url: string;               // 直链型 provider 有；解析型为空
+  plugin_entry_path: string; // provider 自身 entryPath；缺省 '' 表示纯外链
   source_data: string;
   dedup_key: string;
+  lyric?: string;
+  lyric_source?: string;
 }
 
 // songloft /api/v1/songs/remote 响应
@@ -73,7 +72,8 @@ interface RemoteSongsResponse {
 
 /**
  * 在线歌曲搜索器
- * 封装对用户配置的外部搜索 API 的调用，支持洛雪音乐等兼容接口
+ * 封装对用户配置的外部搜索 API（topone）的调用。
+ * MIoT 作为中立消费方，不解读 source_data 内部结构，不写死任何插件名。
  */
 export class OnlineSearcher {
   private readonly searchTimeoutMs = 6000;
@@ -198,6 +198,20 @@ export class OnlineSearcher {
       return false;
     }
 
+    // 入库后追加到目标歌单（可选，由配置决定）
+    const config = await this.configManager.getConfig();
+    const pid = config.external_search_playlist_id;
+    if (pid) {
+      try {
+        const plToken = await songloft.plugin.getToken();
+        await fetch(`${getHostBaseUrl()}/api/v1/playlists/${pid}/songs`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${plToken}` },
+          body: JSON.stringify({ song_ids: [imported.id] }),
+        });
+      } catch (e) { songloft.log.warn(`[OnlineSearcher] 追加歌单失败: ${String(e)}`); }
+    }
+
     // 用返回的 url 构造完整播放 URL（相对路径，URLBuilder 会拼接 server_host 和 token）
     const playUrl = await URLBuilder.buildSongURL({ id: imported.id, url: imported.url});
     if (!playUrl) {
@@ -220,34 +234,21 @@ export class OnlineSearcher {
    * @returns 导入成功后包含歌曲 id 和 url 的对象，失败返回 null
    */
   private async importSong(song: SearchOneData): Promise<{ id: number; url: string } | null> {
-    // 构造 dedup_key 用于去重（source_data 可能缺失，降级处理）
-    const sd = song.source_data;
-    const songInfo = sd?.songInfo || {};
-    const platform = sd?.platform || 'external';
-    const musicId = String(songInfo.musicId || songInfo.hash || '');
-    const dedupKey = musicId ? `${platform}_${musicId}` : '';
-
-    // 构造 source_data（存储搜索来源的原始信息），缺失时用空对象
-    const sourceData = sd
-      ? JSON.stringify({
-          platform: sd.platform,
-          quality: sd.quality,
-          musicId: musicId,
-          hash: String(songInfo.hash || ''),
-          songmid: String(songInfo.songmid || ''),
-        })
-      : '';
-
+    // provider 字段原样映射，不解读、不补插件名
     const remoteItem: RemoteSongItem = {
       title: song.title,
-      artist: song.artist,
+      artist: song.artist || '',
       album: song.album || '',
       cover_url: song.cover_url || '',
       duration: song.duration || 0,
-      url: song.url || '',  // lxmusic topone 已返回绝对 URL，后端直接代理
-      plugin_entry_path: '', // 空表示直接用 url 字段，不走插件回调
-      source_data: sourceData,
-      dedup_key: dedupKey,
+      url: song.url || '',                              // 直链型 provider 有；解析型为空
+      plugin_entry_path: song.plugin_entry_path || '',  // 中立缺省 ''，绝不写死任何插件名
+      source_data: typeof song.source_data === 'string'
+        ? song.source_data
+        : (song.source_data ? JSON.stringify(song.source_data) : ''),   // 对象则序列化，不窥内部
+      dedup_key: song.dedup_key || '',
+      lyric: song.lyric || '',
+      lyric_source: song.lyric_source || '',
     };
 
     try {

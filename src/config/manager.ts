@@ -39,6 +39,7 @@ function defaultPluginConfig(): PluginConfig {
     external_search_enabled: false,
     external_search_url: '',
     external_search_token: '',
+    external_search_playlist_id: '1',  // 默认追加到「收藏」歌单（宿主预置 id=1）
     indicator_light_enabled: true,
     interrupt_tts_hint_enabled: false,
     interrupt_tts_hint_text: '正在搜索，请稍候',
