@@ -40,6 +40,7 @@ function defaultPluginConfig(): PluginConfig {
     external_search_url: '',
     external_search_token: '',
     external_search_playlist_id: '',
+    external_search_timeout: 6,
     indicator_light_enabled: true,
     interrupt_tts_hint_enabled: false,
     interrupt_tts_hint_text: '正在搜索，请稍候',

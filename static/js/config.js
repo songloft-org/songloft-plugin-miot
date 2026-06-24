@@ -107,6 +107,11 @@ export function loadConfig() {
                 externalSearchTokenInput.value = savedToken;
             }
 
+            const externalSearchTimeoutInput = document.getElementById('externalSearchTimeoutInput');
+            if (externalSearchTimeoutInput) {
+                externalSearchTimeoutInput.value = data.data.external_search_timeout ?? 6;
+            }
+
             const providerSelect = document.getElementById('externalSearchProviderSelect');
             if (providerSelect) {
                 providerSelect.value = currentProvider;
@@ -547,12 +552,14 @@ function saveExternalSearchConfig() {
     const tokenInput = document.getElementById('externalSearchTokenInput');
     const appendSwitch = document.getElementById('externalSearchAppendPlaylistSwitch');
     const playlistSelect = document.getElementById('externalSearchPlaylistSelect');
+    const timeoutInput = document.getElementById('externalSearchTimeoutInput');
     const enabled = switchEl ? switchEl.checked : false;
     const url = urlInput ? urlInput.value.trim() : '';
     const token = tokenInput ? tokenInput.value.trim() : '';
     const playlistId = (appendSwitch && appendSwitch.checked && playlistSelect) ? playlistSelect.value : '';
+    const timeout = timeoutInput ? parseInt(timeoutInput.value, 10) || 6 : 6;
 
-    apiPost('/config', { external_search_enabled: enabled, external_search_url: url, external_search_token: token, external_search_playlist_id: playlistId })
+    apiPost('/config', { external_search_enabled: enabled, external_search_url: url, external_search_token: token, external_search_playlist_id: playlistId, external_search_timeout: timeout })
         .then(data => {
             if (data.success) {
                 showSnackbar('已保存', 'success');

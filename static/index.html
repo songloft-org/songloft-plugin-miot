@@ -514,6 +514,11 @@
                                 <input type="text" id="externalSearchTokenInput" class="text-field" style="font-size:13px;padding:7px 10px" placeholder="Bearer *****" aria-label="外部搜索认证 Token">
                             </div>
                         </div>
+                        <div style="margin-top:10px">
+                            <div style="font-size:12px;color:var(--md-on-surface-variant);margin-bottom:4px;font-weight:500">搜索超时（秒）</div>
+                            <input type="number" id="externalSearchTimeoutInput" class="text-field" style="font-size:13px;padding:7px 10px;width:100px" min="3" max="60" value="6" aria-label="外部搜索超时">
+                            <div style="margin-top:4px;font-size:12px;color:#999">外部搜索 API 的超时时间，3-60 秒，默认 6 秒</div>
+                        </div>
                         <div class="switch-row" style="margin-top:10px">
                             <div class="switch-row-label">
                                 <span class="switch-row-title">自动追加到歌单</span>

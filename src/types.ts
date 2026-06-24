@@ -93,6 +93,7 @@ export interface PluginConfig {
   external_search_url: string;      // 外部搜索 API 地址
   external_search_token: string;    // 外部搜索 Token 认证
   external_search_playlist_id: string; // 外部搜索导入后追加到的歌单 ID，空串表示不追加
+  external_search_timeout: number;     // 外部搜索超时（秒），默认 6
   extra_music_api_models?: string[];
   indicator_light_enabled?: boolean;
   interrupt_tts_hint_enabled: boolean;

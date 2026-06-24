@@ -76,7 +76,6 @@ interface RemoteSongsResponse {
  * MIoT 作为中立消费方，不解读 source_data 内部结构，不写死任何插件名。
  */
 export class OnlineSearcher {
-  private readonly searchTimeoutMs = 6000;
   private configManager: ConfigManager;
 
   constructor(configManager: ConfigManager) {
@@ -153,9 +152,13 @@ export class OnlineSearcher {
 
     let resp: SearchOneResponse | null = null;
 
+    const config = await this.configManager.getConfig();
+    const timeoutSec = config.external_search_timeout > 0 ? config.external_search_timeout : 6;
+    const timeoutMs = timeoutSec * 1000;
+
     // 带超时的 fetch（用 Promise.race 替代 AbortController，兼容 QuickJS）
     const timeoutPromise = new Promise<never>((_, reject) => {
-      setTimeout(() => reject(new Error('AbortError')), this.searchTimeoutMs);
+      setTimeout(() => reject(new Error('AbortError')), timeoutMs);
     });
 
     try {
@@ -177,7 +180,7 @@ export class OnlineSearcher {
       }
     } catch (e: any) {
       if (e.message === 'AbortError') {
-        songloft.log.warn('[OnlineSearcher] Search/topone timeout (>6s) for keyword: ' + keyword);
+        songloft.log.warn(`[OnlineSearcher] Search/topone timeout (>${timeoutSec}s) for keyword: ` + keyword);
       } else {
         songloft.log.warn('[OnlineSearcher] Search/topone fetch error: ' + String(e));
       }
@@ -199,7 +202,6 @@ export class OnlineSearcher {
     }
 
     // 入库后追加到目标歌单（可选，由配置决定）
-    const config = await this.configManager.getConfig();
     const pid = config.external_search_playlist_id;
     if (pid) {
       try {
