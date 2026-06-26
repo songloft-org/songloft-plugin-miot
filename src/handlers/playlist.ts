@@ -46,7 +46,7 @@ interface DeviceStatusCache {
   volumeLockedUntil: number;  // 用户显式设置音量后锁定期截止时间戳
 }
 const deviceStatusCache: Map<string, DeviceStatusCache> = new Map();
-const DEVICE_STATUS_TTL = 4000; // 4秒缓存，略短于前端5秒轮询间隔
+export const DEVICE_STATUS_TTL = 4000; // 4秒缓存，略短于前端5秒轮询间隔
 
 /** 主动更新设备状态缓存（供外部调用，如 playURL 成功后刷新） */
 export function updateDeviceStatusCache(accountId: string, deviceId: string, data: Partial<DeviceStatusCache> & { lockVolume?: boolean }): void {
@@ -60,6 +60,11 @@ export function updateDeviceStatusCache(accountId: string, deviceId: string, dat
     timestamp: Date.now(),
     volumeLockedUntil: data.lockVolume ? Date.now() + 10000 : (existing?.volumeLockedUntil ?? 0),
   });
+}
+
+/** 获取设备状态缓存 */
+export function getDeviceStatusCache(accountId: string, deviceId: string): DeviceStatusCache | undefined {
+  return deviceStatusCache.get(accountId + ':' + deviceId);
 }
 
 /**

@@ -5,7 +5,7 @@ import { jsonResponse, parseQuery } from '@songloft/plugin-sdk';
 import type { Router, HTTPRequest } from '@songloft/plugin-sdk';
 import { MinaService } from '../service/service';
 import { AccountManager } from '../account/manager';
-import { updateDeviceStatusCache } from './playlist';
+import { updateDeviceStatusCache, getDeviceStatusCache, DEVICE_STATUS_TTL } from './playlist';
 
 /** 解析请求体（兼容 Uint8Array 和 string） */
 function parseBody(req: HTTPRequest): any {
@@ -200,6 +200,110 @@ export function registerDeviceHandlers(
         return jsonResponse({ success: false, error: 'failed to update last selection' });
       }
       return jsonResponse({ success: true, data: { message: 'last selection updated', account_id, device_id } });
+    } catch (e: any) {
+      return jsonResponse({ success: false, error: e.message || String(e) });
+    }
+  });
+
+  // =====================================================================================
+  // GET /mina/status - 纯物理状态探针（与 /mina/play-url, /mina/pause 等物理层接口对称）
+  // =====================================================================================
+  // 用途：第三方插件（如洛雪投送插件）通过此接口获取音箱的绝对物理状态。
+  //       与 /player/status 的本质区别：
+  //       - 不读取 PlaylistManager（不混入本地歌单的幽灵数据）
+  //       - 不执行状态掩盖（不因本地 stopped 而屏蔽真实 playing）
+  //       - 不产生副作用（不触发定时器重置、语音挂起判断等）
+  //
+  // 返回字段：
+  //   state      - 播放状态："playing" | "paused" | "stopped" | "unknown"
+  //   position   - 当前播放进度（秒），缓存命中时会基于时间戳做平滑预估
+  //   volume     - 当前音量（0-100），用户通过 /mina/volume 设置后有 10 秒锁定期保护
+  //   is_playing - 便捷布尔值，等价于 state === "playing"
+  //
+  // 注：不返回 duration，因为硬件上报的 duration 极度不可靠，客户端应自行解析音频源元数据。
+  // 限流：共享宿主的 4 秒物理缓存（DEVICE_STATUS_TTL），防止刷爆小米云端 API。
+  // =====================================================================================
+  router.get('/mina/status', async (req: HTTPRequest) => {
+    try {
+      const query = parseQuery(req.query);
+      const { account_id, device_id } = query;
+      
+      if (!account_id || !device_id) {
+        return jsonResponse({ success: false, error: 'account_id and device_id are required' });
+      }
+
+      // 检查 4 秒物理缓存，防止高频轮询刷爆小米云端 API
+      const cached = getDeviceStatusCache(account_id, device_id);
+      const now = Date.now();
+      
+      if (cached && (now - cached.timestamp) < DEVICE_STATUS_TTL) {
+        // 命中缓存，直接返回缓存数据
+        let position = cached.position;
+        if (cached.state === 'playing') {
+          // 基于时间戳做平滑预估，让客户端进度条更顺滑
+          const elapsed = (now - cached.timestamp) / 1000;
+          position = cached.position + elapsed;
+        }
+
+        // 音量锁定期保护：用户通过 /mina/volume 设置新音量后 10 秒内，
+        // 云端可能还没同步，此时应返回缓存中的用户设定值，避免"回弹"
+        const volume = (cached.volumeLockedUntil && now < cached.volumeLockedUntil)
+          ? cached.volume
+          : cached.volume;
+
+        return jsonResponse({
+          success: true,
+          data: {
+            state: cached.state,
+            position: position,
+            volume: volume,
+            is_playing: cached.state === 'playing'
+          }
+        });
+      }
+
+      // 缓存过期，穿透到小米云端查询真实物理状态
+      const raw = await minaService.getPlayerStatus(account_id, device_id);
+      const info = raw?.data?.info;
+      
+      let state = 'unknown';
+      let position = 0;
+      let volume = cached?.volume ?? -1; // 保留上次已知音量作为兜底
+
+      if (typeof info === 'string') {
+        const parsed = JSON.parse(info);
+
+        // 音量：尊重锁定期，防止用户刚设完音量就被云端旧值覆盖
+        if (typeof parsed.volume === 'number') {
+          if (!cached?.volumeLockedUntil || now > cached.volumeLockedUntil) {
+            volume = parsed.volume;
+          }
+        }
+
+        // 状态枚举映射（小米硬件底层协议：1=playing, 2=paused, 0=stopped）
+        if (parsed.status === 1) state = 'playing';
+        else if (parsed.status === 2) state = 'paused';
+        else if (parsed.status === 0) state = 'stopped';
+        
+        // 播放进度（云端返回毫秒，转换为秒）
+        if (parsed.play_song_detail) {
+          const d = parsed.play_song_detail;
+          if (typeof d.position === 'number') position = Math.floor(d.position / 1000);
+        }
+      }
+
+      // 同步给宿主内部缓存（与旧接口共享同一个缓存池）
+      updateDeviceStatusCache(account_id, device_id, { state, position, volume });
+
+      return jsonResponse({
+        success: true,
+        data: {
+          state,
+          position,
+          volume,
+          is_playing: state === 'playing'
+        }
+      });
     } catch (e: any) {
       return jsonResponse({ success: false, error: e.message || String(e) });
     }
