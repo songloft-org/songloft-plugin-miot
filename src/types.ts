@@ -96,6 +96,7 @@ export interface PluginConfig {
   external_search_timeout: number;     // 外部搜索超时（秒），默认 6
   extra_music_api_models?: string[];
   indicator_light_enabled?: boolean;
+  default_cover_id?: string;
   interrupt_tts_hint_enabled: boolean;
   interrupt_tts_hint_text: string;
   conversation_poll_interval: number;
