@@ -115,9 +115,9 @@ export class MinaHTTPClient {
    * @param hardware - 设备硬件型号（用于选择播放方法）
    * @param extraModels - 用户自定义的额外 Music API 型号列表
    */
-  async playByUrl(deviceId: string, url: string, hardware = '', extraModels?: string[], keepLight = false): Promise<boolean> {
+  async playByUrl(deviceId: string, url: string, hardware = '', extraModels?: string[], keepLight = false, customAudioId?: string): Promise<boolean> {
     if (hardware && needUsePlayMusicAPI(hardware, extraModels)) {
-      return this.playByMusicURL(deviceId, url, keepLight);
+      return this.playByMusicURL(deviceId, url, keepLight, customAudioId);
     }
     return this.playURL(deviceId, url, keepLight);
   }
@@ -133,8 +133,9 @@ export class MinaHTTPClient {
   /**
    * 使用 player_play_music 播放 URL（用于部分设备型号）
    */
-  async playByMusicURL(deviceId: string, audioUrl: string, keepLight = false): Promise<boolean> {
-    const audioId = '1582971365183456177';
+  async playByMusicURL(deviceId: string, audioUrl: string, keepLight = false, customAudioId?: string): Promise<boolean> {
+    // 默认封面
+    const audioId = customAudioId || '1732418460076477549';
     const cpId = '355454500';
 
     const music = {
