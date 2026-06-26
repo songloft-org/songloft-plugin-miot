@@ -66,7 +66,7 @@ export const NEED_USE_PLAY_MUSIC_API: Record<string, boolean> = {
   'LX04': true,
   'L05B': true,
   'L05C': true,
-  'L06': true,
+  'LX06': true,
   'L06A': true,
   'X08A': true,
   'X10A': true,
