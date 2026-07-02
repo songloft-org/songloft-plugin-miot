@@ -97,6 +97,7 @@ export interface PluginConfig {
   extra_music_api_models?: string[];
   indicator_light_enabled?: boolean;
   default_cover_id?: string;
+  touchscreen_lyrics_enabled?: boolean; // 触屏歌词：逐首匹配小米曲库以在触屏音箱显示歌词
   interrupt_tts_hint_enabled: boolean;
   interrupt_tts_hint_text: string;
   conversation_poll_interval: number;

@@ -43,6 +43,7 @@ function defaultPluginConfig(): PluginConfig {
     external_search_timeout: 6,
     indicator_light_enabled: true,
     default_cover_id: '1732418460076477549',
+    touchscreen_lyrics_enabled: false,
     interrupt_tts_hint_enabled: false,
     interrupt_tts_hint_text: '正在搜索，请稍候',
     conversation_poll_interval: 1,

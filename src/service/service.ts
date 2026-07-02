@@ -98,7 +98,7 @@ export class MinaService {
    * 播放指定URL
    * 先暂停当前播放（防止声音叠加），再根据设备型号选择播放接口
    */
-  async playURL(accountId: string, deviceId: string, url: string): Promise<boolean> {
+  async playURL(accountId: string, deviceId: string, url: string, songName?: string): Promise<boolean> {
     const client = this.getClient(accountId);
     if (!client) {
       songloft.log.warn('[MinaService] playURL: no client for account: ' + accountId);
@@ -119,7 +119,9 @@ export class MinaService {
       const extraModels = config.extra_music_api_models || [];
       const keepLight = !!config.indicator_light_enabled;
       const customAudioId = config.default_cover_id;
-      return await client.playByUrl(deviceId, url, hardware, extraModels, keepLight, customAudioId);
+      const lyricsEnabled = !!config.touchscreen_lyrics_enabled;
+      return await client.playByUrl(deviceId, url, hardware, extraModels, keepLight, customAudioId,
+        { enabled: lyricsEnabled, songName: songName || '' });
     } catch (e) {
       songloft.log.error('[MinaService] playURL failed: ' + String(e));
       return false;

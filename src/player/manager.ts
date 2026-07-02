@@ -515,8 +515,9 @@ export class PlaylistManager {
 
     songloft.log.info(`[PlaylistManager] Playing song index=${this.currentIndex} title=${song.title} artist=${song.artist} duration=${song.duration}`);
 
-    // 调用小爱音箱播放
-    const ok = await this.minaService.playURL(this.accountId, this.deviceId, songURL);
+    // 调用小爱音箱播放（传「歌名-歌手」供触屏歌词模式匹配曲库）
+    const songName = song.artist ? `${song.title}-${song.artist}` : song.title;
+    const ok = await this.minaService.playURL(this.accountId, this.deviceId, songURL, songName);
     if (!ok) {
       songloft.log.error('[PlaylistManager] Failed to play URL on device');
       return false;

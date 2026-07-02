@@ -93,6 +93,7 @@ export function registerConfigHandlers(
           suggested_addresses: suggestedAddresses,
           ai_config: aiConfig,
           default_cover_id: config.default_cover_id,
+          touchscreen_lyrics_enabled: !!config.touchscreen_lyrics_enabled,
         },
       });
     } catch (e: any) {
@@ -175,6 +176,11 @@ export function registerConfigHandlers(
       // 更新 indicator_light_enabled
       if (body.indicator_light_enabled !== undefined) {
         config.indicator_light_enabled = !!body.indicator_light_enabled;
+      }
+
+      // 更新 touchscreen_lyrics_enabled
+      if (body.touchscreen_lyrics_enabled !== undefined) {
+        config.touchscreen_lyrics_enabled = !!body.touchscreen_lyrics_enabled;
       }
 
       // ▼ 新增这段保存逻辑：接收前端传来的值并存入 config ▼

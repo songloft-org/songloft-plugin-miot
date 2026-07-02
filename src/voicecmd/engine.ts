@@ -481,7 +481,8 @@ export class VoiceEngine {
       if (standalone) {
         const playUrl = await URLBuilder.buildSongURL(standalone);
         if (playUrl) {
-          await this.minaService.playURL(accountId, deviceId, playUrl);
+          const standaloneName = standalone.artist ? `${standalone.title}-${standalone.artist}` : standalone.title;
+          await this.minaService.playURL(accountId, deviceId, playUrl, standaloneName);
           songloft.log.info('[VoiceEngine] Played standalone remote song: ' + standalone.title + ' - ' + standalone.artist);
           return;
         }

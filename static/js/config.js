@@ -79,6 +79,13 @@ export function loadConfig() {
                 indicatorLightSwitch.checked = indicatorLightEnabled;
             }
 
+            // 触屏歌词开关
+            const touchscreenLyricsEnabled = !!data.data.touchscreen_lyrics_enabled;
+            const touchscreenLyricsSwitch = document.getElementById('touchscreenLyricsSwitch');
+            if (touchscreenLyricsSwitch) {
+                touchscreenLyricsSwitch.checked = touchscreenLyricsEnabled;
+            }
+
             // 触屏版默认封面
             const defaultCoverId = data.data.default_cover_id;
             const coverSelect = document.getElementById('defaultCoverSelect');
@@ -457,6 +464,41 @@ function toggleIndicatorLight(enabled) {
         .catch(error => {
             showSnackbar('操作失败：' + error.message, 'error');
             const switchEl = document.getElementById('indicatorLightSwitch');
+            if (switchEl) switchEl.checked = !enabled;
+        });
+}
+
+// ========== 触屏歌词 ==========
+
+/**
+ * 初始化触屏歌词开关 UI 事件
+ */
+export function initTouchscreenLyricsUI() {
+    const switchEl = document.getElementById('touchscreenLyricsSwitch');
+    if (switchEl) {
+        switchEl.addEventListener('change', function() {
+            toggleTouchscreenLyrics(this.checked);
+        });
+    }
+}
+
+/**
+ * 切换触屏歌词开关
+ */
+function toggleTouchscreenLyrics(enabled) {
+    apiPost('/config', { touchscreen_lyrics_enabled: enabled })
+        .then(data => {
+            if (data.success) {
+                showSnackbar(enabled ? '已开启触屏歌词' : '已关闭触屏歌词', 'success');
+            } else {
+                showSnackbar('操作失败：' + (data.error || '未知错误'), 'error');
+                const switchEl = document.getElementById('touchscreenLyricsSwitch');
+                if (switchEl) switchEl.checked = !enabled;
+            }
+        })
+        .catch(error => {
+            showSnackbar('操作失败：' + error.message, 'error');
+            const switchEl = document.getElementById('touchscreenLyricsSwitch');
             if (switchEl) switchEl.checked = !enabled;
         });
 }

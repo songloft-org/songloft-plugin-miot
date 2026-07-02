@@ -16,7 +16,7 @@ import {
   needUsePlayMusicAPI,
 } from './constants';
 import type { XiaomiTokenInfo, MinaDevice, AskMessage } from '../types';
-import type { DeviceInfoRaw, DeviceListResponse, UbusResponse, NlpResultData, NlpInfoData, NlpDetail, ConversationData } from './models';
+import type { DeviceInfoRaw, DeviceListResponse, UbusResponse, NlpResultData, NlpInfoData, NlpDetail, ConversationData, MusicSearchResponse } from './models';
 
 /**
  * MinaHTTPClient - 小爱音箱 API 客户端
@@ -114,12 +114,88 @@ export class MinaHTTPClient {
    * @param url - 音频 URL
    * @param hardware - 设备硬件型号（用于选择播放方法）
    * @param extraModels - 用户自定义的额外 Music API 型号列表
+   * @param lyricsMode - 触屏歌词模式：开启后强制走 player_play_music 音乐模式，
+   *   并逐首搜小米曲库匹配真实 audioID（搜不到回退 customAudioId），使触屏音箱显示歌词
    */
-  async playByUrl(deviceId: string, url: string, hardware = '', extraModels?: string[], keepLight = false, customAudioId?: string): Promise<boolean> {
+  async playByUrl(deviceId: string, url: string, hardware = '', extraModels?: string[], keepLight = false, customAudioId?: string, lyricsMode?: { enabled: boolean; songName: string }): Promise<boolean> {
+    if (lyricsMode?.enabled) {
+      let audioId = customAudioId || '';
+      const searched = await this.searchAudioId(lyricsMode.songName);
+      if (searched) {
+        audioId = searched;
+      }
+      // 歌词模式强制音乐模式（audio_type=MUSIC），这是触屏音乐 UI/歌词的前提
+      return this.playByMusicURL(deviceId, url, true, audioId);
+    }
     if (hardware && needUsePlayMusicAPI(hardware, extraModels)) {
       return this.playByMusicURL(deviceId, url, keepLight, customAudioId);
     }
     return this.playURL(deviceId, url, keepLight);
+  }
+
+  /**
+   * 搜索小米官方曲库匹配歌曲，返回真实 audioID（供触屏音箱拉取歌词/封面）
+   * 参照 xiaomusic _get_audio_id：按「歌名完全相等 + 歌手包含匹配」精确命中
+   * @param name - 「歌名-歌手」格式；为空直接返回 ''（TTS/无名场景不请求，避免小米账号报错）
+   * @returns 匹配到的 audioID；无结果或失败返回 ''
+   */
+  async searchAudioId(name: string): Promise<string> {
+    const query = (name || '').trim();
+    if (!query) {
+      return '';
+    }
+
+    const params: Record<string, string> = {
+      query,
+      queryType: '1',
+      offset: '0',
+      count: '6',
+      timestamp: String(Math.floor(Date.now() * 1000)),
+      requestId: this.generateRequestId(),
+    };
+    const body = Object.entries(params)
+      .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`)
+      .join('&');
+
+    const result = await this.doPostRequest<MusicSearchResponse>(`${MINA_API_BASE_URL}/music/search`, body);
+    const songList = result?.data?.songList;
+    if (!songList || songList.length === 0) {
+      songloft.log.info(`[MinaClient] searchAudioId no match for: ${query}`);
+      return '';
+    }
+
+    // 兜底：先用第一首
+    let audioId = songList[0].audioID || '';
+
+    // 拆「歌名-歌手」，歌手多值时只取第一个
+    let targetSong = query;
+    let targetArtist = '';
+    const dashIdx = query.indexOf('-');
+    if (dashIdx >= 0) {
+      targetSong = query.slice(0, dashIdx).trim();
+      targetArtist = query.slice(dashIdx + 1).trim();
+    }
+    let firstArtist = targetArtist;
+    if (firstArtist) {
+      for (const sep of [';', '；', ',', '，', '&', '、', '/']) {
+        firstArtist = firstArtist.split(sep).join('|');
+      }
+      firstArtist = firstArtist.split('|')[0].trim();
+    }
+
+    for (const song of songList) {
+      const sName = song.name || '';
+      const sArtist = song.artist?.name || '';
+      if (targetSong.toLowerCase() === sName.toLowerCase()) {
+        if (!firstArtist || sArtist.toLowerCase().includes(firstArtist.toLowerCase())) {
+          audioId = song.audioID || audioId;
+          break;
+        }
+      }
+    }
+
+    songloft.log.info(`[MinaClient] searchAudioId name=${query} matched audioID=${audioId}`);
+    return audioId;
   }
 
   /**

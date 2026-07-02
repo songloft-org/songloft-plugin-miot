@@ -43,7 +43,7 @@ import {
     stopPlaylist
 } from './playback.js';
 import { initDialogs } from './modal.js';
-import { autoFillServerHost, saveConfig, loadConfig, initServerHostUI, initPollIntervalUI, initSmartResumeUI, initMaxSongIndexUI, initConversationUI, initVoiceCommandUI, initTimezoneUI, initForceMp3UI, initIndicatorLightUI, initExtraMusicApiModelsUI, initAIConfigUI, initExternalSearchUI, initExternalSearchSpecUI, initInterruptBroadcastUI, initDefaultCoverUI } from './config.js';
+import { autoFillServerHost, saveConfig, loadConfig, initServerHostUI, initPollIntervalUI, initSmartResumeUI, initMaxSongIndexUI, initConversationUI, initVoiceCommandUI, initTimezoneUI, initForceMp3UI, initIndicatorLightUI, initTouchscreenLyricsUI, initExtraMusicApiModelsUI, initAIConfigUI, initExternalSearchUI, initExternalSearchSpecUI, initInterruptBroadcastUI, initDefaultCoverUI } from './config.js';
 import { addAccount, addAccountWithToken, deleteAccount, toggleDeviceManagement, loadAccounts, reLoginAccount } from './account.js';
 import { submitCaptcha, openVerifyUrl, submitVerifyCode, startQRCodeLogin } from './auth.js';
 import { Tracely } from './tracely-sdk.js';
@@ -482,6 +482,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // 初始化指示灯开关 UI
     initIndicatorLightUI();
+
+    // 初始化触屏歌词开关 UI
+    initTouchscreenLyricsUI();
 
     // 初始化触屏版默认封面 UI
     initDefaultCoverUI();

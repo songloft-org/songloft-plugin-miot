@@ -221,8 +221,9 @@ export class OnlineSearcher {
       return false;
     }
 
-    // 推送 URL 到音箱
-    const played = await minaService.playURL(accountId, deviceId, playUrl);
+    // 推送 URL 到音箱（传「歌名-歌手」供触屏歌词模式匹配曲库）
+    const songName = song.artist ? `${song.title}-${song.artist}` : song.title;
+    const played = await minaService.playURL(accountId, deviceId, playUrl, songName);
     if (!played) {
       songloft.log.error('[OnlineSearcher] Failed to push URL to device: ' + playUrl);
       return false;
