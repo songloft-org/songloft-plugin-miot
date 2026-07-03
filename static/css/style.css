@@ -638,13 +638,40 @@
     border-bottom: 1px solid var(--md-outline-variant);
 }
 
-/* 歌曲列表封面 */
-.song-item-cover {
+/* 歌曲列表封面容器 */
+.song-item-cover-wrap {
+    display: flex;
+    align-items: center;
+    justify-content: center;
     width: 48px;
     height: 48px;
     border-radius: var(--md-radius-sm);
-    object-fit: cover;
+    overflow: hidden;
     flex-shrink: 0;
+    position: relative;
+    background: var(--md-surface-variant);
+}
+
+/* 歌曲列表封面 */
+.song-item-cover {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: none;
+}
+
+.song-item-cover-wrap:has(.song-item-cover[src]:not([src=""])) .song-item-cover {
+    display: block;
+}
+
+/* 无封面占位音符图标 */
+.song-item-cover-placeholder {
+    color: var(--md-on-surface-variant);
+    font-size: 24px;
+}
+
+.song-item-cover-wrap:has(.song-item-cover[src]:not([src=""])) .song-item-cover-placeholder {
+    display: none;
 }
 
 /* 最后一项不要底部边框 */

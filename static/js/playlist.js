@@ -235,11 +235,18 @@ export function loadPlaylistSongs(playlistId) {
             item.className = 'song-item';
             item.setAttribute('data-index', index);
 
-            // 封面 - 用认证 fetch 获取
+            // 封面 - 用认证 fetch 获取；无封面时显示占位音符图标，避免裂图
+            const coverWrap = document.createElement('div');
+            coverWrap.className = 'song-item-cover-wrap';
+            const coverImg = document.createElement('img');
+            coverImg.className = 'song-item-cover';
+            coverImg.alt = song.title;
+            const coverPlaceholder = document.createElement('span');
+            coverPlaceholder.className = 'material-symbols-outlined song-item-cover-placeholder';
+            coverPlaceholder.textContent = 'music_note';
+            coverWrap.appendChild(coverImg);
+            coverWrap.appendChild(coverPlaceholder);
             if (song.cover_url) {
-                const coverImg = document.createElement('img');
-                coverImg.className = 'song-item-cover';
-                coverImg.alt = song.title;
                 // 延迟获取封面，避免阻塞列表渲染
                 fetchCoverWithAuth(song.cover_url).then(blob => {
                     if (blob) {
@@ -248,10 +255,10 @@ export function loadPlaylistSongs(playlistId) {
                         reader.readAsDataURL(blob);
                     }
                 }).catch(() => {
-                    // 封面获取失败
+                    // 封面获取失败，保持占位图标
                 });
-                item.appendChild(coverImg);
             }
+            item.appendChild(coverWrap);
 
             // 序号
             const indexSpan = document.createElement('span');

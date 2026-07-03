@@ -317,9 +317,16 @@ export class MinaHTTPClient {
 
   /**
    * 文字转语音
+   *
+   * 优先走 mibrain/text_to_speech（多数固件真正的语音播报入口），
+   * 失败再回退到旧的 mediaplayer/player_play_tts（部分老设备）。
    */
   async textToSpeech(deviceId: string, text: string): Promise<boolean> {
     const message = { text };
+    if ((await this.ubusRequest(deviceId, 'text_to_speech', 'mibrain', message)) !== null) {
+      return true;
+    }
+    songloft.log.warn('[MinaClient] text_to_speech/mibrain failed, falling back to player_play_tts/mediaplayer');
     return (await this.ubusRequest(deviceId, 'player_play_tts', 'mediaplayer', message)) !== null;
   }
 

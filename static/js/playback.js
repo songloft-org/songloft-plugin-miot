@@ -403,7 +403,10 @@ export function updatePlayerUI(status) {
                 playerBarCoverObjectUrl = URL.createObjectURL(blob);
                 const img = document.getElementById('playerBarCover');
                 if (img) img.src = playerBarCoverObjectUrl;
-            }).catch(() => {});
+            }).catch(() => {
+                const img = document.getElementById('playerBarCover');
+                if (img) img.removeAttribute('src');
+            });
         }
     } else if (currentPlayerBarCoverUrl) {
         currentPlayerBarCoverUrl = '';
@@ -412,7 +415,7 @@ export function updatePlayerUI(status) {
             playerBarCoverObjectUrl = null;
         }
         const img = document.getElementById('playerBarCover');
-        if (img) img.src = '';
+        if (img) img.removeAttribute('src');
     }
 
     // 通知状态监听器

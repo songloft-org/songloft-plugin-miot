@@ -635,12 +635,10 @@ function renderSearchProviders(select, providers, currentProviderId) {
     }
 
     for (const p of providers) {
+        if (!p.installed) continue;
         const opt = document.createElement('option');
         opt.value = p.id;
-        if (!p.installed) {
-            opt.textContent = `${p.name}（未安装）`;
-            opt.disabled = true;
-        } else if (!p.active) {
+        if (!p.active) {
             opt.textContent = `${p.name}（未启用）`;
             opt.disabled = true;
         } else {
