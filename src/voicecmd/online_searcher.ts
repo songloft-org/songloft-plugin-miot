@@ -16,7 +16,7 @@ interface SearchOneRequest {
 }
 
 // 外部搜索 API 成功响应 data（provider 中立，不解读内部字段）
-interface SearchOneData {
+export interface OnlineSearchResult {
   title: string;
   artist: string;
   album?: string;
@@ -34,7 +34,7 @@ interface SearchOneData {
 interface SearchOneResponse {
   code: number;
   msg: string;
-  data: SearchOneData | null;
+  data: OnlineSearchResult | null;
 }
 
 // songloft /api/v1/songs/remote 请求体（provider 中立）
@@ -128,22 +128,16 @@ export class OnlineSearcher {
   }
 
   /**
-   * 在线搜索歌曲并推送到音箱播放，同时导入到本地数据库
+   * 在线搜索歌曲，仅返回 provider 给出的候选，不导入也不播放。
    *
    * @param keyword       搜索关键词
    * @param hint         可选的歌曲提示（title/artist/duration）
-   * @param accountId    小米账号ID
-   * @param deviceId     设备ID
-   * @param minaService  MinaService 实例（用于推送URL）
-   * @returns 是否成功推送播放
+   * @returns 搜索候选，未命中或请求失败返回 null
    */
-  async searchAndPlay(
+  async search(
     keyword: string,
     hint: { title: string; artist?: string; duration?: number } | null,
-    accountId: string,
-    deviceId: string,
-    minaService: MinaService,
-  ): Promise<boolean> {
+  ): Promise<OnlineSearchResult | null> {
     const reqBody: SearchOneRequest = {
       keyword,
       hint: hint || undefined,
@@ -176,7 +170,7 @@ export class OnlineSearcher {
         resp = JSON.parse(text) as SearchOneResponse;
       } catch {
         songloft.log.warn('[OnlineSearcher] Failed to parse search/topone response: ' + text);
-        return false;
+        return null;
       }
     } catch (e: any) {
       if (e.message === 'AbortError') {
@@ -184,16 +178,29 @@ export class OnlineSearcher {
       } else {
         songloft.log.warn('[OnlineSearcher] Search/topone fetch error: ' + String(e));
       }
-      return false;
+      return null;
     }
 
     // 解析响应
     if (!resp || resp.code !== 0 || !resp.data) {
       songloft.log.warn('[OnlineSearcher] Search/topone returned code=' + (resp?.code ?? 'null') + ' for keyword: ' + keyword);
-      return false;
+      return null;
     }
 
-    const song = resp.data;
+    return resp.data;
+  }
+
+  /**
+   * 将外部搜索候选导入到 Songloft，并推送到音箱播放。
+   */
+  async playSearchResult(
+    song: OnlineSearchResult,
+    accountId: string,
+    deviceId: string,
+    minaService: MinaService,
+  ): Promise<boolean> {
+    const config = await this.configManager.getConfig();
+
     // 同步导入到 songloft 数据库，直接拿到 songloft 分配的 id 和 url
     const imported = await this.importSong(song);
     if (!imported) {
@@ -233,10 +240,34 @@ export class OnlineSearcher {
   }
 
   /**
+   * 在线搜索歌曲并推送到音箱播放，同时导入到本地数据库
+   *
+   * @param keyword       搜索关键词
+   * @param hint         可选的歌曲提示（title/artist/duration）
+   * @param accountId    小米账号ID
+   * @param deviceId     设备ID
+   * @param minaService  MinaService 实例（用于推送URL）
+   * @returns 是否成功推送播放
+   */
+  async searchAndPlay(
+    keyword: string,
+    hint: { title: string; artist?: string; duration?: number } | null,
+    accountId: string,
+    deviceId: string,
+    minaService: MinaService,
+  ): Promise<boolean> {
+    const song = await this.search(keyword, hint);
+    if (!song) {
+      return false;
+    }
+    return await this.playSearchResult(song, accountId, deviceId, minaService);
+  }
+
+  /**
    * 导入歌曲到 songloft 数据库
    * @returns 导入成功后包含歌曲 id 和 url 的对象，失败返回 null
    */
-  private async importSong(song: SearchOneData): Promise<{ id: number; url: string } | null> {
+  private async importSong(song: OnlineSearchResult): Promise<{ id: number; url: string } | null> {
     // provider 字段原样映射，不解读、不补插件名
     const remoteItem: RemoteSongItem = {
       title: song.title,

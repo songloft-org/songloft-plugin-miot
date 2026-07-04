@@ -135,6 +135,7 @@ export function loadConfig() {
             if (externalSearchTimeoutInput) {
                 externalSearchTimeoutInput.value = data.data.external_search_timeout ?? 6;
             }
+            setSearchPriority(data.data.search_priority || 'parallel');
 
             updateProviderUI(currentProvider);
             loadSearchProviders(currentProvider);
@@ -608,6 +609,24 @@ const KNOWN_PROVIDERS = {
     subsonic: { url: '/api/v1/jsplugin/subsonic/api/search/topone' },
 };
 
+const SEARCH_PRIORITIES = new Set(['parallel', 'local_first', 'external_first']);
+
+function normalizeSearchPriority(value) {
+    return SEARCH_PRIORITIES.has(value) ? value : 'parallel';
+}
+
+function setSearchPriority(value) {
+    const priority = normalizeSearchPriority(value);
+    document.querySelectorAll('input[name="searchPriority"]').forEach(input => {
+        input.checked = input.value === priority;
+    });
+}
+
+function getSearchPriority() {
+    const selected = document.querySelector('input[name="searchPriority"]:checked');
+    return normalizeSearchPriority(selected ? selected.value : 'parallel');
+}
+
 function detectProvider(url) {
     if (!url) return 'custom';
     for (const [id, p] of Object.entries(KNOWN_PROVIDERS)) {
@@ -689,8 +708,9 @@ function saveExternalSearchConfig() {
     const token = tokenInput ? tokenInput.value.trim() : '';
     const playlistId = (appendSwitch && appendSwitch.checked && playlistSelect) ? playlistSelect.value : '';
     const timeout = timeoutInput ? parseInt(timeoutInput.value, 10) || 6 : 6;
+    const searchPriority = getSearchPriority();
 
-    apiPost('/config', { external_search_enabled: enabled, external_search_url: url, external_search_token: token, external_search_playlist_id: playlistId, external_search_timeout: timeout })
+    apiPost('/config', { external_search_enabled: enabled, external_search_url: url, external_search_token: token, external_search_playlist_id: playlistId, external_search_timeout: timeout, search_priority: searchPriority })
         .then(data => {
             if (data.success) {
                 showSnackbar('已保存', 'success');
@@ -750,6 +770,13 @@ export function initExternalSearchUI() {
 
     const playlistSelect = document.getElementById('externalSearchPlaylistSelect');
     if (playlistSelect) playlistSelect.addEventListener('change', () => saveExternalSearchConfig());
+
+    const timeoutInput = document.getElementById('externalSearchTimeoutInput');
+    if (timeoutInput) timeoutInput.addEventListener('change', () => saveExternalSearchConfig());
+
+    document.querySelectorAll('input[name="searchPriority"]').forEach(input => {
+        input.addEventListener('change', () => saveExternalSearchConfig());
+    });
 
     const testBtn = document.getElementById('externalSearchTestBtn');
     const testInput = document.getElementById('externalSearchTestInput');

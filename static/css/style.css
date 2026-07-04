@@ -289,6 +289,45 @@
     cursor: pointer;
 }
 
+.search-priority-options {
+    display: grid;
+    gap: 8px;
+}
+
+.search-priority-option {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    padding: 10px 12px;
+    border: 1px solid var(--md-outline-variant);
+    border-radius: var(--md-radius-sm);
+    background: var(--md-surface-1);
+    cursor: pointer;
+}
+
+.search-priority-option input {
+    margin-top: 2px;
+    accent-color: var(--md-primary);
+}
+
+.search-priority-option span {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.search-priority-option strong {
+    color: var(--md-on-surface);
+    font-size: 13px;
+    font-weight: 600;
+}
+
+.search-priority-option small {
+    color: var(--md-on-surface-variant);
+    font-size: 12px;
+    line-height: 1.4;
+}
+
 /* List Item */
 .list-item {
     display: flex;

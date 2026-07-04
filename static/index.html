@@ -606,6 +606,32 @@
                             <input type="number" id="externalSearchTimeoutInput" class="text-field" style="font-size:13px;padding:7px 10px;width:100px" min="3" max="60" value="6" aria-label="外部搜索超时">
                             <div style="margin-top:4px;font-size:12px;color:#999">外部搜索 API 的超时时间，3-60 秒，默认 6 秒</div>
                         </div>
+                        <div style="margin-top:10px">
+                            <div style="font-size:12px;color:var(--md-on-surface-variant);margin-bottom:4px;font-weight:500">搜索优先级</div>
+                            <div class="search-priority-options" role="radiogroup" aria-label="搜索优先级">
+                                <label class="search-priority-option">
+                                    <input type="radio" name="searchPriority" value="parallel" checked>
+                                    <span>
+                                        <strong>响应优先</strong>
+                                        <small>本地和外部同时搜索，先命中的结果先播放</small>
+                                    </span>
+                                </label>
+                                <label class="search-priority-option">
+                                    <input type="radio" name="searchPriority" value="local_first">
+                                    <span>
+                                        <strong>本地优先</strong>
+                                        <small>先查本地索引和独立远程歌曲，未命中再外部搜索</small>
+                                    </span>
+                                </label>
+                                <label class="search-priority-option">
+                                    <input type="radio" name="searchPriority" value="external_first">
+                                    <span>
+                                        <strong>外部优先</strong>
+                                        <small>先查外部接口，未命中或播放失败再回落本地</small>
+                                    </span>
+                                </label>
+                            </div>
+                        </div>
                         <div class="switch-row" style="margin-top:10px">
                             <div class="switch-row-label">
                                 <span class="switch-row-title">自动追加到歌单</span>

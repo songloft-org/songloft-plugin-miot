@@ -9,6 +9,15 @@ import { Scheduler } from '../schedule/scheduler';
 import { VoiceEngine } from '../voicecmd/engine';
 import { setHostBaseUrl, callHostAPI } from '../utils/http';
 import { setPollDebug } from '../utils/debug';
+import type { SearchPriority } from '../types';
+
+const SEARCH_PRIORITIES: SearchPriority[] = ['parallel', 'local_first', 'external_first'];
+
+function normalizeSearchPriority(value: unknown): SearchPriority {
+  return typeof value === 'string' && SEARCH_PRIORITIES.includes(value as SearchPriority)
+    ? value as SearchPriority
+    : 'parallel';
+}
 
 /** 解析请求体（兼容 Uint8Array 和 string） */
 function parseBody(req: HTTPRequest): any {
@@ -83,6 +92,7 @@ export function registerConfigHandlers(
           external_search_token: config.external_search_token || '',
           external_search_playlist_id: config.external_search_playlist_id ?? '',
           external_search_timeout: config.external_search_timeout ?? 6,
+          search_priority: normalizeSearchPriority(config.search_priority),
           extra_music_api_models: config.extra_music_api_models || [],
           indicator_light_enabled: !!config.indicator_light_enabled,
           interrupt_tts_hint_enabled: !!config.interrupt_tts_hint_enabled,
@@ -173,6 +183,11 @@ export function registerConfigHandlers(
       // 更新 external_search_timeout
       if (body.external_search_timeout !== undefined) {
         config.external_search_timeout = Math.max(3, Math.min(60, Number(body.external_search_timeout) || 6));
+      }
+
+      // 更新 search_priority
+      if (body.search_priority !== undefined) {
+        config.search_priority = normalizeSearchPriority(body.search_priority);
       }
 
       // 更新 indicator_light_enabled

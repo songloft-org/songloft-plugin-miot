@@ -80,6 +80,9 @@ export interface MinaDevice {
 
 // ===== 配置 =====
 
+/** 搜歌优先级策略 */
+export type SearchPriority = 'parallel' | 'local_first' | 'external_first';
+
 /** 插件全局配置 */
 export interface PluginConfig {
   version: string;
@@ -94,6 +97,7 @@ export interface PluginConfig {
   external_search_token: string;    // 外部搜索 Token 认证
   external_search_playlist_id: string; // 外部搜索导入后追加到的歌单 ID，空串表示不追加
   external_search_timeout: number;     // 外部搜索超时（秒），默认 6
+  search_priority: SearchPriority;     // 搜歌优先级策略
   extra_music_api_models?: string[];
   indicator_light_enabled?: boolean;
   default_cover_id?: string;

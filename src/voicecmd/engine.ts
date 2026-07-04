@@ -13,7 +13,10 @@ import { URLBuilder } from '../player/url_builder';
 import { AIAnalyzer } from './ai_analyzer';
 import { OnlineSearcher } from './online_searcher';
 import { updateDeviceStatusCache } from '../handlers/playlist';
-import type { ConversationMessage, VoiceCommand, PlayMode, AIAnalysisResult } from '../types';
+import type { PlaylistManager } from '../player/manager';
+import type { SongLocation } from '../indexing/manager';
+import type { OnlineSearchResult } from './online_searcher';
+import type { ConversationMessage, VoiceCommand, PlayMode, AIAnalysisResult, SearchPriority } from '../types';
 
 // ===== 类型定义 =====
 
@@ -23,6 +26,18 @@ interface MatchResult {
   keyword: string;
   argument: string;
 }
+
+interface StandaloneSongCandidate {
+  id: number;
+  url: string;
+  title: string;
+  artist: string;
+}
+
+type SongSearchCandidate =
+  | { source: 'local_index'; loc: SongLocation }
+  | { source: 'remote_song'; song: StandaloneSongCandidate }
+  | { source: 'external_search'; song: OnlineSearchResult };
 
 /** 口令测试结果（供设置页「口令测试」展示） */
 export interface CommandTestResult {
@@ -700,51 +715,230 @@ export class VoiceEngine {
     // 打断音箱当前播报
     await this.interruptBroadcast(accountId, deviceId);
 
-    // 检查索引是否就绪
-    if (!this.indexingManager.isIndexReady()) {
-      songloft.log.warn('[VoiceEngine] Song index not ready, skip play song');
+    const hint = this.buildExternalSearchHint(songName, artist);
+    const config = await this.configManager.getConfig();
+    const priority = this.normalizeSearchPriority(config.search_priority);
+    songloft.log.info(`[VoiceEngine] Play song priority=${priority} keyword="${songName}" localTerm="${searchTerm}"`);
+
+    let played = false;
+    switch (priority) {
+      case 'local_first':
+        played = await this.executePlaySongLocalFirst(songName, searchTerm, hint, pm, accountId, deviceId);
+        break;
+      case 'external_first':
+        played = await this.executePlaySongExternalFirst(songName, searchTerm, hint, pm, accountId, deviceId);
+        break;
+      case 'parallel':
+      default:
+        played = await this.executePlaySongParallel(songName, searchTerm, hint, pm, accountId, deviceId);
+        break;
+    }
+
+    if (played) {
       return;
+    }
+
+    songloft.log.warn(`[VoiceEngine] Song not found or failed to play: ${songName}`);
+    await this.minaService.textToSpeech(accountId, deviceId, `未找到歌曲：${songName}`);
+  }
+
+  private normalizeSearchPriority(priority: unknown): SearchPriority {
+    return priority === 'local_first' || priority === 'external_first' || priority === 'parallel'
+      ? priority
+      : 'parallel';
+  }
+
+  private buildExternalSearchHint(songName: string, artist?: string): { title: string; artist?: string; duration?: number } | null {
+    const title = songName.trim();
+    if (!title) return null;
+    const artistName = artist?.trim();
+    return artistName ? { title, artist: artistName } : { title };
+  }
+
+  private async executePlaySongLocalFirst(
+    songName: string,
+    searchTerm: string,
+    hint: { title: string; artist?: string; duration?: number } | null,
+    pm: PlaylistManager,
+    accountId: string,
+    deviceId: string,
+  ): Promise<boolean> {
+    const local = await this.findLocalSongCandidate(searchTerm);
+    if (local) {
+      return await this.playSongCandidate(local, pm, searchTerm, songName, accountId, deviceId);
+    }
+
+    songloft.log.warn(`[VoiceEngine] Song not found locally: ${songName}, trying online search`);
+    const external = await this.findExternalSongCandidate(songName, hint);
+    if (!external) {
+      return false;
+    }
+    return await this.playSongCandidate(external, pm, searchTerm, songName, accountId, deviceId);
+  }
+
+  private async executePlaySongExternalFirst(
+    songName: string,
+    searchTerm: string,
+    hint: { title: string; artist?: string; duration?: number } | null,
+    pm: PlaylistManager,
+    accountId: string,
+    deviceId: string,
+  ): Promise<boolean> {
+    const external = await this.findExternalSongCandidate(songName, hint);
+    if (external) {
+      const played = await this.playSongCandidate(external, pm, searchTerm, songName, accountId, deviceId);
+      if (played) {
+        return true;
+      }
+      songloft.log.warn(`[VoiceEngine] External search found result but failed to play, falling back to local: ${songName}`);
+    }
+
+    const local = await this.findLocalSongCandidate(searchTerm);
+    if (!local) {
+      return false;
+    }
+    return await this.playSongCandidate(local, pm, searchTerm, songName, accountId, deviceId);
+  }
+
+  private async executePlaySongParallel(
+    songName: string,
+    searchTerm: string,
+    hint: { title: string; artist?: string; duration?: number } | null,
+    pm: PlaylistManager,
+    accountId: string,
+    deviceId: string,
+  ): Promise<boolean> {
+    const candidate = await this.firstSuccessfulSongCandidate([
+      this.findLocalSongCandidate(searchTerm),
+      this.findExternalSongCandidate(songName, hint),
+    ]);
+    if (!candidate) {
+      return false;
+    }
+    songloft.log.info(`[VoiceEngine] Parallel search selected source=${candidate.source}`);
+    return await this.playSongCandidate(candidate, pm, searchTerm, songName, accountId, deviceId);
+  }
+
+  private async firstSuccessfulSongCandidate(
+    tasks: Array<Promise<SongSearchCandidate | null>>,
+  ): Promise<SongSearchCandidate | null> {
+    let pending = tasks.map((task, slot) => ({
+      slot,
+      promise: task
+        .then(candidate => ({ slot, candidate }))
+        .catch(e => {
+          songloft.log.warn('[VoiceEngine] Search task failed: ' + String(e));
+          return { slot, candidate: null as SongSearchCandidate | null };
+        }),
+    }));
+
+    while (pending.length > 0) {
+      const settled = await Promise.race(pending.map(p => p.promise));
+      if (settled.candidate) {
+        return settled.candidate;
+      }
+      pending = pending.filter(p => p.slot !== settled.slot);
+    }
+
+    return null;
+  }
+
+  private async findLocalSongCandidate(searchTerm: string): Promise<SongSearchCandidate | null> {
+    if (!this.indexingManager.isIndexReady()) {
+      songloft.log.warn('[VoiceEngine] Song index not ready, skip local search');
+      return null;
     }
 
     // 从索引中模糊匹配歌曲，获取歌单ID和歌曲索引（使用预加载缓存，纯内存操作）
-    songloft.log.info(`[VoiceEngine] Searching song: "${searchTerm}"`);
-    let loc = await this.indexingManager.findSongByName(searchTerm);
-    if (!loc) {
-      // 尝试查找独立远程歌曲（不在任何歌单中的外部导入歌曲）
-      const standalone = await this.indexingManager.findStandaloneSongByName(searchTerm);
-      if (standalone) {
-        const playUrl = await URLBuilder.buildSongURL(standalone);
-        if (playUrl) {
-          const standaloneName = standalone.artist ? `${standalone.title}-${standalone.artist}` : standalone.title;
-          await this.minaService.playURL(accountId, deviceId, playUrl, standaloneName);
-          songloft.log.info('[VoiceEngine] Played standalone remote song: ' + standalone.title + ' - ' + standalone.artist);
-          return;
-        }
-      }
-
-      songloft.log.warn(`[VoiceEngine] Song not found locally: ${songName}, trying online search`);
-      // 本地缓存歌曲未击中，尝试在线搜索（需配置了外部搜索 API）
-      if (!(await this.onlineSearcher.isExternalSearchConfigured())) {
-        songloft.log.warn('[VoiceEngine] External search not configured, skip online search');
-        await this.minaService.textToSpeech(accountId, deviceId, `未找到歌曲：${songName}`);
-        return;
-      }
-      const hint = songName.trim()
-        ? (artist && artist.trim() ? { title: songName.trim(), artist: artist.trim() } : { title: songName.trim() })
-        : null;
-      const played = await this.onlineSearcher.searchAndPlay(
-        songName, hint, accountId, deviceId, this.minaService,
-      );
-      if (!played) {
-        songloft.log.warn(`[VoiceEngine] Online search failed for: ${songName}`);
-        await this.minaService.textToSpeech(accountId, deviceId, `未找到歌曲：${songName}`);
-        return;
-      }
-      // 外部搜索播放成功后刷新索引，后续可直接本地命中
-      await this.indexingManager.refresh();
-      return;
+    songloft.log.info(`[VoiceEngine] Searching local song: "${searchTerm}"`);
+    const loc = await this.indexingManager.findSongByName(searchTerm);
+    if (loc) {
+      return { source: 'local_index', loc };
     }
 
+    // 尝试查找独立远程歌曲（不在任何歌单中的外部导入歌曲）
+    const standalone = await this.indexingManager.findStandaloneSongByName(searchTerm);
+    if (standalone) {
+      return { source: 'remote_song', song: standalone };
+    }
+
+    return null;
+  }
+
+  private async findExternalSongCandidate(
+    songName: string,
+    hint: { title: string; artist?: string; duration?: number } | null,
+  ): Promise<SongSearchCandidate | null> {
+    if (!(await this.onlineSearcher.isExternalSearchConfigured())) {
+      songloft.log.info('[VoiceEngine] External search not configured, skip online search');
+      return null;
+    }
+
+    const song = await this.onlineSearcher.search(songName, hint);
+    if (!song) {
+      songloft.log.warn(`[VoiceEngine] Online search missed for: ${songName}`);
+      return null;
+    }
+
+    return { source: 'external_search', song };
+  }
+
+  private async playSongCandidate(
+    candidate: SongSearchCandidate,
+    pm: PlaylistManager,
+    searchTerm: string,
+    requestedSongName: string,
+    accountId: string,
+    deviceId: string,
+  ): Promise<boolean> {
+    switch (candidate.source) {
+      case 'local_index':
+        return await this.playIndexedSong(candidate.loc, pm, searchTerm, requestedSongName, accountId, deviceId);
+      case 'remote_song':
+        return await this.playStandaloneSong(candidate.song, accountId, deviceId);
+      case 'external_search': {
+        const played = await this.onlineSearcher.playSearchResult(
+          candidate.song, accountId, deviceId, this.minaService,
+        );
+        if (played) {
+          // 外部搜索播放成功后刷新索引，后续可直接本地命中
+          await this.indexingManager.refresh();
+        }
+        return played;
+      }
+    }
+  }
+
+  private async playStandaloneSong(
+    standalone: StandaloneSongCandidate,
+    accountId: string,
+    deviceId: string,
+  ): Promise<boolean> {
+    const playUrl = await URLBuilder.buildSongURL(standalone);
+    if (!playUrl) {
+      songloft.log.error('[VoiceEngine] Failed to build standalone remote song URL: ' + standalone.title);
+      return false;
+    }
+
+    const standaloneName = standalone.artist ? `${standalone.title}-${standalone.artist}` : standalone.title;
+    const played = await this.minaService.playURL(accountId, deviceId, playUrl, standaloneName);
+    if (!played) {
+      songloft.log.error('[VoiceEngine] Failed to play standalone remote song: ' + standalone.title + ' - ' + standalone.artist);
+      return false;
+    }
+
+    songloft.log.info('[VoiceEngine] Played standalone remote song: ' + standalone.title + ' - ' + standalone.artist);
+    return true;
+  }
+
+  private async playIndexedSong(
+    loc: SongLocation,
+    pm: PlaylistManager,
+    searchTerm: string,
+    requestedSongName: string,
+    accountId: string,
+    deviceId: string,
+  ): Promise<boolean> {
     songloft.log.info(`[VoiceEngine] Matched song: ${loc.songTitle} - ${loc.artist} playlist="${loc.playlistName}" playlistId=${loc.playlistId} songIndex=${loc.songIndex}`);
 
     // 获取设备配置中的播放模式
@@ -759,7 +953,7 @@ export class VoiceEngine {
     const ok = await pm.play(loc.playlistId, loc.songIndex, playMode);
     if (ok) {
       songloft.log.info(`[VoiceEngine] Play song success: ${loc.songTitle} playlist="${loc.playlistName}" index=${loc.songIndex} mode=${playMode}`);
-      return;
+      return true;
     }
 
     // 播放失败且因歌单 ID 已失效（扫描后 auto-create 歌单 ID 变化）：刷新索引后重试一次
@@ -772,14 +966,15 @@ export class VoiceEngine {
         const retryOk = await pm.play(newLoc.playlistId, newLoc.songIndex, playMode);
         if (retryOk) {
           songloft.log.info(`[VoiceEngine] Retry play song success: ${newLoc.songTitle}`);
-          return;
+          return true;
         }
       }
-      songloft.log.error(`[VoiceEngine] Retry play song failed after index refresh: ${songName}`);
-      return;
+      songloft.log.error(`[VoiceEngine] Retry play song failed after index refresh: ${requestedSongName}`);
+      return false;
     }
 
     songloft.log.error(`[VoiceEngine] Play song failed: ${loc.songTitle}`);
+    return false;
   }
 
   /**

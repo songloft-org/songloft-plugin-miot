@@ -41,6 +41,7 @@ function defaultPluginConfig(): PluginConfig {
     external_search_token: '',
     external_search_playlist_id: '',
     external_search_timeout: 6,
+    search_priority: 'parallel',
     indicator_light_enabled: true,
     default_cover_id: '1732418460076477549',
     touchscreen_lyrics_enabled: false,
