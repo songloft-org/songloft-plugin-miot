@@ -47,6 +47,7 @@ interface DeviceStatusCache {
   volumeLockedUntil: number;  // 用户显式设置音量后锁定期截止时间戳
 }
 const deviceStatusCache: Map<string, DeviceStatusCache> = new Map();
+const deviceStatusInflight: Map<string, Promise<any>> = new Map();
 export const DEVICE_STATUS_TTL = 4000; // 4秒缓存，略短于前端5秒轮询间隔
 
 /** 主动更新设备状态缓存（供外部调用，如 playURL 成功后刷新） */
@@ -66,6 +67,23 @@ export function updateDeviceStatusCache(accountId: string, deviceId: string, dat
 /** 获取设备状态缓存 */
 export function getDeviceStatusCache(accountId: string, deviceId: string): DeviceStatusCache | undefined {
   return deviceStatusCache.get(accountId + ':' + deviceId);
+}
+
+/** 同一设备的远程状态探针 in-flight 去重，避免并发轮询刷爆 Mina ubus。 */
+export async function getOrFetchDeviceStatus(accountId: string, deviceId: string, fetcher: () => Promise<any>): Promise<any> {
+  const key = accountId + ':' + deviceId;
+  const existing = deviceStatusInflight.get(key);
+  if (existing) {
+    return existing;
+  }
+
+  const inflight = fetcher().finally(() => {
+    if (deviceStatusInflight.get(key) === inflight) {
+      deviceStatusInflight.delete(key);
+    }
+  });
+  deviceStatusInflight.set(key, inflight);
+  return inflight;
 }
 
 function syncManagerFromDeviceState(
@@ -425,7 +443,7 @@ export function registerPlaylistHandlers(
       let realDuration = localStatus.duration;
       let realState = localStatus.state;
       try {
-        const raw = await minaService.getPlayerStatus(account_id, device_id);
+        const raw = await getOrFetchDeviceStatus(account_id, device_id, () => minaService.getPlayerStatus(account_id, device_id));
         const info = raw?.data?.info;
         if (typeof info === 'string') {
           const parsed = JSON.parse(info);

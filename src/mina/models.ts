@@ -102,6 +102,7 @@ export interface MusicSearchResponse {
   data?: {
     songList?: Array<{
       audioID?: string;
+      songID?: string;
       name?: string;
       artist?: { name?: string };
     }>;

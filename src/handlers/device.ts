@@ -5,7 +5,7 @@ import { jsonResponse, parseQuery } from '@songloft/plugin-sdk';
 import type { Router, HTTPRequest } from '@songloft/plugin-sdk';
 import { MinaService } from '../service/service';
 import { AccountManager } from '../account/manager';
-import { updateDeviceStatusCache, getDeviceStatusCache, DEVICE_STATUS_TTL } from './playlist';
+import { updateDeviceStatusCache, getDeviceStatusCache, getOrFetchDeviceStatus, DEVICE_STATUS_TTL } from './playlist';
 
 /** 解析请求体（兼容 Uint8Array 和 string） */
 function parseBody(req: HTTPRequest): any {
@@ -296,7 +296,7 @@ export function registerDeviceHandlers(
       }
 
       // 缓存过期，穿透到小米云端查询真实物理状态
-      const raw = await minaService.getPlayerStatus(account_id, device_id);
+      const raw = await getOrFetchDeviceStatus(account_id, device_id, () => minaService.getPlayerStatus(account_id, device_id));
       const info = raw?.data?.info;
       
       let state = 'unknown';
