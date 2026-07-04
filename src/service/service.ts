@@ -6,7 +6,9 @@
 
 import { AccountManager } from '../account/manager';
 import { ConfigManager } from '../config/manager';
+import { MinaAuth } from '../mina/auth';
 import { MinaHTTPClient } from '../mina/client';
+import { getTTSCommand, XIAOMI_IO_SID, LoginState } from '../mina/constants';
 import type { DeviceConfig, MinaDevice } from '../types';
 
 // ===== 导出类型 =====
@@ -38,11 +40,14 @@ export class MinaService {
   private configManager: ConfigManager;
   /** 缓存设备ID → 设备硬件型号 */
   private deviceModelCache: Map<string, string>;
+  /** 缓存设备ID → MIoT DID（MiIO RPC 使用） */
+  private deviceMiotDIDCache: Map<string, string>;
 
   constructor(accountManager: AccountManager, configManager: ConfigManager) {
     this.accountManager = accountManager;
     this.configManager = configManager;
     this.deviceModelCache = new Map();
+    this.deviceMiotDIDCache = new Map();
   }
 
   // ===== 设备列表 =====
@@ -79,6 +84,9 @@ export class MinaService {
     // 更新设备型号缓存
     for (const dev of apiDevices) {
       this.deviceModelCache.set(dev.deviceID, dev.hardware);
+      if (dev.miotDID) {
+        this.deviceMiotDIDCache.set(dev.deviceID, dev.miotDID);
+      }
     }
 
     // 合并到本地配置
@@ -114,7 +122,7 @@ export class MinaService {
 
     try {
       // 获取设备硬件型号用于选择播放接口
-      const hardware = await this.getDeviceHardware(client, deviceId);
+      const { hardware } = await this.getDeviceIdentity(client, deviceId);
       const config = await this.configManager.getConfig();
       const extraModels = config.extra_music_api_models || [];
       const keepLight = !!config.indicator_light_enabled;
@@ -239,14 +247,23 @@ export class MinaService {
   async textToSpeech(accountId: string, deviceId: string, text: string): Promise<boolean> {
     const client = this.getClient(accountId);
     if (!client) {
-      songloft.log.warn('[MinaService] textToSpeech: no client for account: ' + accountId);
+      songloft.log.warn(`[MinaService] textToSpeech: no client account=${accountId} device=${deviceId} text_length=${text.length}`);
       return false;
     }
 
     try {
-      return await client.textToSpeech(deviceId, text);
+      const identity = await this.getDeviceIdentity(client, deviceId);
+      const ttsCommand = getTTSCommand(identity.hardware);
+      if (ttsCommand) {
+        await this.ensureXiaomiIOToken(accountId, client);
+      }
+
+      songloft.log.info(`[MinaService] textToSpeech start account=${accountId} device=${deviceId} hardware=${identity.hardware || ''} miot_did=${identity.miotDID || ''} tts_command=${ttsCommand || ''} text_length=${text.length}`);
+      const ok = await client.textToSpeech(deviceId, text, identity);
+      songloft.log.info(`[MinaService] textToSpeech done account=${accountId} device=${deviceId} ok=${ok}`);
+      return ok;
     } catch (e) {
-      songloft.log.error('[MinaService] textToSpeech failed: ' + String(e));
+      songloft.log.error(`[MinaService] textToSpeech failed account=${accountId} device=${deviceId}: ${String(e)}`);
       return false;
     }
   }
@@ -331,23 +348,83 @@ export class MinaService {
    * 获取设备硬件型号（先查缓存，缓存不存在则刷新设备列表）
    */
   private async getDeviceHardware(client: MinaHTTPClient, deviceId: string): Promise<string> {
-    const cached = this.deviceModelCache.get(deviceId);
-    if (cached) return cached;
+    return (await this.getDeviceIdentity(client, deviceId)).hardware;
+  }
+
+  /**
+   * 获取设备硬件型号和 MIoT DID（先查缓存，缓存不存在则刷新设备列表）
+   */
+  private async getDeviceIdentity(client: MinaHTTPClient, deviceId: string): Promise<{ hardware: string; miotDID: string }> {
+    const cachedHardware = this.deviceModelCache.get(deviceId) || '';
+    const cachedMiotDID = this.deviceMiotDIDCache.get(deviceId) || '';
+    if (cachedHardware && cachedMiotDID) {
+      return { hardware: cachedHardware, miotDID: cachedMiotDID };
+    }
 
     // 缓存中没有，刷新设备列表
     try {
       const devices = await client.getDeviceList();
       for (const dev of devices) {
         this.deviceModelCache.set(dev.deviceID, dev.hardware);
+        if (dev.miotDID) {
+          this.deviceMiotDIDCache.set(dev.deviceID, dev.miotDID);
+        }
         if (dev.deviceID === deviceId) {
-          return dev.hardware;
+          return { hardware: dev.hardware || '', miotDID: dev.miotDID || '' };
         }
       }
     } catch (e) {
-      songloft.log.warn('[MinaService] Failed to refresh device list for hardware lookup: ' + String(e));
+      songloft.log.warn('[MinaService] Failed to refresh device list for identity lookup: ' + String(e));
     }
 
-    return '';
+    return { hardware: cachedHardware, miotDID: cachedMiotDID };
+  }
+
+  /**
+   * 确保当前客户端带有 xiaomiio serviceToken，用于 MiIO RPC。
+   * 老账号如果只保存了 micoapi，会通过 passToken 懒加载补齐。
+   */
+  private async ensureXiaomiIOToken(accountId: string, client: MinaHTTPClient): Promise<boolean> {
+    const tokenInfo = client.getTokenInfo();
+    const existing = tokenInfo.services[XIAOMI_IO_SID];
+    if (existing && existing.service_token && existing.ssecurity && (!existing.expires_at || existing.expires_at > Date.now())) {
+      return true;
+    }
+
+    const account = await this.accountManager.getAccount(accountId);
+    if (!account) {
+      songloft.log.warn(`[MinaService] ensureXiaomiIOToken: account not found account=${accountId}`);
+      return false;
+    }
+
+    const saved = account.services[XIAOMI_IO_SID];
+    if (saved && saved.service_token && saved.ssecurity && (!saved.expires_at || saved.expires_at > Date.now())) {
+      tokenInfo.services[XIAOMI_IO_SID] = saved;
+      client.updateTokenInfo(tokenInfo);
+      return true;
+    }
+
+    if (!account.pass_token || !account.user_id) {
+      songloft.log.warn(`[MinaService] ensureXiaomiIOToken: no passToken/userId account=${accountId}`);
+      return false;
+    }
+
+    songloft.log.info(`[MinaService] ensureXiaomiIOToken: exchanging passToken account=${accountId}`);
+    const auth = new MinaAuth();
+    const result = await auth.refreshByPassToken(account.pass_token, account.user_id, XIAOMI_IO_SID);
+    if (result.state !== LoginState.SUCCESS || !result.tokenInfo?.services[XIAOMI_IO_SID]) {
+      songloft.log.warn(`[MinaService] ensureXiaomiIOToken: exchange failed account=${accountId} error=${result.error || ''}`);
+      return false;
+    }
+
+    tokenInfo.services[XIAOMI_IO_SID] = result.tokenInfo.services[XIAOMI_IO_SID];
+    if (!tokenInfo.user_id && result.tokenInfo.user_id) {
+      tokenInfo.user_id = result.tokenInfo.user_id;
+    }
+    client.updateTokenInfo(tokenInfo);
+    await this.accountManager.setAccountLoggedIn(accountId, tokenInfo);
+    songloft.log.info(`[MinaService] ensureXiaomiIOToken: token ready account=${accountId}`);
+    return true;
   }
 
   /**

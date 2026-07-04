@@ -342,8 +342,11 @@ export class MinaAuth {
 
     // 计算 clientSign
     const clientSign = computeClientSign(nonce, ssecurity);
-    console.log(`[loginStep2] nonce=${nonce}, ssecurity=${ssecurity}, clientSign=${clientSign}`);
-    const locationWithSign = location + '&clientSign=' + encodeURIComponent(clientSign);
+    console.log(`[loginStep2] clientSign generated nonce_present=${!!nonce} ssecurity_present=${!!ssecurity}`);
+    const locationWithSign = appendQueryParams(location, {
+      _userIdNeedEncrypt: 'true',
+      clientSign,
+    });
 
     // Step 3: 获取 serviceToken
     const step3Error = await this.loginStep3(locationWithSign, sid, ssecurity);
@@ -370,8 +373,7 @@ export class MinaAuth {
       'Content-Type': 'application/x-www-form-urlencoded',
     };
 
-    console.log(`[loginStep3] STS request URL: ${location}`);
-    console.log(`[loginStep3] STS request headers: ${JSON.stringify(headers)}`);
+    console.log(`[loginStep3] STS request sid=${sid} url=${sanitizeSTSUrlForLog(location)} header_keys=${Object.keys(headers).join(',')}`);
 
     // 使用 fetchWithRedirects 自动跟随重定向链并携带 cookieJar 中的 cookies
     // 这与 WASM 版本的行为一致（WASM 版使用 autoRedirectClient + 全部 cookies）
@@ -380,10 +382,13 @@ export class MinaAuth {
       headers,
     }, this.cookieJar, MAX_REDIRECTS);
 
-    console.log(`[loginStep3] STS response status: ${finalResponse.status}`);
+    const setCookieNames = getSetCookieNames(finalResponse.headers.getSetCookie());
+    console.log(`[loginStep3] STS response sid=${sid} status=${finalResponse.status} set_cookie_names=${setCookieNames.join(',') || '-'} jar_cookie_names=${this.cookieJar.getNames().join(',') || '-'}`);
 
-    // 从 cookieJar 中提取需要的值
-    const serviceToken = this.cookieJar.getValue('serviceToken') || '';
+    // 优先从当前 STS 响应头取 serviceToken，避免 CookieJar 里其他 sid 的同名 cookie 干扰。
+    const serviceToken = getSetCookieValue(finalResponse.headers.getSetCookie(), 'serviceToken')
+      || this.cookieJar.getValue('serviceToken')
+      || '';
     const userId = this.cookieJar.getValue('userId') || '';
     const ssecurity = this.cookieJar.getValue('ssecurity') || ssecurityFromStep2;
 
@@ -470,8 +475,11 @@ export class MinaAuth {
     // 从原始 JSON 字符串提取 nonce，避免 JSON.parse 大整数精度丢失
     const nonce = extractBigIntField(jsonStr, 'nonce') || getStringValue(loginData, 'nonce', '');
     const clientSign = computeClientSign(nonce, ssecurity);
-    console.log(`[exchangeServiceToken] nonce=${nonce}, ssecurity=${ssecurity}, clientSign=${clientSign}`);
-    const locationWithSign = location + '&clientSign=' + encodeURIComponent(clientSign);
+    console.log(`[exchangeServiceToken] clientSign generated sid=${sid} nonce_present=${!!nonce} ssecurity_present=${!!ssecurity}`);
+    const locationWithSign = appendQueryParams(location, {
+      _userIdNeedEncrypt: 'true',
+      clientSign,
+    });
 
     // Step 3: 访问 location URL 获取 serviceToken
     const step3Error = await this.loginStep3(locationWithSign, sid, ssecurity);
@@ -611,6 +619,51 @@ function getStringValue(obj: Record<string, unknown>, key: string, defaultValue:
   if (typeof v === 'string') return v;
   if (typeof v === 'number') return String(Math.floor(v));
   return String(v);
+}
+
+function appendQueryParams(url: string, params: Record<string, string>): string {
+  const sep = url.includes('?') ? '&' : '?';
+  const body = Object.entries(params)
+    .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`)
+    .join('&');
+  return `${url}${sep}${body}`;
+}
+
+function sanitizeSTSUrlForLog(url: string): string {
+  const queryIdx = url.indexOf('?');
+  const base = queryIdx >= 0 ? url.slice(0, queryIdx) : url;
+  const query = queryIdx >= 0 ? url.slice(queryIdx + 1) : '';
+  const keys = query
+    ? query.split('&').map(part => safeDecodeURIComponent(part.split('=')[0] || '')).filter(Boolean)
+    : [];
+  return keys.length > 0 ? `${base}?keys=${keys.join(',')}` : base;
+}
+
+function safeDecodeURIComponent(value: string): string {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+}
+
+function getSetCookieNames(setCookieHeaders: string[]): string[] {
+  const names = setCookieHeaders
+    .map(header => header.split('=', 1)[0]?.trim() || '')
+    .filter(Boolean);
+  return Array.from(new Set(names)).sort();
+}
+
+function getSetCookieValue(setCookieHeaders: string[], name: string): string {
+  for (const header of setCookieHeaders) {
+    const firstPart = header.split(';', 1)[0] || '';
+    const eqIdx = firstPart.indexOf('=');
+    if (eqIdx <= 0) continue;
+    if (firstPart.slice(0, eqIdx).trim() === name) {
+      return firstPart.slice(eqIdx + 1).trim();
+    }
+  }
+  return '';
 }
 
 /**
@@ -774,4 +827,3 @@ function getSetCookieHeaders(response: Response): string[] {
   const raw = response.headers.get('set-cookie');
   return raw ? [raw] : [];
 }
-

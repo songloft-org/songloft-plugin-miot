@@ -14,10 +14,11 @@
   },
   "devDependencies": {
     "@songloft/plugin-builder": "^2.4.3",
-    "@songloft/plugin-sdk": "^2.6.3",
+    "@songloft/plugin-sdk": "^2.9.0",
     "typescript": "^5.9.3"
   },
   "dependencies": {
+    "pako": "^1.0.11",
     "pinyin-pro": "^3.28.1",
     "segmentit": "^2.0.3"
   }

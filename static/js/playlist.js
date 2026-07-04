@@ -516,10 +516,20 @@ export function playTTS() {
         return;
     }
 
+    console.info('[MIoT TTS] sending request', {
+        account_id: accountId,
+        device_id: deviceId,
+        text_length: text.length,
+    });
+
     showLoading();
     apiPost('/mina/tts', { account_id: accountId, device_id: deviceId, text: text }).then(data => {
         hideLoading();
         showResult(data);
+        console.info('[MIoT TTS] response', {
+            success: !!data.success,
+            error: data.error || data.message || '',
+        });
         if (data.success) {
             showSnackbar('已开始播报', 'success');
             if (window.tracely) {
@@ -534,6 +544,7 @@ export function playTTS() {
     }).catch(error => {
         hideLoading();
         showResult({ error: error.message });
+        console.warn('[MIoT TTS] request failed', error);
         showSnackbar('播报失败：' + error.message, 'error');
         if (window.tracely) {
             window.tracely.reportEvent('api_error', { path: '/mina/tts', error: error.message });

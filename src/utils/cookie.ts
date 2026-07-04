@@ -264,6 +264,16 @@ export class CookieJar {
   }
 
   /**
+   * 获取当前 Cookie 名称（仅用于诊断日志，不暴露值）
+   */
+  getNames(domain?: string): string[] {
+    const names = this.cookies
+      .filter(c => !domain || domainMatches(domain, c.domain))
+      .map(c => c.name);
+    return Array.from(new Set(names)).sort();
+  }
+
+  /**
    * 获取指定名称的Cookie值
    */
   getValue(name: string, domain?: string): string | undefined {

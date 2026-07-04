@@ -121,18 +121,25 @@ export function registerDeviceHandlers(
     try {
       const body = parseBody(req);
       const { account_id, device_id, text } = body;
+      const textLength = typeof text === 'string' ? text.length : 0;
+      songloft.log.info(`[/mina/tts] request account_id=${account_id || ''} device_id=${device_id || ''} text_length=${textLength}`);
       if (!account_id) {
+        songloft.log.warn('[/mina/tts] rejected: account_id is required');
         return jsonResponse({ success: false, error: 'account_id is required' });
       }
       if (!device_id || !text) {
+        songloft.log.warn(`[/mina/tts] rejected: device_id/text missing device_id=${device_id || ''} text_length=${textLength}`);
         return jsonResponse({ success: false, error: 'device_id and text are required' });
       }
       const ok = await minaService.textToSpeech(account_id, device_id, text);
       if (!ok) {
+        songloft.log.warn(`[/mina/tts] failed account_id=${account_id} device_id=${device_id} text_length=${textLength}`);
         return jsonResponse({ success: false, error: 'failed to play tts' });
       }
+      songloft.log.info(`[/mina/tts] success account_id=${account_id} device_id=${device_id} text_length=${textLength}`);
       return jsonResponse({ success: true, data: { message: 'tts playing' } });
     } catch (e: any) {
+      songloft.log.error('[/mina/tts] error: ' + String(e));
       return jsonResponse({ success: false, error: e.message || String(e) });
     }
   });

@@ -19,23 +19,42 @@ export interface FetchOptions {
   redirect?: 'follow' | 'manual';
 }
 
+type HeaderValue = string | string[];
+
 /** 响应头包装器（支持 case-insensitive get + getSetCookie） */
 class ResponseHeaders {
-  private _raw: Record<string, string>;
-  constructor(raw: Record<string, string>) {
+  private _raw: Record<string, HeaderValue>;
+  constructor(raw: Record<string, HeaderValue>) {
     this._raw = raw || {};
   }
   get(name: string): string | null {
+    const direct = this._raw[name];
+    if (direct !== undefined) return Array.isArray(direct) ? direct.join(', ') : direct;
+    const lower = name.toLowerCase();
+    for (const key of Object.keys(this._raw)) {
+      if (key.toLowerCase() === lower) {
+        const value = this._raw[key];
+        return Array.isArray(value) ? value.join(', ') : value;
+      }
+    }
+    return null;
+  }
+  getSetCookie(): string[] {
+    const raw = this.getRaw('set-cookie');
+    if (!raw) return [];
+    if (Array.isArray(raw)) {
+      return raw.flatMap(v => splitSetCookieHeader(String(v)));
+    }
+    return splitSetCookieHeader(String(raw));
+  }
+
+  private getRaw(name: string): HeaderValue | null {
     if (this._raw[name] !== undefined) return this._raw[name];
     const lower = name.toLowerCase();
     for (const key of Object.keys(this._raw)) {
       if (key.toLowerCase() === lower) return this._raw[key];
     }
     return null;
-  }
-  getSetCookie(): string[] {
-    const raw = this.get('set-cookie');
-    return raw ? [raw] : [];
   }
 }
 
@@ -70,11 +89,11 @@ export async function httpFetch(
 
   const resp = await fetch(url, { method, headers, body });
   // 把 Response.headers 拆成普通对象，方便 ResponseHeaders 包装。
-  const headerObj: Record<string, string> = {};
+  const headerObj: Record<string, HeaderValue> = {};
   if (resp.headers && typeof (resp.headers as unknown as Record<string, unknown>) === 'object') {
     // QuickJS polyfill 的 fetch.headers 是一个普通对象。
-    for (const k of Object.keys(resp.headers as unknown as Record<string, string>)) {
-      headerObj[k] = (resp.headers as unknown as Record<string, string>)[k];
+    for (const k of Object.keys(resp.headers as unknown as Record<string, HeaderValue>)) {
+      headerObj[k] = (resp.headers as unknown as Record<string, HeaderValue>)[k];
     }
   }
   const text = await resp.text();

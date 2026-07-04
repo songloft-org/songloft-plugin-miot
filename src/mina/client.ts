@@ -9,13 +9,16 @@ import { isPollDebug } from '../utils/debug';
 import {
   MINA_API_BASE_URL,
   MINA_SID,
+  XIAOMI_IO_SID,
   SERVICE_TOKEN_VALID_HOURS,
   MAX_RETRIES,
   formatUserAgent,
   formatLatestAskUrl,
   shouldUseMinaForAsk,
   needUsePlayMusicAPI,
+  getTTSCommand,
 } from './constants';
+import { MiIOClient } from '../miio/client';
 import type { XiaomiTokenInfo, MinaDevice, AskMessage } from '../types';
 import type { DeviceInfoRaw, DeviceListResponse, UbusResponse, NlpResultData, NlpInfoData, NlpDetail, ConversationData, MusicSearchResponse } from './models';
 
@@ -321,13 +324,52 @@ export class MinaHTTPClient {
    * 优先走 mibrain/text_to_speech（多数固件真正的语音播报入口），
    * 失败再回退到旧的 mediaplayer/player_play_tts（部分老设备）。
    */
-  async textToSpeech(deviceId: string, text: string): Promise<boolean> {
+  async textToSpeech(deviceId: string, text: string, options?: { hardware?: string; miotDID?: string }): Promise<boolean> {
+    const textLength = text.length;
+    const hardware = options?.hardware || '';
+    const miotDID = options?.miotDID || '';
+    const ttsCommand = getTTSCommand(hardware);
+
+    if (ttsCommand) {
+      if (miotDID && this.hasXiaomiIOToken()) {
+        try {
+          songloft.log.info(`[MinaClient] textToSpeech using MiIO TTS command hardware=${hardware} did=${miotDID} command=${ttsCommand} text_length=${textLength}`);
+          const ok = await new MiIOClient(this.tokenInfo).textToSpeechByCommand(miotDID, ttsCommand, text);
+          if (ok) {
+            return true;
+          }
+          songloft.log.warn(`[MinaClient] MiIO TTS command failed, falling back to Mina UBus hardware=${hardware} device=${deviceId}`);
+        } catch (e) {
+          songloft.log.warn(`[MinaClient] MiIO TTS command error, falling back to Mina UBus hardware=${hardware} device=${deviceId}: ${String(e)}`);
+        }
+      } else {
+        songloft.log.warn(`[MinaClient] MiIO TTS command unavailable hardware=${hardware} did=${miotDID || ''} has_xiaomiio=${this.hasXiaomiIOToken()}`);
+      }
+    }
+
     const message = { text };
-    if ((await this.ubusRequest(deviceId, 'text_to_speech', 'mibrain', message)) !== null) {
+    songloft.log.info(`[MinaClient] textToSpeech start device=${deviceId} hardware=${hardware} text_length=${textLength}`);
+
+    const mibrainResult = await this.ubusRequest(deviceId, 'text_to_speech', 'mibrain', message, 'tts:mibrain');
+    if (mibrainResult !== null) {
+      songloft.log.info(`[MinaClient] textToSpeech success endpoint=mibrain/text_to_speech device=${deviceId} code=${mibrainResult.code}`);
       return true;
     }
-    songloft.log.warn('[MinaClient] text_to_speech/mibrain failed, falling back to player_play_tts/mediaplayer');
-    return (await this.ubusRequest(deviceId, 'player_play_tts', 'mediaplayer', message)) !== null;
+    songloft.log.warn(`[MinaClient] text_to_speech/mibrain failed, falling back to player_play_tts/mediaplayer device=${deviceId}`);
+
+    const fallbackResult = await this.ubusRequest(deviceId, 'player_play_tts', 'mediaplayer', message, 'tts:mediaplayer');
+    if (fallbackResult !== null) {
+      songloft.log.info(`[MinaClient] textToSpeech success endpoint=mediaplayer/player_play_tts device=${deviceId} code=${fallbackResult.code}`);
+      return true;
+    }
+
+    songloft.log.warn(`[MinaClient] textToSpeech failed on all endpoints device=${deviceId} text_length=${textLength}`);
+    return false;
+  }
+
+  private hasXiaomiIOToken(): boolean {
+    const service = this.tokenInfo.services[XIAOMI_IO_SID];
+    return !!(service && service.service_token && service.ssecurity && (!service.expires_at || service.expires_at > Date.now()));
   }
 
   // ===== 对话记录 =====
@@ -417,7 +459,7 @@ export class MinaHTTPClient {
   /**
    * 执行 UBus 请求
    */
-  async ubusRequest(deviceId: string, method: string, path: string, message: Record<string, unknown>): Promise<UbusResponse | null> {
+  async ubusRequest(deviceId: string, method: string, path: string, message: Record<string, unknown>, logLabel = ''): Promise<UbusResponse | null> {
     const apiUrl = `${MINA_API_BASE_URL}/remote/ubus`;
     const requestId = this.generateRequestId();
 
@@ -433,19 +475,55 @@ export class MinaHTTPClient {
       .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`)
       .join('&');
 
-    const result = await this.doPostRequest<UbusResponse>(apiUrl, body);
+    if (logLabel) {
+      songloft.log.info(`[MinaClient] ${logLabel} ubus request device=${deviceId} path=${path} method=${method} request_id=${requestId} message=${this.summarizeUbusMessageForLog(message)}`);
+    }
+
+    const result = await this.doPostRequest<UbusResponse>(apiUrl, body, logLabel);
 
     // 如果401并且有回调，尝试刷新
     if (result === null) {
+      if (logLabel) {
+        songloft.log.warn(`[MinaClient] ${logLabel} ubus request returned null device=${deviceId} path=${path} method=${method}`);
+      }
       return null;
     }
 
     // 检查响应码
     if (result.code !== 0) {
+      if (logLabel) {
+        songloft.log.warn(`[MinaClient] ${logLabel} ubus non-zero code=${result.code} message=${result.message || ''} data=${this.summarizeForLog(result.data)}`);
+      }
       return null;
     }
 
+    if (logLabel) {
+      songloft.log.info(`[MinaClient] ${logLabel} ubus success code=${result.code} message=${result.message || ''} data=${this.summarizeForLog(result.data)}`);
+    }
     return result;
+  }
+
+  private summarizeForLog(value: unknown, maxLength = 600): string {
+    if (value === undefined) return 'undefined';
+    if (value === null) return 'null';
+    try {
+      const text = typeof value === 'string' ? value : JSON.stringify(value);
+      return text.length > maxLength ? text.slice(0, maxLength) + '...(truncated)' : text;
+    } catch {
+      return String(value);
+    }
+  }
+
+  private summarizeUbusMessageForLog(message: Record<string, unknown>): string {
+    const summary: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(message)) {
+      if (key === 'text' && typeof value === 'string') {
+        summary.text_length = value.length;
+      } else {
+        summary[key] = value;
+      }
+    }
+    return this.summarizeForLog(summary);
   }
 
   /**
@@ -498,7 +576,7 @@ export class MinaHTTPClient {
   /**
    * 执行 POST 请求（带401重试）
    */
-  private async doPostRequest<T>(url: string, body: string): Promise<T | null> {
+  private async doPostRequest<T>(url: string, body: string, logLabel = ''): Promise<T | null> {
     const headers: Record<string, string> = {
       'User-Agent': this.userAgent,
       'Content-Type': 'application/x-www-form-urlencoded',
@@ -509,12 +587,21 @@ export class MinaHTTPClient {
     try {
       const fetchResult = await fetchWithRedirects(url, { method: 'POST', headers, body }, new CookieJar(), 0);
       response = fetchResult.response;
-    } catch {
+      if (logLabel) {
+        songloft.log.info(`[MinaClient] ${logLabel} HTTP POST status=${response.status}`);
+      }
+    } catch (e) {
+      if (logLabel) {
+        songloft.log.warn(`[MinaClient] ${logLabel} HTTP POST fetch failed: ${String(e)}`);
+      }
       return null;
     }
 
     // 401 处理
     if (response.status === 401) {
+      if (logLabel) {
+        songloft.log.warn(`[MinaClient] ${logLabel} HTTP POST got 401, refreshing token`);
+      }
       if (this.onTokenExpired) {
         const refreshed = await this.onTokenExpired();
         if (refreshed) {
@@ -523,22 +610,45 @@ export class MinaHTTPClient {
           try {
             const retryResult = await fetchWithRedirects(url, { method: 'POST', headers, body }, new CookieJar(), 0);
             response = retryResult.response;
-          } catch {
+            if (logLabel) {
+              songloft.log.info(`[MinaClient] ${logLabel} HTTP POST retry status=${response.status}`);
+            }
+          } catch (e) {
+            if (logLabel) {
+              songloft.log.warn(`[MinaClient] ${logLabel} HTTP POST retry failed: ${String(e)}`);
+            }
             return null;
           }
-          if (response.status === 401) return null;
+          if (response.status === 401) {
+            if (logLabel) {
+              songloft.log.warn(`[MinaClient] ${logLabel} HTTP POST still 401 after token refresh`);
+            }
+            return null;
+          }
         } else {
+          if (logLabel) {
+            songloft.log.warn(`[MinaClient] ${logLabel} token refresh failed`);
+          }
           return null;
         }
       } else {
+        if (logLabel) {
+          songloft.log.warn(`[MinaClient] ${logLabel} no token refresh callback`);
+        }
         return null;
       }
     }
 
     try {
       const text = response.text() as string;
+      if (logLabel) {
+        songloft.log.info(`[MinaClient] ${logLabel} HTTP POST response=${this.summarizeForLog(text)}`);
+      }
       return JSON.parse(text) as T;
-    } catch {
+    } catch (e) {
+      if (logLabel) {
+        songloft.log.warn(`[MinaClient] ${logLabel} HTTP POST parse failed: ${String(e)}`);
+      }
       return null;
     }
   }

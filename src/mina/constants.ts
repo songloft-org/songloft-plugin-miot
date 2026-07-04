@@ -13,6 +13,15 @@ export const MINA_API_BASE_URL = `https://${MINA_API_HOST}`;
 /** 小爱音箱服务标识符 */
 export const MINA_SID = 'micoapi';
 
+/** 米家 / MIoT 服务标识符（用于 MiIO RPC） */
+export const XIAOMI_IO_SID = 'xiaomiio';
+
+/** 米家 MiIO API 基础 URL */
+export const MIIO_API_BASE_URL = 'https://api.io.mi.com/app';
+
+/** MiIO API User-Agent（与 mi-gpt / mi-service-lite 的 MiIOT 请求对齐） */
+export const MIIO_USER_AGENT = 'MICO/AndroidApp/@SHIP.TO.2A2FE0D7@/2.4.40';
+
 /** 用户代理模板（%s 将被替换为 deviceID） */
 export const USER_AGENT_TEMPLATE = 'Android-7.1.1-1.0.0-ONEPLUS A3010-136-%s APP/xiaomi.smarthome APPV/62830';
 
@@ -76,6 +85,32 @@ export const NEED_USE_PLAY_MUSIC_API: Record<string, boolean> = {
 };
 
 /**
+ * 支持通过 MIoT action 播放 TTS 的设备型号。
+ * 映射值为 xiaomusic 的 TTS command: "<siid>-<aiid>"。
+ */
+export const TTS_COMMAND: Record<string, string> = {
+  OH2: '5-3',
+  OH2P: '7-3',
+  LX06: '5-1',
+  S12: '5-1',
+  L15A: '7-3',
+  LX5A: '5-1',
+  LX01: '5-1',
+  LX05: '5-1',
+  X10A: '7-3',
+  L17A: '7-3',
+  ASX4B: '5-3',
+  L06A: '5-1',
+  L05B: '5-3',
+  L05C: '5-3',
+  X6A: '7-3',
+  X08E: '7-3',
+  X8F: '7-3',
+  L09A: '3-1',
+  LX04: '5-1',
+};
+
+/**
  * 判断指定硬件型号是否需要通过 Mina 方式获取对话记录
  */
 export function shouldUseMinaForAsk(hardware: string): boolean {
@@ -90,6 +125,13 @@ export function needUsePlayMusicAPI(hardware: string, extraModels?: string[]): b
   if (NEED_USE_PLAY_MUSIC_API[hardware] === true) return true;
   if (extraModels && extraModels.includes(hardware)) return true;
   return false;
+}
+
+/**
+ * 获取指定硬件型号的 MIoT TTS command。
+ */
+export function getTTSCommand(hardware: string): string {
+  return TTS_COMMAND[hardware] || '';
 }
 
 /**
