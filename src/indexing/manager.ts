@@ -13,9 +13,9 @@ export interface IndexedSong {
   title: string;
   artist: string;
   album: string;
-  titleLower: string;   // 小写化用于搜索
-  artistLower: string;  // 小写化用于搜索
-  albumLower: string;   // 小写化用于搜索
+  titleLower: string;   // 归一化匹配键（小写+剥装饰标点），字段名沿用 Lower
+  artistLower: string;  // 归一化匹配键
+  albumLower: string;   // 归一化匹配键
   titlePinyin: string;  // 拼音（无声调、空格分隔）用于同音字匹配
   artistPinyin: string;
   albumPinyin: string;
@@ -289,9 +289,21 @@ function getCachedPinyin(text: string): string {
   return value;
 }
 
+/**
+ * 匹配用归一化：转小写并剥离空格、装饰性括号与标点。
+ * 使「明天，你好」「《明天你好》」「【Hi-res】」这类装饰标题能与纯歌名 query 连续子串比对
+ * （例如外部搜索导入的 B 站装饰标题）。只用于生成匹配字段，不影响展示用的原始 title。
+ */
+function normalizeForMatch(s: string): string {
+  return (s || '')
+    .toLowerCase()
+    .replace(/[\s　《》【】「」『』〔〕〈〉（）()\[\]{}，,。.、·!！?？~～—\-_:：;；'"'"…]/g, '');
+}
+
 /** 对 query 分词并预算每个 token 的拼音，供跨字段匹配复用（每次搜索算一次） */
 function tokenizeQuery(query: string): QueryTokens {
-  const tokens = segmentQuery(query);
+  // token 与索引匹配字段用同一归一化，保证「明天你好」能命中装饰标题「明天，你好」。
+  const tokens = segmentQuery(query).map(normalizeForMatch).filter(t => t.length > 0);
   const pys = tokens.map(t => (Array.from(t).length >= TOKEN_FUZZY_MIN_LEN ? getCachedPinyin(t) : ''));
   return { tokens, pys };
 }
@@ -414,17 +426,20 @@ export class IndexingManager {
       const title = song.title ?? '';
       const artist = song.artist ?? '';
       const album = song.album ?? '';
+      const titleNorm = normalizeForMatch(title);
+      const artistNorm = normalizeForMatch(artist);
+      const albumNorm = normalizeForMatch(album);
       out.push({
         id: song.id,
         title,
         artist,
         album,
-        titleLower: title.toLowerCase(),
-        artistLower: artist.toLowerCase(),
-        albumLower: album.toLowerCase(),
-        titlePinyin: getCachedPinyin(title),
-        artistPinyin: getCachedPinyin(artist),
-        albumPinyin: getCachedPinyin(album),
+        titleLower: titleNorm,
+        artistLower: artistNorm,
+        albumLower: albumNorm,
+        titlePinyin: getCachedPinyin(titleNorm),
+        artistPinyin: getCachedPinyin(artistNorm),
+        albumPinyin: getCachedPinyin(albumNorm),
       });
 
       if (i > 0 && i % LIGHT_INDEX_BATCH_SIZE === 0) {
@@ -441,17 +456,20 @@ export class IndexingManager {
       const title = (s as any).title ?? '';
       const artist = (s as any).artist ?? '';
       const album = (s as any).album ?? '';
+      const titleNorm = normalizeForMatch(title);
+      const artistNorm = normalizeForMatch(artist);
+      const albumNorm = normalizeForMatch(album);
       out.push({
         id: s.id,
         title,
         artist,
         album,
-        titleLower: title.toLowerCase(),
-        artistLower: artist.toLowerCase(),
-        albumLower: album.toLowerCase(),
-        titlePinyin: getCachedPinyin(title),
-        artistPinyin: getCachedPinyin(artist),
-        albumPinyin: getCachedPinyin(album),
+        titleLower: titleNorm,
+        artistLower: artistNorm,
+        albumLower: albumNorm,
+        titlePinyin: getCachedPinyin(titleNorm),
+        artistPinyin: getCachedPinyin(artistNorm),
+        albumPinyin: getCachedPinyin(albumNorm),
       });
 
       if (i > 0 && i % LIGHT_INDEX_BATCH_SIZE === 0) {
@@ -882,12 +900,12 @@ export class IndexingManager {
     const title = song.title ?? '';
     const artist = song.artist ?? '';
     const album = song.album ?? '';
-    const titleLower = title.toLowerCase();
-    const artistLower = artist.toLowerCase();
-    const albumLower = album.toLowerCase();
-    const titlePinyin = getCachedPinyin(title);
-    const artistPinyin = getCachedPinyin(artist);
-    const albumPinyin = getCachedPinyin(album);
+    const titleLower = normalizeForMatch(title);
+    const artistLower = normalizeForMatch(artist);
+    const albumLower = normalizeForMatch(album);
+    const titlePinyin = getCachedPinyin(titleLower);
+    const artistPinyin = getCachedPinyin(artistLower);
+    const albumPinyin = getCachedPinyin(albumLower);
 
     const entry: IndexedSong = {
       id: song.id,
