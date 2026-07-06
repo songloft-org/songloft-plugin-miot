@@ -83,6 +83,15 @@ export interface MinaDevice {
 /** 搜歌优先级策略 */
 export type SearchPriority = 'parallel' | 'local_first' | 'external_first';
 
+/** 单个外部搜索源 */
+export interface ExternalSearchSource {
+  id: string;        // 插件源用 provider id（如 'subsonic'），自定义源用 'src_<ts>_<rand>'
+  name: string;      // 显示名
+  url: string;       // 完整 http(s) URL 或 '/' 开头相对路径（走宿主 loopback 调其他插件）
+  token?: string;    // 可选认证，空则回落插件 token
+  enabled: boolean;  // 单源启用开关
+}
+
 /** 插件全局配置 */
 export interface PluginConfig {
   version: string;
@@ -92,9 +101,12 @@ export interface PluginConfig {
   voice_command_enabled: boolean;
   scheduled_tasks_enabled: boolean;
   force_mp3: boolean;
-  external_search_enabled: boolean; // 是否启用外部搜索
+  external_search_enabled: boolean; // 是否启用外部搜索（全局总开关）
+  /** @deprecated 迁移到 external_search_sources[0]，仅读取用于兼容 */
   external_search_url: string;      // 外部搜索 API 地址
+  /** @deprecated 迁移到 external_search_sources[0]，仅读取用于兼容 */
   external_search_token: string;    // 外部搜索 Token 认证
+  external_search_sources: ExternalSearchSource[]; // 外部搜索源列表，数组顺序即优先级
   external_search_playlist_id: string; // 外部搜索导入后追加到的歌单 ID，空串表示不追加
   external_search_timeout: number;     // 外部搜索超时（秒），默认 6
   search_priority: SearchPriority;     // 搜歌优先级策略

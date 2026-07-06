@@ -5,6 +5,7 @@
 
 import type {
   PluginConfig,
+  ExternalSearchSource,
   AccountConfig,
   DeviceConfig,
   WebhookConfig,
@@ -39,6 +40,7 @@ function defaultPluginConfig(): PluginConfig {
     external_search_enabled: false,
     external_search_url: '',
     external_search_token: '',
+    external_search_sources: [],
     external_search_playlist_id: '',
     external_search_timeout: 6,
     search_priority: 'parallel',
@@ -117,7 +119,39 @@ export class ConfigManager {
       this.configCache = this.load<Partial<PluginConfig>>(STORAGE_KEY_CONFIG, {});
     }
     const stored = await this.configCache;
-    return { ...defaultPluginConfig(), ...stored };
+    const merged = { ...defaultPluginConfig(), ...stored };
+    // 惰性迁移：把旧单值外部搜索源归一化为源列表（不写盘，每次读计算）
+    merged.external_search_sources = this.normalizeSearchSources(merged);
+    return merged;
+  }
+
+  /**
+   * 归一化外部搜索源列表：清洗数组；若数组为空但存在旧单值配置，则迁移为单元素列表。
+   */
+  private normalizeSearchSources(cfg: PluginConfig): ExternalSearchSource[] {
+    const arr = Array.isArray(cfg.external_search_sources) ? cfg.external_search_sources : [];
+    const valid = arr
+      .filter((s) => s && typeof s.url === 'string')
+      .map((s) => ({
+        id: s.id || `src_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+        name: typeof s.name === 'string' ? s.name : '',
+        url: (s.url || '').trim(),
+        token: typeof s.token === 'string' ? s.token.trim() : '',
+        enabled: s.enabled !== false,
+      }))
+      .filter((s) => s.url !== '');
+    if (valid.length > 0) return valid;
+    const legacyUrl = (cfg.external_search_url || '').trim();
+    if (legacyUrl) {
+      return [{
+        id: 'legacy',
+        name: '已迁移的搜索源',
+        url: legacyUrl,
+        token: (cfg.external_search_token || '').trim(),
+        enabled: true,
+      }];
+    }
+    return [];
   }
 
   /** 保存插件全局配置 */

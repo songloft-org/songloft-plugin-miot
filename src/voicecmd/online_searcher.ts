@@ -8,6 +8,7 @@ import { getHostAPIBaseUrl } from '../utils/http';
 import { URLBuilder } from '../player/url_builder';
 import { ConfigManager } from '../config/manager';
 import { IndexingManager } from '../indexing/manager';
+import type { ExternalSearchSource } from '../types';
 
 // 外部搜索 API 请求体
 interface SearchOneRequest {
@@ -84,43 +85,45 @@ export class OnlineSearcher {
   }
 
   /**
-   * 检查是否配置了外部搜索 API
+   * 检查是否配置了外部搜索源（总开关开启且至少有一个启用且有 url 的源）
    */
   async isExternalSearchConfigured(): Promise<boolean> {
-    const config = await this.configManager.getConfig();
-    return config.external_search_enabled && !!config.external_search_url && config.external_search_url.trim() !== '';
+    const sources = await this.getEnabledSources();
+    return sources.length > 0;
   }
 
   /**
-   * 获取外部搜索 API 的完整地址
+   * 获取当前生效的外部搜索源列表（总开关关闭返回空；数组顺序即优先级）
+   */
+  private async getEnabledSources(): Promise<ExternalSearchSource[]> {
+    const config = await this.configManager.getConfig();
+    if (!config.external_search_enabled) return [];
+    return config.external_search_sources.filter((s) => s.enabled && (s.url || '').trim() !== '');
+  }
+
+  /**
+   * 解析单个源的完整地址
    * 支持两种输入：
    * 1. 完整 URL（以 http:// 或 https:// 开头）直接返回
-   * 2. 相对路径（以 / 开头）拼接服务器地址
+   * 2. 相对路径（以 / 开头）拼接宿主 loopback 地址（调用其他已安装插件）
    */
-  private async getSearchBaseUrl(): Promise<string> {
-    const config = await this.configManager.getConfig();
-    const searchUrl = config.external_search_url?.trim() || '';
-
-    if (!searchUrl) {
-      return '';
-    }
-
+  private async resolveSourceUrl(source: ExternalSearchSource): Promise<string> {
+    const searchUrl = (source.url || '').trim();
+    if (!searchUrl) return '';
     if (searchUrl.startsWith('http://') || searchUrl.startsWith('https://')) {
       return searchUrl;
     }
-
     // 相对路径 = 内部插件/宿主接口，走 loopback API 地址（避免 hairpin NAT）
     const host = await getHostAPIBaseUrl();
     return host + searchUrl;
   }
 
   /**
-   * 获取认证 Token
-   * 用户配置的 token 优先，否则使用插件 token
+   * 解析单个源的认证 Token
+   * 源自定义的 token 优先，否则使用插件 token
    */
-  private async getAuthToken(): Promise<string> {
-    const config = await this.configManager.getConfig();
-    const userToken = config.external_search_token?.trim();
+  private async resolveSourceToken(source: ExternalSearchSource): Promise<string> {
+    const userToken = (source.token || '').trim();
     if (userToken) {
       return userToken;
     }
@@ -129,15 +132,47 @@ export class OnlineSearcher {
   }
 
   /**
-   * 在线搜索歌曲，仅返回 provider 给出的候选，不导入也不播放。
+   * 在线搜索歌曲：并发向所有启用源派发请求，但严格按列表顺序采纳结果
+   * （源0 命中即用源0，否则看源1……）。仅返回候选，不导入也不播放。
    *
    * @param keyword       搜索关键词
    * @param hint         可选的歌曲提示（title/artist/duration）
-   * @returns 搜索候选，未命中或请求失败返回 null
+   * @returns 搜索候选，全部未命中或请求失败返回 null
    */
   async search(
     keyword: string,
     hint: { title: string; artist?: string; duration?: number } | null,
+  ): Promise<OnlineSearchResult | null> {
+    const sources = await this.getEnabledSources();
+    if (sources.length === 0) return null;
+
+    const config = await this.configManager.getConfig();
+    const timeoutSec = config.external_search_timeout > 0 ? config.external_search_timeout : 6;
+    const timeoutMs = timeoutSec * 1000;
+
+    // 立即并发派发所有源；searchOne 内部 catch，绝不 reject
+    const tasks = sources.map((s) => this.searchOne(s, keyword, hint, timeoutMs));
+
+    // 按优先级顺序消费：命中即返回（只等到该源），未命中再看下一个
+    for (let i = 0; i < tasks.length; i++) {
+      const r = await tasks[i];
+      if (r) {
+        songloft.log.info(`[OnlineSearcher] Hit from source[${i}] "${sources[i].name || sources[i].url}" for keyword: ${keyword}`);
+        return r;
+      }
+    }
+    songloft.log.warn('[OnlineSearcher] No source matched for keyword: ' + keyword);
+    return null;
+  }
+
+  /**
+   * 向单个源发起一次搜索。内部处理超时/网络错/解析失败，全部返回 null，绝不 reject。
+   */
+  private async searchOne(
+    source: ExternalSearchSource,
+    keyword: string,
+    hint: { title: string; artist?: string; duration?: number } | null,
+    timeoutMs: number,
   ): Promise<OnlineSearchResult | null> {
     const reqBody: SearchOneRequest = {
       keyword,
@@ -147,18 +182,15 @@ export class OnlineSearcher {
 
     let resp: SearchOneResponse | null = null;
 
-    const config = await this.configManager.getConfig();
-    const timeoutSec = config.external_search_timeout > 0 ? config.external_search_timeout : 6;
-    const timeoutMs = timeoutSec * 1000;
-
     // 带超时的 fetch（用 Promise.race 替代 AbortController，兼容 QuickJS）
     const timeoutPromise = new Promise<never>((_, reject) => {
       setTimeout(() => reject(new Error('AbortError')), timeoutMs);
     });
 
     try {
-      const baseUrl = await this.getSearchBaseUrl();
-      const authToken = await this.getAuthToken();
+      const baseUrl = await this.resolveSourceUrl(source);
+      if (!baseUrl) return null;
+      const authToken = await this.resolveSourceToken(source);
       songloft.log.info('[OnlineSearcher] [Diag] Request POST ' + baseUrl + ' body=' + JSON.stringify(reqBody));
       const fetchPromise = fetch(baseUrl, {
         method: 'POST',
@@ -177,7 +209,7 @@ export class OnlineSearcher {
       }
     } catch (e: any) {
       if (e.message === 'AbortError') {
-        songloft.log.warn(`[OnlineSearcher] Search/topone timeout (>${timeoutSec}s) for keyword: ` + keyword);
+        songloft.log.warn(`[OnlineSearcher] Search/topone timeout (>${timeoutMs / 1000}s) for source "${source.name || source.url}" keyword: ` + keyword);
       } else {
         songloft.log.warn('[OnlineSearcher] Search/topone fetch error: ' + String(e));
       }

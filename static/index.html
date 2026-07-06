@@ -586,20 +586,14 @@
 
                     <div id="externalSearchConfigPanel" style="display:none;margin-top:12px">
                         <div style="margin-bottom:10px">
-                            <div style="font-size:12px;color:var(--md-on-surface-variant);margin-bottom:4px;font-weight:500">搜索接口</div>
-                            <select id="externalSearchProviderSelect" class="text-field" style="width:100%;font-size:13px;padding:7px 10px" aria-label="搜索接口选择">
-                                <option value="custom">自定义</option>
-                            </select>
-                        </div>
-                        <div id="externalSearchCustomPanel">
-                            <div style="margin-bottom:10px">
-                                <div style="font-size:12px;color:var(--md-on-surface-variant);margin-bottom:4px;font-weight:500">搜索 API 地址</div>
-                                <input type="text" id="externalSearchUrlInput" class="text-field" style="font-size:13px;padding:7px 10px" placeholder="https://example.com/api/search/topone" aria-label="外部搜索 API 地址">
+                            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
+                                <div style="font-size:12px;color:var(--md-on-surface-variant);font-weight:500">搜索源（靠前优先）</div>
+                                <button class="btn-text btn-sm" id="addSearchSourceBtn" type="button" style="display:flex;align-items:center;gap:2px;font-size:13px">
+                                    <span class="material-symbols-outlined" style="font-size:16px">add</span> 添加源
+                                </button>
                             </div>
-                            <div style="margin-top:10px">
-                                <div style="font-size:12px;color:var(--md-on-surface-variant);margin-bottom:4px;font-weight:500">Authorization Token 认证（可选,为空则使用插件Token）</div>
-                                <input type="text" id="externalSearchTokenInput" class="text-field" style="font-size:13px;padding:7px 10px" placeholder="Bearer *****" aria-label="外部搜索认证 Token">
-                            </div>
+                            <div id="externalSearchSourceList"></div>
+                            <div id="externalSearchSourceEmpty" style="font-size:12px;color:#999;padding:8px 0;display:none">暂无搜索源，点击「添加源」添加已安装插件或自定义接口。</div>
                         </div>
                         <div style="margin-top:10px">
                             <div style="font-size:12px;color:var(--md-on-surface-variant);margin-bottom:4px;font-weight:500">搜索超时（秒）</div>
@@ -652,12 +646,7 @@
 
                     <div style="margin-top:12px;padding:10px 12px;background:rgba(0,0,0,0.03);border-radius:6px">
                         <div style="font-size:12px;color:var(--md-on-surface-variant);margin-bottom:6px;font-weight:500">接口测试</div>
-                        <div style="display:flex;gap:6px">
-                            <input type="text" id="externalSearchTestInput" class="text-field" style="flex:1;font-size:13px;padding:6px 10px" placeholder="输入搜索关键字" aria-label="外部搜索测试关键字">
-                            <button class="btn-filled" id="externalSearchTestBtn" style="padding:6px 16px">
-                                <span class="material-symbols-outlined" style="font-size:16px">send</span>
-                            </button>
-                        </div>
+                        <input type="text" id="externalSearchTestInput" class="text-field" style="width:100%;font-size:13px;padding:6px 10px" placeholder="输入测试关键字，再点某个源的测试按钮" aria-label="外部搜索测试关键字">
                         <div id="externalSearchTestResult" style="margin-top:8px;font-size:12px;color:var(--md-on-surface-variant);white-space:pre-wrap;word-break:break-all;display:none"></div>
                     </div>
                 </div>

@@ -118,18 +118,14 @@ export function loadConfig() {
             }
             updateExternalSearchConfig(externalSearchEnabled);
 
-            const savedUrl = data.data.external_search_url || '';
-            const savedToken = data.data.external_search_token || '';
-            const currentProvider = detectProvider(savedUrl);
-
-            const externalSearchUrlInput = document.getElementById('externalSearchUrlInput');
-            if (externalSearchUrlInput) {
-                externalSearchUrlInput.value = savedUrl;
-            }
-            const externalSearchTokenInput = document.getElementById('externalSearchTokenInput');
-            if (externalSearchTokenInput) {
-                externalSearchTokenInput.value = savedToken;
-            }
+            // 外部搜索源列表
+            currentSearchSources = (data.data.external_search_sources || []).map(s => ({
+                id: s.id || `src_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+                name: s.name || '',
+                url: s.url || '',
+                token: s.token || '',
+                enabled: s.enabled !== false,
+            }));
 
             const externalSearchTimeoutInput = document.getElementById('externalSearchTimeoutInput');
             if (externalSearchTimeoutInput) {
@@ -137,8 +133,8 @@ export function loadConfig() {
             }
             setSearchPriority(data.data.search_priority || 'parallel');
 
-            updateProviderUI(currentProvider);
-            loadSearchProviders(currentProvider);
+            // 加载已安装插件列表后渲染源列表
+            loadInstalledProviders();
             const externalSearchAppendSwitch = document.getElementById('externalSearchAppendPlaylistSwitch');
             const externalSearchPlaylistPanel = document.getElementById('externalSearchPlaylistPanel');
             const externalSearchPlaylistSelect = document.getElementById('externalSearchPlaylistSelect');
@@ -603,11 +599,10 @@ function saveExtraMusicApiModels() {
 
 // ========== 外部搜索配置 ==========
 
-const KNOWN_PROVIDERS = {
-    ytdlp:    { url: '/api/v1/jsplugin/ytdlp/api/search/topone' },
-    bili:     { url: '/api/v1/jsplugin/bili/api/search/topone' },
-    subsonic: { url: '/api/v1/jsplugin/subsonic/api/search/topone' },
-};
+// 当前编辑中的搜索源列表（数组顺序即优先级）
+let currentSearchSources = [];
+// 已安装且可作为搜索源的插件（来自后端 /search-providers，仅 installed）
+let installedProviders = [];
 
 const SEARCH_PRIORITIES = new Set(['parallel', 'local_first', 'external_first']);
 
@@ -627,66 +622,128 @@ function getSearchPriority() {
     return normalizeSearchPriority(selected ? selected.value : 'parallel');
 }
 
-function detectProvider(url) {
-    if (!url) return 'custom';
-    for (const [id, p] of Object.entries(KNOWN_PROVIDERS)) {
-        if (url === p.url) return id;
-    }
-    return 'custom';
+// 根据 url 反查对应的已安装插件源（相对路径匹配）
+function providerForUrl(url) {
+    return installedProviders.find(p => p.url === url);
 }
 
-function updateProviderUI(providerId) {
-    const customPanel = document.getElementById('externalSearchCustomPanel');
-    if (customPanel) {
-        customPanel.style.display = providerId === 'custom' ? 'block' : 'none';
-    }
-    if (providerId !== 'custom' && KNOWN_PROVIDERS[providerId]) {
-        const urlInput = document.getElementById('externalSearchUrlInput');
-        if (urlInput) urlInput.value = KNOWN_PROVIDERS[providerId].url;
-        const tokenInput = document.getElementById('externalSearchTokenInput');
-        if (tokenInput) tokenInput.value = '';
-    }
-}
-
-function renderSearchProviders(select, providers, currentProviderId) {
-    while (select.options.length > 1) {
-        select.removeChild(select.lastChild);
-    }
-
-    for (const p of providers) {
-        if (!p.installed) continue;
-        const opt = document.createElement('option');
-        opt.value = p.id;
-        if (!p.active) {
-            opt.textContent = `${p.name}（未启用）`;
-            opt.disabled = true;
-        } else {
-            opt.textContent = p.name;
-        }
-        select.appendChild(opt);
-    }
-
-    if (currentProviderId && currentProviderId !== 'custom') {
-        select.value = currentProviderId;
-        // 目标源已卸载（选项不存在）时 select.value 不会生效，回落到自定义并展示已保存的 URL
-        if (select.value !== currentProviderId) {
-            select.value = 'custom';
-            updateProviderUI('custom');
-        }
-    }
-}
-
-function loadSearchProviders(currentProviderId, isRetry) {
+// 从后端拉取已安装插件列表，随后渲染源列表
+function loadInstalledProviders(isRetry) {
     apiGet('/search-providers').then(data => {
-        const select = document.getElementById('externalSearchProviderSelect');
-        if (!select || !data.providers) return;
-        renderSearchProviders(select, data.providers, currentProviderId);
+        installedProviders = (data && data.providers) ? data.providers.filter(p => p.installed) : [];
+        renderSearchSources();
     }).catch(e => {
         console.warn('Failed to load search providers:', e);
+        installedProviders = [];
+        renderSearchSources();
         if (!isRetry) {
-            setTimeout(() => loadSearchProviders(currentProviderId, true), 1000);
+            setTimeout(() => loadInstalledProviders(true), 1000);
         }
     });
+}
+
+// 渲染搜索源列表
+function renderSearchSources() {
+    const list = document.getElementById('externalSearchSourceList');
+    const empty = document.getElementById('externalSearchSourceEmpty');
+    if (!list) return;
+    if (currentSearchSources.length === 0) {
+        list.innerHTML = '';
+        if (empty) empty.style.display = 'block';
+        return;
+    }
+    if (empty) empty.style.display = 'none';
+
+    list.innerHTML = currentSearchSources.map((s, i) => {
+        const matched = providerForUrl(s.url);
+        const isCustom = !matched;
+        const providerOptions = ['<option value="__custom__"' + (isCustom ? ' selected' : '') + '>自定义</option>']
+            .concat(installedProviders.map(p => {
+                const label = p.active ? p.name : `${p.name}（未启用）`;
+                const sel = (matched && matched.id === p.id) ? ' selected' : '';
+                return `<option value="${escapeHtml(String(p.id))}"${sel}>${escapeHtml(label)}</option>`;
+            })).join('');
+        return `
+        <div class="search-source-row" data-index="${i}" style="border:1px solid var(--md-outline-variant,#ddd);border-radius:8px;padding:10px;margin-bottom:8px">
+            <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px">
+                <input type="text" class="text-field" data-field="name" value="${escapeHtml(s.name || '')}" placeholder="名称（如 xxx聚合搜索）" style="flex:1;font-size:13px;padding:6px 8px" aria-label="搜索源名称">
+                <label class="switch" style="flex:0 0 auto"><input type="checkbox" data-field="enabled" ${s.enabled ? 'checked' : ''} aria-label="启用该源"><span class="switch-slider"></span></label>
+            </div>
+            <div style="margin-bottom:6px">
+                <select class="text-field" data-field="provider" style="width:100%;font-size:13px;padding:6px 8px" aria-label="搜索来源">${providerOptions}</select>
+            </div>
+            <div class="search-source-url" style="margin-bottom:6px;${isCustom ? '' : 'display:none'}">
+                <input type="text" class="text-field" data-field="url" value="${escapeHtml(s.url || '')}" placeholder="https://example.com/api/search/topone" style="width:100%;font-size:13px;padding:6px 8px" aria-label="搜索 API 地址">
+            </div>
+            <div style="margin-bottom:6px">
+                <input type="text" class="text-field" data-field="token" value="${escapeHtml(s.token || '')}" placeholder="Token（可选，为空用插件 Token）" style="width:100%;font-size:13px;padding:6px 8px" aria-label="认证 Token">
+            </div>
+            <div style="display:flex;align-items:center;gap:4px">
+                <button class="btn-text btn-sm" data-action="up" title="上移" type="button" ${i === 0 ? 'disabled' : ''}><span class="material-symbols-outlined" style="font-size:18px">arrow_upward</span></button>
+                <button class="btn-text btn-sm" data-action="down" title="下移" type="button" ${i === currentSearchSources.length - 1 ? 'disabled' : ''}><span class="material-symbols-outlined" style="font-size:18px">arrow_downward</span></button>
+                <button class="btn-text btn-sm" data-action="test" title="测试" type="button"><span class="material-symbols-outlined" style="font-size:18px">send</span></button>
+                <span style="flex:1"></span>
+                <button class="btn-text btn-sm" data-action="delete" title="删除" type="button" style="color:var(--md-error)"><span class="material-symbols-outlined" style="font-size:18px">delete</span></button>
+            </div>
+        </div>`;
+    }).join('');
+}
+
+// 测试单个源的连通性（使用共享的测试关键字）
+async function testSearchSource(i) {
+    const testInput = document.getElementById('externalSearchTestInput');
+    const testResult = document.getElementById('externalSearchTestResult');
+    if (!testInput || !testResult) return;
+    testResult.style.display = 'block';
+
+    const keyword = testInput.value.trim();
+    if (!keyword) {
+        testResult.style.color = 'var(--md-error)';
+        testResult.textContent = '请先在下方输入测试关键字';
+        return;
+    }
+    const src = currentSearchSources[i];
+    if (!src) return;
+    const url = (src.url || '').trim();
+    if (!url) {
+        testResult.style.color = 'var(--md-error)';
+        testResult.textContent = '该源未配置搜索 API 地址';
+        return;
+    }
+
+    testResult.style.color = 'var(--md-on-surface-variant)';
+    testResult.textContent = `测试「${src.name || url}」中...`;
+    try {
+        let fullUrl = url;
+        if (!url.startsWith('http://') && !url.startsWith('https://')) {
+            fullUrl = window.location.origin + url;
+        }
+        let token = (src.token || '').trim();
+        const headers = { 'Content-Type': 'application/json' };
+        if (!token) {
+            token = getAuthToken();
+        }
+        if (token) {
+            headers['Authorization'] = token.startsWith('Bearer ') ? token : `Bearer ${token}`;
+        }
+        const resp = await fetch(fullUrl, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify({ keyword, quality: '320k' }),
+        });
+        const text = await resp.text();
+        let json;
+        try {
+            json = JSON.stringify(JSON.parse(text), null, 2);
+        } catch {
+            json = text;
+        }
+        testResult.style.color = resp.ok ? 'var(--md-primary)' : 'var(--md-error)';
+        testResult.textContent = `[${src.name || url}] 状态: ${resp.status}\n\n${json}`;
+    } catch (e) {
+        testResult.style.color = 'var(--md-error)';
+        testResult.textContent = '请求失败: ' + e.message;
+    }
 }
 
 function updateExternalSearchConfig(enabled) {
@@ -698,19 +755,18 @@ function updateExternalSearchConfig(enabled) {
 
 function saveExternalSearchConfig() {
     const switchEl = document.getElementById('externalSearchSwitch');
-    const urlInput = document.getElementById('externalSearchUrlInput');
-    const tokenInput = document.getElementById('externalSearchTokenInput');
     const appendSwitch = document.getElementById('externalSearchAppendPlaylistSwitch');
     const playlistSelect = document.getElementById('externalSearchPlaylistSelect');
     const timeoutInput = document.getElementById('externalSearchTimeoutInput');
     const enabled = switchEl ? switchEl.checked : false;
-    const url = urlInput ? urlInput.value.trim() : '';
-    const token = tokenInput ? tokenInput.value.trim() : '';
     const playlistId = (appendSwitch && appendSwitch.checked && playlistSelect) ? playlistSelect.value : '';
     const timeout = timeoutInput ? parseInt(timeoutInput.value, 10) || 6 : 6;
     const searchPriority = getSearchPriority();
+    const sources = currentSearchSources
+        .filter(s => (s.url || '').trim())
+        .map(s => ({ id: s.id, name: (s.name || '').trim(), url: s.url.trim(), token: (s.token || '').trim(), enabled: s.enabled !== false }));
 
-    apiPost('/config', { external_search_enabled: enabled, external_search_url: url, external_search_token: token, external_search_playlist_id: playlistId, external_search_timeout: timeout, search_priority: searchPriority })
+    apiPost('/config', { external_search_enabled: enabled, external_search_sources: sources, external_search_playlist_id: playlistId, external_search_timeout: timeout, search_priority: searchPriority })
         .then(data => {
             if (data.success) {
                 showSnackbar('已保存', 'success');
@@ -743,11 +799,79 @@ export function initExternalSearchUI() {
         });
     }
 
-    const providerSelect = document.getElementById('externalSearchProviderSelect');
-    if (providerSelect) {
-        providerSelect.addEventListener('change', function() {
-            updateProviderUI(this.value);
+    // 添加源按钮
+    const addBtn = document.getElementById('addSearchSourceBtn');
+    if (addBtn) {
+        addBtn.addEventListener('click', function() {
+            currentSearchSources.push({
+                id: `src_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+                name: '', url: '', token: '', enabled: true,
+            });
+            renderSearchSources();
+            // 不立即保存：url 为空会被过滤，等用户填写后 change 时保存
+        });
+    }
+
+    // 源列表：字段变更（事件委托）
+    const sourceList = document.getElementById('externalSearchSourceList');
+    if (sourceList) {
+        sourceList.addEventListener('change', function(e) {
+            const row = e.target.closest('.search-source-row');
+            if (!row) return;
+            const i = parseInt(row.dataset.index, 10);
+            const field = e.target.dataset.field;
+            if (field === undefined || !currentSearchSources[i]) return;
+
+            if (field === 'provider') {
+                const val = e.target.value;
+                if (val === '__custom__') {
+                    currentSearchSources[i].url = '';
+                } else {
+                    const p = installedProviders.find(pp => String(pp.id) === val);
+                    if (p) {
+                        currentSearchSources[i].url = p.url;
+                        if (!currentSearchSources[i].name) currentSearchSources[i].name = p.name;
+                    }
+                }
+                renderSearchSources();
+                saveExternalSearchConfig();
+                return;
+            }
+            if (field === 'enabled') {
+                currentSearchSources[i].enabled = e.target.checked;
+            } else if (field === 'name') {
+                currentSearchSources[i].name = e.target.value;
+            } else if (field === 'url') {
+                currentSearchSources[i].url = e.target.value.trim();
+            } else if (field === 'token') {
+                currentSearchSources[i].token = e.target.value.trim();
+            }
             saveExternalSearchConfig();
+        });
+
+        // 源列表：按钮操作（上移/下移/测试/删除）
+        sourceList.addEventListener('click', function(e) {
+            const btn = e.target.closest('button[data-action]');
+            if (!btn) return;
+            const row = btn.closest('.search-source-row');
+            if (!row) return;
+            const i = parseInt(row.dataset.index, 10);
+            const action = btn.dataset.action;
+            if (action === 'delete') {
+                currentSearchSources.splice(i, 1);
+                renderSearchSources();
+                saveExternalSearchConfig();
+            } else if (action === 'up' && i > 0) {
+                [currentSearchSources[i - 1], currentSearchSources[i]] = [currentSearchSources[i], currentSearchSources[i - 1]];
+                renderSearchSources();
+                saveExternalSearchConfig();
+            } else if (action === 'down' && i < currentSearchSources.length - 1) {
+                [currentSearchSources[i + 1], currentSearchSources[i]] = [currentSearchSources[i], currentSearchSources[i + 1]];
+                renderSearchSources();
+                saveExternalSearchConfig();
+            } else if (action === 'test') {
+                testSearchSource(i);
+            }
         });
     }
 
@@ -762,12 +886,6 @@ export function initExternalSearchUI() {
         });
     }
 
-    const urlInput = document.getElementById('externalSearchUrlInput');
-    if (urlInput) urlInput.addEventListener('change', () => saveExternalSearchConfig());
-    
-    const tokenInput = document.getElementById('externalSearchTokenInput');
-    if (tokenInput) tokenInput.addEventListener('change', () => saveExternalSearchConfig());
-
     const playlistSelect = document.getElementById('externalSearchPlaylistSelect');
     if (playlistSelect) playlistSelect.addEventListener('change', () => saveExternalSearchConfig());
 
@@ -777,72 +895,6 @@ export function initExternalSearchUI() {
     document.querySelectorAll('input[name="searchPriority"]').forEach(input => {
         input.addEventListener('change', () => saveExternalSearchConfig());
     });
-
-    const testBtn = document.getElementById('externalSearchTestBtn');
-    const testInput = document.getElementById('externalSearchTestInput');
-    const testResult = document.getElementById('externalSearchTestResult');
-    if (testBtn && testInput && testResult) {
-        testBtn.addEventListener('click', async function() {
-            const keyword = testInput.value.trim();
-            if (!keyword) {
-                testResult.style.display = 'block';
-                testResult.style.color = 'var(--md-error)';
-                testResult.textContent = '请输入搜索关键字';
-                return;
-            }
-
-            testBtn.disabled = true;
-            testResult.style.display = 'block';
-            testResult.style.color = 'var(--md-on-surface-variant)';
-            testResult.textContent = '测试中...';
-
-            try {
-                const url = document.getElementById('externalSearchUrlInput')?.value.trim();
-                if (!url) {
-                    testResult.style.color = 'var(--md-error)';
-                    testResult.textContent = '请先配置搜索 API 地址';
-                    return;
-                }
-
-                let fullUrl = url;
-                if (!url.startsWith('http://') && !url.startsWith('https://')) {
-                    // 相对路径，拼接当前域名
-                    fullUrl = window.location.origin + url;
-                }
-
-                let token = document.getElementById('externalSearchTokenInput')?.value.trim();
-                const headers = { 'Content-Type': 'application/json' };
-                if (!token) {
-                    token = getAuthToken();
-                }
-                if (token) {
-                    headers['Authorization'] = token.startsWith('Bearer ') ? token : `Bearer ${token}`;
-                }
-
-                const resp = await fetch(fullUrl, {
-                    method: 'POST',
-                    headers,
-                    body: JSON.stringify({ keyword, quality: '320k' }),
-                });
-
-                const text = await resp.text();
-                let json;
-                try {
-                    json = JSON.parse(text);
-                    json = JSON.stringify(json, null, 2);
-                } catch {
-                    json = text;
-                }
-                testResult.style.color = resp.ok ? 'var(--md-primary)' : 'var(--md-error)';
-                testResult.textContent = `状态: ${resp.status}\n\n${json}`;
-            } catch (e) {
-                testResult.style.color = 'var(--md-error)';
-                testResult.textContent = '请求失败: ' + e.message;
-            } finally {
-                testBtn.disabled = false;
-            }
-        });
-    }
 }
 
 // ========== 搜索提示 TTS 配置 ==========

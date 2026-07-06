@@ -90,6 +90,7 @@ export function registerConfigHandlers(
           external_search_enabled: !!config.external_search_enabled,
           external_search_url: config.external_search_url || '',
           external_search_token: config.external_search_token || '',
+          external_search_sources: config.external_search_sources || [],
           external_search_playlist_id: config.external_search_playlist_id ?? '',
           external_search_timeout: config.external_search_timeout ?? 6,
           search_priority: normalizeSearchPriority(config.search_priority),
@@ -166,6 +167,21 @@ export function registerConfigHandlers(
       // 更新 external_search_token
       if (body.external_search_token !== undefined) {
         config.external_search_token = typeof body.external_search_token === 'string' ? body.external_search_token.trim() : '';
+      }
+
+      // 更新 external_search_sources（源列表，数组顺序即优先级）
+      if (body.external_search_sources !== undefined) {
+        config.external_search_sources = Array.isArray(body.external_search_sources)
+          ? body.external_search_sources
+              .filter((s: any) => s && typeof s.url === 'string' && s.url.trim())
+              .map((s: any) => ({
+                id: (typeof s.id === 'string' && s.id) ? s.id : `src_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+                name: typeof s.name === 'string' ? s.name.trim() : '',
+                url: s.url.trim(),
+                token: typeof s.token === 'string' ? s.token.trim() : '',
+                enabled: s.enabled !== false,
+              }))
+          : [];
       }
 
       // 更新 external_search_enabled
