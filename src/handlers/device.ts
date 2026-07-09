@@ -27,6 +27,7 @@ function parseBody(req: HTTPRequest): any {
  * POST /mina/play-url        → 播放URL
  * POST /mina/pause           → 暂停播放
  * POST /mina/resume          → 恢复播放
+ * POST /mina/stop            → 停止播放
  * POST /mina/device/managed  → 更新管理状态
  * POST /mina/last_selection  → 记录最后选中设备
  */
@@ -183,6 +184,28 @@ export function registerDeviceHandlers(
       }
       updateDeviceStatusCache(account_id, device_id, { state: 'playing' });
       return jsonResponse({ success: true, data: { message: 'resumed' } });
+    } catch (e: any) {
+      return jsonResponse({ success: false, error: e.message || String(e) });
+    }
+  });
+
+  // POST /mina/stop - 停止播放
+  router.post('/mina/stop', async (req: HTTPRequest) => {
+    try {
+      const body = parseBody(req);
+      const { account_id, device_id } = body;
+      if (!account_id) {
+        return jsonResponse({ success: false, error: 'account_id is required' });
+      }
+      if (!device_id) {
+        return jsonResponse({ success: false, error: 'device_id is required' });
+      }
+      const ok = await minaService.stopPlay(account_id, device_id);
+      if (!ok) {
+        return jsonResponse({ success: false, error: 'failed to stop' });
+      }
+      updateDeviceStatusCache(account_id, device_id, { state: 'stopped', position: 0 });
+      return jsonResponse({ success: true, data: { message: 'stopped' } });
     } catch (e: any) {
       return jsonResponse({ success: false, error: e.message || String(e) });
     }
