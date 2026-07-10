@@ -81,8 +81,11 @@ export class ConversationMonitor {
    * 启动对话监听
    * 遍历所有 managed 设备，启动定时轮询
    * 回调通过 registerCallback() 独立注册，start() 只管启停
+   *
+   * 返回 Promise：await 后设备列表已初始化完成、定时器已就绪，
+   * 调用方随后查询 getStatus() 即可拿到真实设备数量（修复首次开启显示 0 台设备）。
    */
-  start(): void {
+  async start(): Promise<void> {
     // 已启动且定时器正在运行，直接返回
     if (this.enabled && this.pollTimer !== null) {
       songloft.log.info('[ConversationMonitor] Already running, skip start');
@@ -97,33 +100,37 @@ export class ConversationMonitor {
 
     this.enabled = true;
 
-    // 从配置读取轮询间隔，然后刷新设备列表并启动定时器
-    this.configManager.getConfig().then(config => {
+    try {
+      // 从配置读取轮询间隔
+      const config = await this.configManager.getConfig();
+      // getConfig 可能耗时，其间若被 stop()，则放弃启动
       if (!this.enabled) return;
 
       const intervalSec = Math.max(1, Math.min(30, config.conversation_poll_interval ?? 1));
       this.pollInterval = intervalSec * 1000;
 
-      return this.refreshDevices().then(() => {
-        const now = Date.now();
-        for (const dm of this.devices.values()) {
-          dm.isRunning = true;
-          dm.lastTimestampMs = now;
-        }
-        songloft.log.info(`[ConversationMonitor] Started, devices=${this.devices.size} callbacks=${this.callbacks.size} interval=${intervalSec}s`);
+      // 等待设备列表刷新完成，确保 getStatus() 能读到真实设备数
+      await this.refreshDevices();
+      if (!this.enabled) return;
 
-        if (this.pollTimer !== null) {
-          clearInterval(this.pollTimer);
-        }
-        this.pollTimer = setInterval(() => {
-          this.pollAll().catch(e => {
-            songloft.log.error('[ConversationMonitor] pollAll error: ' + String(e));
-          });
-        }, this.pollInterval);
-      });
-    }).catch(e => {
+      const now = Date.now();
+      for (const dm of this.devices.values()) {
+        dm.isRunning = true;
+        dm.lastTimestampMs = now;
+      }
+      songloft.log.info(`[ConversationMonitor] Started, devices=${this.devices.size} callbacks=${this.callbacks.size} interval=${intervalSec}s`);
+
+      if (this.pollTimer !== null) {
+        clearInterval(this.pollTimer);
+      }
+      this.pollTimer = setInterval(() => {
+        this.pollAll().catch(e => {
+          songloft.log.error('[ConversationMonitor] pollAll error: ' + String(e));
+        });
+      }, this.pollInterval);
+    } catch (e) {
       songloft.log.error('[ConversationMonitor] start error: ' + String(e));
-    });
+    }
   }
 
   /**
@@ -141,10 +148,9 @@ export class ConversationMonitor {
       this.pollTimer = null;
     }
 
-    // 标记所有设备为停止
-    for (const dm of this.devices.values()) {
-      dm.isRunning = false;
-    }
+    // 清空设备列表：下次 start() 会重新刷新，避免残留旧状态导致
+    // 「首次开启显示 0 台、需重新开关才恢复」的表象误判
+    this.devices.clear();
 
     songloft.log.info(`[ConversationMonitor] Stopped`);
   }

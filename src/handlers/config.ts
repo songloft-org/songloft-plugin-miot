@@ -136,16 +136,15 @@ export function registerConfigHandlers(
         config.timezone = body.timezone;
       }
 
+      // 记录本次是否需要联动 Monitor 启停（在 saveConfig 之后再执行，
+      // 保证「先保存配置、再启停监听器」，且 start() 会 await 到设备列表初始化完成）
+      let monitorAction: 'start' | 'stop' | 'restart' | null = null;
+
       // 更新 conversation_monitor_enabled（联动 Monitor 启停）
       if (body.conversation_monitor_enabled !== undefined) {
         const enabled = !!body.conversation_monitor_enabled;
         config.conversation_monitor_enabled = enabled;
-        if (enabled) {
-          conversationMonitor.stop();   // 先确保清理旧状态
-          conversationMonitor.start();  // 再干净启动
-        } else {
-          conversationMonitor.stop();
-        }
+        monitorAction = enabled ? 'start' : 'stop';
       }
 
       // 更新 voice_command_enabled
@@ -243,9 +242,9 @@ export function registerConfigHandlers(
       if (body.conversation_poll_interval !== undefined) {
         const val = Math.max(1, Math.min(30, Number(body.conversation_poll_interval) || 1));
         config.conversation_poll_interval = val;
-        if (config.conversation_monitor_enabled) {
-          conversationMonitor.stop();
-          conversationMonitor.start();
+        // 仅在监听器本次未被显式关闭时才重启（避免与上面的 stop 冲突）
+        if (config.conversation_monitor_enabled && monitorAction !== 'stop') {
+          monitorAction = 'restart';
         }
       }
 
@@ -308,6 +307,15 @@ export function registerConfigHandlers(
       }
 
       await configManager.saveConfig(config);
+
+      // 配置保存后再联动监听器启停：start() 会 await 到设备列表初始化完成，
+      // 之后前端请求 /conversation/status 即可拿到真实设备数量
+      if (monitorAction === 'start' || monitorAction === 'restart') {
+        conversationMonitor.stop();          // 先清理旧状态（含残留设备）
+        await conversationMonitor.start();   // 再干净启动并等待初始化
+      } else if (monitorAction === 'stop') {
+        conversationMonitor.stop();
+      }
 
       // 检查保存后的地址是否有效，附带 warning
       let warning = '';

@@ -79,7 +79,7 @@ async function onInit(): Promise<void> {
   // 注册所有路由
   registerAccountHandlers(router, accountManager, authService);
   registerAuthHandlers(router, authService, accountManager);
-  registerDeviceHandlers(router, minaService, accountManager);
+  registerDeviceHandlers(router, minaService, accountManager, conversationMonitor);
   registerPlaylistHandlers(router, playlistManagerMap, minaService, configManager);
   registerConfigHandlers(router, configManager, conversationMonitor, scheduler, voiceEngine);
   registerConversationHandlers(router, conversationMonitor, configManager);
@@ -108,7 +108,9 @@ async function onInit(): Promise<void> {
     scheduler.start();
   }
   if (pluginConfig.conversation_monitor_enabled) {
-    conversationMonitor.start();
+    conversationMonitor.start().catch(e => {
+      songloft.log.error('conversationMonitor.start failed: ' + String(e));
+    });
   }
   if (pluginConfig.voice_command_enabled) {
     voiceEngine.setEnabled(true);

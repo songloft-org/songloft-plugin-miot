@@ -5,6 +5,7 @@ import { jsonResponse, parseQuery } from '@songloft/plugin-sdk';
 import type { Router, HTTPRequest } from '@songloft/plugin-sdk';
 import { MinaService } from '../service/service';
 import { AccountManager } from '../account/manager';
+import { ConversationMonitor } from '../conversation/monitor';
 import { updateDeviceStatusCache, getDeviceStatusCache, getOrFetchDeviceStatus, DEVICE_STATUS_TTL } from './playlist';
 
 /** 解析请求体（兼容 Uint8Array 和 string） */
@@ -35,6 +36,7 @@ export function registerDeviceHandlers(
   router: Router,
   minaService: MinaService,
   accountManager: AccountManager,
+  conversationMonitor: ConversationMonitor,
 ): void {
 
   // GET /mina/devices - 获取设备列表（按账号分组）
@@ -226,6 +228,15 @@ export function registerDeviceHandlers(
       if (!ok) {
         return jsonResponse({ success: false, error: 'failed to update managed status' });
       }
+
+      // 同步刷新监听器设备列表：即使监听器已在管理列表变更前启动，
+      // 也能立即发现新加入 / 移除的设备，无需手动重新开关监听（修复关联问题）
+      try {
+        await conversationMonitor.refresh();
+      } catch (e) {
+        songloft.log.warn('[/mina/device/managed] refresh conversation monitor failed: ' + String(e));
+      }
+
       return jsonResponse({
         success: true,
         data: { message: 'device managed status updated', account_id, device_id, managed: !!managed },

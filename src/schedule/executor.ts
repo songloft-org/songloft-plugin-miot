@@ -185,7 +185,7 @@ export class TaskExecutor {
 
       if (enable) {
         this.conversationMonitor.stop();
-        this.conversationMonitor.start();
+        await this.conversationMonitor.start();
       } else {
         this.conversationMonitor.stop();
       }
