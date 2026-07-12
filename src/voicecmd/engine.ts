@@ -81,6 +81,9 @@ const FUZZY_MIN_KEYWORD_LEN = 3;
 /** 语音请求到达时给后台索引刷新的短等待窗口。 */
 const INDEX_READY_WAIT_MS = 5000;
 
+/** 本地独立歌曲 URL 健康检查超时（ms），利用 TTS 播报窗口期异步验证，不增加用户感知延迟。 */
+const URL_HEALTH_CHECK_TIMEOUT_MS = 3000;
+
 /**
  * 有界跳字子序列匹配：在 query 的 rune 数组中按序查找关键词，允许中间插入有限字符。
  *
@@ -730,27 +733,55 @@ export class VoiceEngine {
     // 立即停止定时器和重置状态，防止后续异步操作期间旧定时器触发
     pm.prepareForNewPlayback();
 
-    // 打断音箱当前播报
-    await this.interruptBroadcast(accountId, deviceId);
+    // 打断音箱当前播报（停止播放），不在此处播放 TTS 提示
+    try {
+      await this.minaService.stopPlay(accountId, deviceId);
+    } catch (e) {
+      songloft.log.warn('[VoiceEngine] Failed to interrupt broadcast: ' + String(e));
+    }
 
-    const hint = this.buildExternalSearchHint(songName, artist);
     const config = await this.configManager.getConfig();
+    const hint = this.buildExternalSearchHint(songName, artist);
     const priority = this.normalizeSearchPriority(config.search_priority);
     songloft.log.info(`[VoiceEngine] Play song priority=${priority} keyword="${songName}" localTerm="${searchTerm}"`);
 
-    let played = false;
-    switch (priority) {
-      case 'local_first':
-        played = await this.executePlaySongLocalFirst(songName, searchTerm, hint, pm, accountId, deviceId);
-        break;
-      case 'external_first':
-        played = await this.executePlaySongExternalFirst(songName, searchTerm, hint, pm, accountId, deviceId);
-        break;
-      case 'parallel':
-      default:
-        played = await this.executePlaySongParallel(songName, searchTerm, hint, pm, accountId, deviceId);
-        break;
-    }
+    // 搜索提示 TTS 与搜歌并行执行
+    const ttsHintEnabled = config.interrupt_tts_hint_enabled;
+    const ttsHintText = config.interrupt_tts_hint_text || '正在搜索，请稍候';
+    const parallelStart = Date.now();
+
+    const searchTask = async (): Promise<boolean> => {
+      const result = await (async () => {
+        switch (priority) {
+          case 'local_first':
+            return this.executePlaySongLocalFirst(songName, searchTerm, hint, pm, accountId, deviceId);
+          case 'external_first':
+            return this.executePlaySongExternalFirst(songName, searchTerm, hint, pm, accountId, deviceId);
+          case 'parallel':
+          default:
+            return this.executePlaySongParallel(songName, searchTerm, hint, pm, accountId, deviceId);
+        }
+      })();
+      songloft.log.info(`[VoiceEngine] Parallel search done in ${Date.now() - parallelStart}ms result=${result}`);
+      return result;
+    };
+
+    const ttsTask = async (): Promise<void> => {
+      if (!ttsHintEnabled) return;
+      // 300ms 延迟在此处可能导致 TTS 晚于 play-url 到达音箱，
+      // 使 TTS"正在搜索"覆盖歌曲播放。去掉可恢复正确时序，
+      // 但打断后立即播 TTS 是否被吞需验证，原作者自行决策。
+      // await new Promise(resolve => setTimeout(resolve, 300));
+      try {
+        await this.minaService.textToSpeech(accountId, deviceId, ttsHintText);
+        songloft.log.info(`[VoiceEngine] Parallel TTS done in ${Date.now() - parallelStart}ms`);
+      } catch (e) {
+        songloft.log.warn('[VoiceEngine] Failed to play TTS hint: ' + String(e));
+      }
+    };
+
+    const [played] = await Promise.all([searchTask(), ttsTask()]);
+    songloft.log.info(`[VoiceEngine] Parallel all done in ${Date.now() - parallelStart}ms played=${played} ttsEnabled=${ttsHintEnabled}`);
 
     if (played) {
       return;
@@ -853,12 +884,54 @@ export class VoiceEngine {
     while (pending.length > 0) {
       const settled = await Promise.race(pending.map(p => p.promise));
       if (settled.candidate) {
-        return settled.candidate;
+        if (await this.isCandidateUrlHealthy(settled.candidate)) {
+          return settled.candidate;
+        }
+        // URL 不健康：有其他候选在跑则继续等，没有则死马当活马医
+        const otherPending = pending.filter(p => p.slot !== settled.slot);
+        if (otherPending.length === 0) {
+          songloft.log.warn(`[VoiceEngine] Candidate ${settled.candidate.source} URL unhealthy, no fallback available, will try anyway`);
+          return settled.candidate;
+        }
+        songloft.log.warn(`[VoiceEngine] Candidate ${settled.candidate.source} URL unhealthy, waiting for other sources`);
+        pending = otherPending;
+        continue;
       }
       pending = pending.filter(p => p.slot !== settled.slot);
     }
 
     return null;
+  }
+
+  /**
+   * 检查候选歌曲的 URL 是否有效。
+   * - 本地索引歌曲（local_index）不检查，URL 由插件内部管理。
+   * - 独立远程歌曲（remote_song）通过 range 请求验证，防止过期链接推送给音箱。
+   */
+  private async isCandidateUrlHealthy(candidate: SongSearchCandidate): Promise<boolean> {
+    if (candidate.source !== 'remote_song') return true;
+
+    const playUrl = await URLBuilder.buildSongURL(candidate.song);
+    if (!playUrl) return false;
+
+    try {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), URL_HEALTH_CHECK_TIMEOUT_MS);
+      const resp = await fetch(playUrl, {
+        method: 'GET',
+        headers: { Range: 'bytes=0-0' },
+        signal: controller.signal,
+      });
+      clearTimeout(timer);
+      const ok = resp.ok || resp.status === 206;
+      if (!ok) {
+        songloft.log.warn(`[VoiceEngine] URL health check failed status=${resp.status}: ${playUrl.slice(0, 80)}`);
+      }
+      return ok;
+    } catch (e) {
+      songloft.log.warn(`[VoiceEngine] URL health check error: ${String(e)}`);
+      return false;
+    }
   }
 
   private async findLocalSongCandidate(searchTerm: string): Promise<SongSearchCandidate | null> {
