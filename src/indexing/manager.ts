@@ -23,6 +23,7 @@ export interface IndexedSong {
 
 /** 歌曲在歌单中的位置信息（用于语音口令播放歌曲） */
 export interface SongLocation {
+  songId?: number;
   playlistId: number;
   playlistName: string;
   songIndex: number;
@@ -768,6 +769,7 @@ export class IndexingManager {
         // a) 全局索引命中
         if (matchedSongIds.has(s.id) && !songLocationMap.has(s.id)) {
           songLocationMap.set(s.id, {
+            songId: s.id,
             playlistId: pl.id,
             playlistName: pl.name,
             songIndex: idx,
@@ -785,6 +787,7 @@ export class IndexingManager {
         if (score >= MIN_MATCH_SCORE && score > bestDirectScore) {
           bestDirectScore = score;
           bestDirectLoc = {
+            songId: s.id,
             playlistId: pl.id,
             playlistName: pl.name,
             songIndex: idx,

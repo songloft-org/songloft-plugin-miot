@@ -25,6 +25,8 @@ Fixed control commands are:
 
 Smart memory is only checked after those commands fail to match.
 
+The built-in stop aliases `pause`, `stop`, `暂停播放`, `停止播放`, `停一下`, and `暂停音乐` are matched before memory even when an older saved voice-command configuration does not contain them.
+
 ## V1 Playback Scope
 
 V1 only executes memory records whose type is `play_song`.
@@ -35,6 +37,12 @@ Supported playable memory shapes:
 - `songId` with a playable Songloft song URL
 
 Playlist memory records are deliberately ignored for now and fall back to the existing flow.
+
+## Learning From Successful Playback
+
+When an existing `play_song` rule or the AI fallback successfully starts a song, `VoiceEngine` queues `MemoryService.recordSuccess()` with the original user query and the actual played song metadata.
+
+For songs found in a playlist, the record includes `songName`, `artist`, `songId`, `playlistId`, and `songIndex`. `MemoryService` derives and stores `normalizedQuery`. The storage write runs asynchronously and cannot delay or fail the completed playback.
 
 ## Fallback Behavior
 
