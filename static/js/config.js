@@ -607,6 +607,8 @@ function saveExtraMusicApiModels() {
 let currentSearchSources = [];
 // 已安装且可作为搜索源的插件（来自后端 /search-providers，仅 installed）
 let installedProviders = [];
+let selectedSearchSourceId = '';
+let isExternalSearchTesting = false;
 
 const SEARCH_PRIORITIES = new Set(['parallel', 'local_first', 'external_first']);
 
@@ -629,6 +631,48 @@ function getSearchPriority() {
 // 根据 url 反查对应的已安装插件源（相对路径匹配）
 function providerForUrl(url) {
     return installedProviders.find(p => p.url === url);
+}
+
+function searchSourceLabel(source, index) {
+    const matched = providerForUrl(source.url);
+    const label = source.name || matched?.name || source.url || `未命名搜索源 ${index + 1}`;
+    return source.enabled === false ? `${label}（已停用）` : label;
+}
+
+function clearExternalSearchTestResult() {
+    const result = document.getElementById('externalSearchTestResult');
+    if (!result) return;
+    result.textContent = '';
+    result.style.display = 'none';
+}
+
+function syncExternalSearchTestUI() {
+    const select = document.getElementById('externalSearchTestSourceSelect');
+    const input = document.getElementById('externalSearchTestInput');
+    const button = document.getElementById('externalSearchTestBtn');
+    const result = document.getElementById('externalSearchTestResult');
+    if (!select || !input || !button || !result) return;
+
+    const hasSelectedSource = currentSearchSources.some(source => source.id === selectedSearchSourceId);
+    if (!hasSelectedSource) {
+        selectedSearchSourceId = currentSearchSources[0]?.id || '';
+    }
+
+    select.innerHTML = currentSearchSources.map((source, index) =>
+        `<option value="${escapeHtml(source.id)}" ${source.id === selectedSearchSourceId ? 'selected' : ''}>${escapeHtml(searchSourceLabel(source, index))}</option>`
+    ).join('');
+
+    const hasSources = currentSearchSources.length > 0;
+    select.disabled = !hasSources;
+    input.disabled = !hasSources;
+    button.disabled = !hasSources || isExternalSearchTesting;
+    if (!hasSources) {
+        result.style.display = 'block';
+        result.style.color = 'var(--md-on-surface-variant)';
+        result.textContent = '请先添加搜索源';
+    } else if (result.textContent === '请先添加搜索源') {
+        clearExternalSearchTestResult();
+    }
 }
 
 // 从后端拉取已安装插件列表，随后渲染源列表
@@ -654,6 +698,7 @@ function renderSearchSources() {
     if (currentSearchSources.length === 0) {
         list.innerHTML = '';
         if (empty) empty.style.display = 'block';
+        syncExternalSearchTestUI();
         return;
     }
     if (empty) empty.style.display = 'none';
@@ -685,16 +730,16 @@ function renderSearchSources() {
             <div style="display:flex;align-items:center;gap:4px">
                 <button class="btn-text btn-sm" data-action="up" title="上移" type="button" ${i === 0 ? 'disabled' : ''}><span class="material-symbols-outlined" style="font-size:18px">arrow_upward</span></button>
                 <button class="btn-text btn-sm" data-action="down" title="下移" type="button" ${i === currentSearchSources.length - 1 ? 'disabled' : ''}><span class="material-symbols-outlined" style="font-size:18px">arrow_downward</span></button>
-                <button class="btn-text btn-sm" data-action="test" title="测试" type="button"><span class="material-symbols-outlined" style="font-size:18px">send</span></button>
                 <span style="flex:1"></span>
                 <button class="btn-text btn-sm" data-action="delete" title="删除" type="button" style="color:var(--md-error)"><span class="material-symbols-outlined" style="font-size:18px">delete</span></button>
             </div>
         </div>`;
     }).join('');
+    syncExternalSearchTestUI();
 }
 
 // 测试单个源的连通性（使用共享的测试关键字）
-async function testSearchSource(i) {
+async function testSearchSource(sourceId) {
     const testInput = document.getElementById('externalSearchTestInput');
     const testResult = document.getElementById('externalSearchTestResult');
     if (!testInput || !testResult) return;
@@ -706,7 +751,7 @@ async function testSearchSource(i) {
         testResult.textContent = '请先在下方输入测试关键字';
         return;
     }
-    const src = currentSearchSources[i];
+    const src = currentSearchSources.find(source => source.id === sourceId);
     if (!src) return;
     const url = (src.url || '').trim();
     if (!url) {
@@ -715,6 +760,8 @@ async function testSearchSource(i) {
         return;
     }
 
+    isExternalSearchTesting = true;
+    syncExternalSearchTestUI();
     testResult.style.color = 'var(--md-on-surface-variant)';
     testResult.textContent = `测试「${src.name || url}」中...`;
     try {
@@ -747,6 +794,9 @@ async function testSearchSource(i) {
     } catch (e) {
         testResult.style.color = 'var(--md-error)';
         testResult.textContent = '请求失败: ' + e.message;
+    } finally {
+        isExternalSearchTesting = false;
+        syncExternalSearchTestUI();
     }
 }
 
@@ -813,6 +863,9 @@ export function initExternalSearchUI() {
                 id: `src_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
                 name: '', url: '', token: '', enabled: true,
             });
+            if (!selectedSearchSourceId) {
+                selectedSearchSourceId = currentSearchSources[0].id;
+            }
             renderSearchSources();
             // 不立即保存：url 为空会被过滤，等用户填写后 change 时保存
         });
@@ -852,10 +905,11 @@ export function initExternalSearchUI() {
             } else if (field === 'token') {
                 currentSearchSources[i].token = e.target.value.trim();
             }
+            syncExternalSearchTestUI();
             saveExternalSearchConfig();
         });
 
-        // 源列表：按钮操作（上移/下移/测试/删除）
+        // 源列表：按钮操作（上移/下移/删除）
         sourceList.addEventListener('click', function(e) {
             const btn = e.target.closest('button[data-action]');
             if (!btn) return;
@@ -864,7 +918,12 @@ export function initExternalSearchUI() {
             const i = parseInt(row.dataset.index, 10);
             const action = btn.dataset.action;
             if (action === 'delete') {
+                const deletingSelectedSource = currentSearchSources[i]?.id === selectedSearchSourceId;
                 currentSearchSources.splice(i, 1);
+                if (deletingSelectedSource) {
+                    selectedSearchSourceId = currentSearchSources[i]?.id || currentSearchSources[i - 1]?.id || '';
+                    clearExternalSearchTestResult();
+                }
                 renderSearchSources();
                 saveExternalSearchConfig();
             } else if (action === 'up' && i > 0) {
@@ -875,9 +934,24 @@ export function initExternalSearchUI() {
                 [currentSearchSources[i + 1], currentSearchSources[i]] = [currentSearchSources[i], currentSearchSources[i + 1]];
                 renderSearchSources();
                 saveExternalSearchConfig();
-            } else if (action === 'test') {
-                testSearchSource(i);
             }
+        });
+    }
+
+    const testSourceSelect = document.getElementById('externalSearchTestSourceSelect');
+    if (testSourceSelect) {
+        testSourceSelect.addEventListener('change', function() {
+            selectedSearchSourceId = this.value;
+            clearExternalSearchTestResult();
+        });
+    }
+
+    const testForm = document.getElementById('externalSearchTestForm');
+    if (testForm) {
+        testForm.addEventListener('submit', function(e) {
+            e.preventDefault();
+            if (isExternalSearchTesting || !selectedSearchSourceId) return;
+            testSearchSource(selectedSearchSourceId);
         });
     }
 

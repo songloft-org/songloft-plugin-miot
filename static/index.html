@@ -595,6 +595,17 @@
                             <div id="externalSearchSourceList"></div>
                             <div id="externalSearchSourceEmpty" style="font-size:12px;color:#999;padding:8px 0;display:none">暂无搜索源，点击「添加源」添加已安装插件或自定义接口。</div>
                         </div>
+                        <div class="external-search-test">
+                            <div class="external-search-test-title">接口测试</div>
+                            <select id="externalSearchTestSourceSelect" class="text-field external-search-test-source" aria-label="测试源"></select>
+                            <form id="externalSearchTestForm" class="external-search-test-form">
+                                <input type="text" id="externalSearchTestInput" class="text-field" placeholder="输入测试关键字" aria-label="外部搜索测试关键字" enterkeyhint="search">
+                                <button class="btn-filled" id="externalSearchTestBtn" type="submit" title="测试接口" aria-label="测试接口">
+                                    <span class="material-symbols-outlined">send</span>
+                                </button>
+                            </form>
+                            <div id="externalSearchTestResult" class="external-search-test-result"></div>
+                        </div>
                         <div style="margin-top:10px">
                             <div style="font-size:12px;color:var(--md-on-surface-variant);margin-bottom:4px;font-weight:500">搜索超时（秒）</div>
                             <input type="number" id="externalSearchTimeoutInput" class="text-field" style="font-size:13px;padding:7px 10px;width:100px" min="3" max="60" value="6" aria-label="外部搜索超时">
@@ -654,11 +665,6 @@
                         </div>
                     </div>
 
-                    <div style="margin-top:12px;padding:10px 12px;background:rgba(0,0,0,0.03);border-radius:6px">
-                        <div style="font-size:12px;color:var(--md-on-surface-variant);margin-bottom:6px;font-weight:500">接口测试</div>
-                        <input type="text" id="externalSearchTestInput" class="text-field" style="width:100%;font-size:13px;padding:6px 10px" placeholder="输入测试关键字，再点某个源的测试按钮" aria-label="外部搜索测试关键字">
-                        <div id="externalSearchTestResult" style="margin-top:8px;font-size:12px;color:var(--md-on-surface-variant);white-space:pre-wrap;word-break:break-all;display:none"></div>
-                    </div>
                 </div>
             </div>
 

@@ -328,6 +328,57 @@
     line-height: 1.4;
 }
 
+.external-search-test {
+    margin-top: 10px;
+    padding: 10px 12px;
+    background: rgba(0, 0, 0, 0.03);
+    border-radius: 6px;
+}
+
+.external-search-test-title {
+    margin-bottom: 6px;
+    color: var(--md-on-surface-variant);
+    font-size: 12px;
+    font-weight: 500;
+}
+
+.external-search-test-source {
+    width: 100%;
+    margin-bottom: 6px;
+    padding: 6px 8px;
+    font-size: 13px;
+}
+
+.external-search-test-form {
+    display: flex;
+    gap: 6px;
+}
+
+.external-search-test-form .text-field {
+    min-width: 0;
+    flex: 1;
+    padding: 6px 10px;
+    font-size: 13px;
+}
+
+.external-search-test-form .btn-filled {
+    flex: 0 0 auto;
+    padding: 6px 16px;
+}
+
+.external-search-test-form .material-symbols-outlined {
+    font-size: 16px;
+}
+
+.external-search-test-result {
+    display: none;
+    margin-top: 8px;
+    color: var(--md-on-surface-variant);
+    font-size: 12px;
+    white-space: pre-wrap;
+    word-break: break-all;
+}
+
 /* List Item */
 .list-item {
     display: flex;
