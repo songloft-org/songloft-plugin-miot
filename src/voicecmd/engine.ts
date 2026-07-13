@@ -13,8 +13,10 @@ import { URLBuilder } from '../player/url_builder';
 import { AIAnalyzer } from './ai_analyzer';
 import { OnlineSearcher } from './online_searcher';
 import { updateDeviceStatusCache } from '../handlers/playlist';
+import { MemoryService } from '../memory';
 import type { PlaylistManager } from '../player/manager';
 import type { SongLocation } from '../indexing/manager';
+import type { MemoryRecord } from '../memory';
 import type { OnlineSearchResult } from './online_searcher';
 import type { ConversationMessage, VoiceCommand, PlayMode, AIAnalysisResult, SearchPriority } from '../types';
 
@@ -83,6 +85,12 @@ const INDEX_READY_WAIT_MS = 5000;
 
 /** 本地独立歌曲 URL 健康检查超时（ms），利用 TTS 播报窗口期异步验证，不增加用户感知延迟。 */
 const URL_HEALTH_CHECK_TIMEOUT_MS = 3000;
+
+/** 智能记忆语音接入总开关。需要快速回滚时改为 false 后重新构建。 */
+const VOICE_MEMORY_ENABLED = true;
+
+const FIXED_CONTROL_COMMAND_TYPES = new Set(['set_play_mode', 'set_volume', 'next', 'previous', 'stop']);
+const SEARCH_COMMAND_TYPES = new Set(['play_song', 'play_playlist']);
 
 /**
  * 有界跳字子序列匹配：在 query 的 rune 数组中按序查找关键词，允许中间插入有限字符。
@@ -161,6 +169,8 @@ export class VoiceEngine {
   private indexingManager: IndexingManager;
   private aiAnalyzer: AIAnalyzer;
   private onlineSearcher: OnlineSearcher;
+  private memoryService: MemoryService;
+  private memoryInitialized: boolean = false;
   private enabled: boolean = false;
   private resumeTimer: any = null;
   private resumeCancelled: boolean = false;
@@ -180,6 +190,7 @@ export class VoiceEngine {
     this.indexingManager = indexingManager;
     this.aiAnalyzer = aiAnalyzer || new AIAnalyzer();
     this.onlineSearcher = new OnlineSearcher(configManager);
+    this.memoryService = new MemoryService();
   }
 
   // ===== 公开方法 =====
@@ -217,54 +228,181 @@ export class VoiceEngine {
       return;
     }
 
-    // 尝试 AI 分析（如果启用）
+    // 固定控制命令优先，避免 memory 或 AI 覆盖切歌、停止、音量、播放模式等操作。
+    songloft.log.info(`[VoiceEngine] [Rule] Matching fixed control query="${query}"`);
+    const fixedResult = await this.matchCommand(query, FIXED_CONTROL_COMMAND_TYPES);
+    if (fixedResult) {
+      songloft.log.info(`[VoiceEngine] [Rule] → Matched fixed control: type=${fixedResult.command.type} keyword="${fixedResult.keyword}" argument="${fixedResult.argument}"`);
+      await this.executeCommand(fixedResult, accountId, msg.device_id);
+      return;
+    }
+
+    if (VOICE_MEMORY_ENABLED) {
+      try {
+        const memoryHandled = await this.tryHandleMemory(query, accountId, msg.device_id);
+        if (memoryHandled) {
+          return;
+        }
+      } catch (error) {
+        songloft.log.warn('[VoiceMemory] error fallback: ' + String(error));
+      }
+    } else {
+      songloft.log.info('[VoiceMemory] disabled');
+    }
+
+    // 歌曲/歌单规则匹配
+    songloft.log.info(`[VoiceEngine] [Rule] Matching search query="${query}"`);
+    const result = await this.matchCommand(query, SEARCH_COMMAND_TYPES);
+    if (result) {
+      songloft.log.info(`[VoiceEngine] [Rule] → Matched search: type=${result.command.type} keyword="${result.keyword}" argument="${result.argument}"`);
+
+      // 执行口令
+      await this.executeCommand(result, accountId, msg.device_id);
+      return;
+    }
+
+    songloft.log.info(`[VoiceEngine] [Rule] No search match found`);
+
+    // AI 兜底（如果启用）
     const aiConfig = await this.configManager.getAIConfig();
     if (aiConfig.enabled) {
       songloft.log.info(`[VoiceEngine] [AI] Analyzing query="${query}"`);
       const aiResult = await this.aiAnalyzer.analyze(query, aiConfig);
       if (aiResult) {
         songloft.log.info(`[VoiceEngine] [AI] Done: action=${aiResult.action} confidence=${aiResult.confidence} params=${JSON.stringify(aiResult.params)}`);
-        // AI 高置信度且识别到有效 action 才执行，否则用规则兜底
         if (aiResult.confidence === 'high' && aiResult.action !== 'unknown') {
-          songloft.log.info(`[VoiceEngine] [AI] → Executing (high confidence, action=${aiResult.action})`);
+          songloft.log.info(`[VoiceEngine] [AI] → Executing fallback (high confidence, action=${aiResult.action})`);
           await this.executeAIResult(aiResult, accountId, msg.device_id);
           return;
-        } else {
-          songloft.log.info(`[VoiceEngine] [AI] → Falling back to rule matching (action=${aiResult.action}, confidence=${aiResult.confidence})`);
         }
+        songloft.log.info(`[VoiceEngine] [AI] → No fallback execution (action=${aiResult.action}, confidence=${aiResult.confidence})`);
       } else {
-        songloft.log.info(`[VoiceEngine] [AI] → Fallback to rule matching (analyze returned null)`);
+        songloft.log.info(`[VoiceEngine] [AI] → No fallback execution (analyze returned null)`);
       }
     }
 
-    // 规则匹配兜底
-    songloft.log.info(`[VoiceEngine] [Rule] Matching query="${query}"`);
-    const result = await this.matchCommand(query);
-    if (!result) {
-      songloft.log.info(`[VoiceEngine] [Rule] No match found`);
+    // 任何语音交互都会唤醒音箱并打断 URL 播放。
+    // 立即挂起定时器（防止 AI 响应期间触发切歌），等小爱说完后重新推送歌曲 URL。
+    const pm = this.playlistManagerMap.get(accountId, msg.device_id);
+    if (pm && pm.isPlaying()) {
+      pm.suspendForVoiceInteraction();
+      songloft.log.info('[VoiceEngine] Unmatched command while playing, scheduling smart resume');
+      this.scheduleSmartResume(pm, accountId, msg.device_id);
+    }
+  }
 
-      // 任何语音交互都会唤醒音箱并打断 URL 播放。
-      // 立即挂起定时器（防止 AI 响应期间触发切歌），等小爱说完后重新推送歌曲 URL。
-      const pm = this.playlistManagerMap.get(accountId, msg.device_id);
-      if (pm && pm.isPlaying()) {
-        pm.suspendForVoiceInteraction();
-        songloft.log.info('[VoiceEngine] Unmatched command while playing, scheduling smart resume');
-        this.scheduleSmartResume(pm, accountId, msg.device_id);
+  private async ensureMemoryInitialized(): Promise<void> {
+    if (this.memoryInitialized) return;
+    await this.memoryService.init();
+    this.memoryInitialized = this.memoryService.isInitialized();
+  }
+
+  private async tryHandleMemory(query: string, accountId: string, deviceId: string): Promise<boolean> {
+    try {
+      await this.ensureMemoryInitialized();
+      if (!this.memoryInitialized) {
+        songloft.log.info('[VoiceMemory] miss: memory service not initialized');
+        return false;
       }
 
-      return;
+      const record = this.memoryService.findByQuery(query);
+      if (!record) {
+        songloft.log.info('[VoiceMemory] miss');
+        return false;
+      }
+
+      if (record.type !== 'play_song') {
+        songloft.log.info(`[VoiceMemory] miss: unsupported type=${record.type}`);
+        return false;
+      }
+
+      const played = await this.executeMemorySong(record, query, accountId, deviceId);
+      if (!played) {
+        void this.memoryService.recordFailure(query).catch(error => {
+          songloft.log.warn('[VoiceMemory] error fallback: record failure failed: ' + String(error));
+        });
+        songloft.log.warn(`[VoiceMemory] error fallback: hit could not be played id=${record.id}`);
+        return false;
+      }
+
+      void this.memoryService.recordSuccess({
+        query,
+        type: 'play_song',
+        songId: record.songId,
+        songName: record.songName,
+        artist: record.artist,
+        playlistId: record.playlistId,
+        playlistName: record.playlistName,
+        songIndex: record.songIndex,
+      }).catch(error => {
+        songloft.log.warn('[VoiceMemory] record success failed after playback: ' + String(error));
+      });
+      songloft.log.info(`[VoiceMemory] hit id=${record.id} song="${record.songName || ''}" songId=${record.songId ?? ''} playlistId=${record.playlistId ?? ''} songIndex=${record.songIndex ?? ''}`);
+      return true;
+    } catch (error) {
+      songloft.log.warn('[VoiceMemory] error fallback: ' + String(error));
+      return false;
+    }
+  }
+
+  private async executeMemorySong(record: MemoryRecord, query: string, accountId: string, deviceId: string): Promise<boolean> {
+    const songName = record.songName || query;
+    const searchTerm = record.artist ? `${songName} ${record.artist}` : songName;
+
+    if (typeof record.playlistId === 'number' && typeof record.songIndex === 'number') {
+      const pm = await this.prepareMemoryPlayback(accountId, deviceId);
+      const loc: SongLocation = {
+        playlistId: record.playlistId,
+        playlistName: record.playlistName || 'memory',
+        songIndex: record.songIndex,
+        songTitle: songName,
+        artist: record.artist || '',
+      };
+      return await this.playIndexedSong(loc, pm, searchTerm, songName, accountId, deviceId);
     }
 
-    songloft.log.info(`[VoiceEngine] [Rule] → Matched: type=${result.command.type} keyword="${result.keyword}" argument="${result.argument}"`);
+    if (typeof record.songId === 'number') {
+      try {
+        const song = await songloft.songs.getById(record.songId);
+        if (!song || !song.url) {
+          songloft.log.warn(`[VoiceMemory] error fallback: songId not playable id=${record.songId}`);
+          return false;
+        }
+        await this.prepareMemoryPlayback(accountId, deviceId);
+        return await this.playStandaloneSong({
+          id: song.id,
+          url: song.url,
+          title: song.title || songName,
+          artist: song.artist || record.artist || '',
+        }, accountId, deviceId);
+      } catch (error) {
+        songloft.log.warn('[VoiceMemory] error fallback: get song by id failed: ' + String(error));
+        return false;
+      }
+    }
 
-    // 执行口令
-    await this.executeCommand(result, accountId, msg.device_id);
+    songloft.log.warn(`[VoiceMemory] error fallback: record has no playable id id=${record.id}`);
+    return false;
+  }
+
+  private async prepareMemoryPlayback(accountId: string, deviceId: string): Promise<PlaylistManager> {
+    const pm = await this.playlistManagerMap.getOrCreate(accountId, deviceId);
+    this.cancelPendingResume();
+    pm.prepareForNewPlayback();
+
+    try {
+      await this.minaService.stopPlay(accountId, deviceId);
+    } catch (e) {
+      songloft.log.warn('[VoiceMemory] error fallback: failed to interrupt broadcast: ' + String(e));
+    }
+
+    return pm;
   }
 
   /**
-   * 测试口令：模拟收到一条语音指令，走与 handleMessage 相同的 AI/规则匹配 + 执行逻辑，
+   * 测试口令：模拟收到一条语音指令，走现有 AI/规则诊断 + 执行逻辑，
    * 并返回诊断信息（匹配到的口令、搜索到的歌曲/歌单、是否执行）供设置页展示。
-   * 与 handleMessage 不同：query 直接给定、忽略引擎启停状态、返回结构化结果。
+   * 与 handleMessage 不同：不经过 memory 和固定命令优先分支，且 query 直接给定、忽略引擎启停状态。
    *
    * @param query - 模拟的用户语音文本
    * @param deviceId - 目标设备（实际投放到该设备）
@@ -421,18 +559,22 @@ export class VoiceEngine {
    * @param query - 用户说的话
    * @returns 匹配结果，null 表示未匹配
    */
-  private async matchCommand(query: string): Promise<MatchResult | null> {
+  private async matchCommand(query: string, allowedTypes?: Set<string>): Promise<MatchResult | null> {
     const commands = await this.configManager.getVoiceCommands();
     if (commands.length === 0) {
       return null;
     }
 
     const enabledCommands = commands
-      .filter(cmd => cmd.enabled)
+      .filter(cmd => cmd.enabled && (!allowedTypes || allowedTypes.has(cmd.type)))
       .map(cmd => ({
         cmd,
         priority: COMMAND_PRIORITY[cmd.type] ?? 99,
       }));
+
+    if (enabledCommands.length === 0) {
+      return null;
+    }
 
     // 跨优先级最长关键词匹配：遍历所有命令，取全局最长匹配，长度相同时高优先级优先。
     // 防止短关键词（如"播放"）窃取更长关键词（如"播放歌单"）的匹配。
