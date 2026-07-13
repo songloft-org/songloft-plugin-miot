@@ -12,7 +12,6 @@ import { VoiceEngine } from './voicecmd/engine';
 import { AIAnalyzer } from './voicecmd/ai_analyzer';
 import { getDefaultVoiceCommands } from './voicecmd/engine';
 import { IndexingManager } from './indexing/manager';
-import { runPersistentStorageProbe } from './debug/storage_probe';
 
 // 导入所有handler注册函数
 import { registerAccountHandlers } from './handlers/account';
@@ -43,9 +42,6 @@ let indexingManager: IndexingManager;
 
 async function onInit(): Promise<void> {
   songloft.log.info('MIoT 智能音箱插件初始化...');
-  void runPersistentStorageProbe().catch((error) => {
-    songloft.log.warn('[persistent-storage-probe] unexpected failure: ' + String(error));
-  });
 
   // 初始化管理器
   configManager = new ConfigManager();
