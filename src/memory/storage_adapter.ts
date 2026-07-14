@@ -1,6 +1,11 @@
 /// <reference types="@songloft/plugin-sdk" />
 
-import type { MemoryRecord, MemoryStoreSnapshot, MemoryStorageAdapter as MemoryStorageAdapterContract } from './types';
+import type {
+  MemoryLoadResult,
+  MemoryRecord,
+  MemoryStoreSnapshot,
+  MemoryStorageAdapter as MemoryStorageAdapterContract,
+} from './types';
 
 const MEMORY_STORAGE_KEY = 'memory:v1:records';
 
@@ -27,38 +32,50 @@ function isMemoryRecord(value: unknown): value is MemoryRecord {
     typeof value.failureCount === 'number' &&
     typeof value.createdAt === 'string' &&
     typeof value.updatedAt === 'string' &&
-    typeof value.lastUsedAt === 'string'
+    typeof value.lastUsedAt === 'string' &&
+    (value.query === undefined || typeof value.query === 'string') &&
+    (value.recordVersion === undefined || value.recordVersion === 2) &&
+    (value.canonicalKey === undefined || typeof value.canonicalKey === 'string')
   );
 }
 
-function parseSnapshot(raw: unknown): MemoryStoreSnapshot {
+function parseSnapshot(raw: unknown): MemoryLoadResult {
+  let parsed: unknown;
   try {
-    const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
-    if (!isObject(parsed) || parsed.version !== 1 || !Array.isArray(parsed.records)) {
-      return emptySnapshot();
-    }
-
-    return {
-      version: 1,
-      records: parsed.records.filter(isMemoryRecord),
-      updatedAt: typeof parsed.updatedAt === 'string' ? parsed.updatedAt : new Date().toISOString(),
-    };
-  } catch {
-    return emptySnapshot();
+    parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
+  } catch (error) {
+    return { status: 'format_error', error: String(error) };
   }
+
+  if (!isObject(parsed) || parsed.version !== 1 || !Array.isArray(parsed.records)) {
+    return { status: 'format_error', error: 'invalid memory snapshot envelope' };
+  }
+
+  const records = parsed.records.filter(isMemoryRecord);
+  if (parsed.records.length > 0 && records.length === 0) {
+    return { status: 'format_error', error: 'memory snapshot contains no valid records' };
+  }
+  return {
+    status: 'ok',
+    snapshot: {
+      version: 1,
+      records,
+      updatedAt: typeof parsed.updatedAt === 'string' ? parsed.updatedAt : new Date().toISOString(),
+    },
+    invalidRecordCount: parsed.records.length - records.length,
+  };
 }
 
 export class SongloftStorageMemoryAdapter implements MemoryStorageAdapterContract {
-  async load(): Promise<MemoryStoreSnapshot> {
+  async load(): Promise<MemoryLoadResult> {
     try {
       const raw = await songloft.storage.get(MEMORY_STORAGE_KEY);
       if (raw === null || raw === undefined || raw === '') {
-        return emptySnapshot();
+        return { status: 'missing', snapshot: emptySnapshot() };
       }
       return parseSnapshot(raw);
     } catch (error) {
-      songloft.log.warn('[MemoryStorage] load failed, using empty memory: ' + String(error));
-      return emptySnapshot();
+      return { status: 'read_error', error: String(error) };
     }
   }
 

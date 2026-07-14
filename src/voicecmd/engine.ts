@@ -246,21 +246,22 @@ export class VoiceEngine {
       return;
     }
 
-    const pluginConfig = await this.configManager.getConfig();
-    const memoryEnabled = pluginConfig.voice_memory_enabled;
-    this.memoryService.setMaxRecords(pluginConfig.voice_memory_max_records);
-
-    if (memoryEnabled) {
-      try {
+    let memoryEnabled = false;
+    try {
+      const pluginConfig = await this.configManager.getConfig();
+      memoryEnabled = pluginConfig.voice_memory_enabled;
+      await this.memoryService.setMaxRecords(pluginConfig.voice_memory_max_records);
+      if (memoryEnabled) {
         const memoryHandled = await this.tryHandleMemory(query, accountId, msg.device_id);
         if (memoryHandled) {
           return;
         }
-      } catch (error) {
-        songloft.log.warn('[VoiceMemory] error fallback: ' + String(error));
+      } else {
+        songloft.log.info('[VoiceMemoryV2] miss reason="disabled"');
       }
-    } else {
-      songloft.log.info('[VoiceMemory] disabled');
+    } catch (error) {
+      memoryEnabled = false;
+      songloft.log.warn('[VoiceMemoryV2] error fallback stage="config_or_memory" error="' + String(error) + '"');
     }
 
     // 歌曲/歌单规则匹配
@@ -324,35 +325,58 @@ export class VoiceEngine {
     try {
       await this.ensureMemoryInitialized();
       if (!this.memoryInitialized) {
-        songloft.log.info(`[VoiceMemory] miss query="${query}" reason="memory service not initialized"`);
+        songloft.log.info(`[VoiceMemoryV2] miss query="${query}" reason="memory_not_initialized"`);
         return false;
       }
 
-      const record = this.memoryService.findByQuery(query);
-      if (!record) {
-        songloft.log.info(`[VoiceMemory] miss query="${query}"`);
-        return false;
+      let record = this.memoryService.findByQuery(query);
+      let matchMode: 'exact' | 'entity_hit' = 'exact';
+      let canonicalKey: string | undefined;
+      let score: number | undefined;
+      let reason = 'v1_normalized_query';
+
+      if (record) {
+        songloft.log.info(`[VoiceMemoryV2] exact_hit query="${query}" id="${record.id}"`);
+      } else {
+        const resolved = this.memoryService.resolveEntity(query);
+        if (resolved.status === 'ambiguous') {
+          songloft.log.info(`[VoiceMemoryV2] ambiguous query="${query}" candidates=${resolved.candidateCount ?? 0} reason="${resolved.reason || 'ambiguous'}"`);
+          return false;
+        }
+        if (resolved.status !== 'entity_hit' || !resolved.record) {
+          songloft.log.info(`[VoiceMemoryV2] miss query="${query}" reason="${resolved.reason || 'no_candidate'}" score=${(resolved.score ?? 0).toFixed(2)}`);
+          return false;
+        }
+        record = resolved.record;
+        matchMode = 'entity_hit';
+        canonicalKey = resolved.canonicalKey;
+        score = resolved.score;
+        reason = resolved.reason || 'entity_match';
       }
 
       if (record.type !== 'play_song') {
-        songloft.log.info(`[VoiceMemory] miss query="${query}" reason="unsupported type=${record.type}"`);
+        songloft.log.info(`[VoiceMemoryV2] miss query="${query}" reason="unsupported_type_${record.type}"`);
         return false;
       }
 
       const playedSong = await this.executeMemorySong(record, query, accountId, deviceId);
       if (!playedSong) {
-        void this.memoryService.recordFailure(query).catch(error => {
-          songloft.log.warn('[VoiceMemory] error fallback: record failure failed: ' + String(error));
+        void this.memoryService.recordFailure(query, record.id).catch(error => {
+          songloft.log.warn('[VoiceMemoryV2] error fallback stage="record_failure" error="' + String(error) + '"');
         });
-        songloft.log.warn(`[VoiceMemory] error fallback: hit could not be played id=${record.id}`);
+        songloft.log.warn(`[VoiceMemoryV2] fallback query="${query}" reason="play_failed" id="${record.id}"`);
         return false;
       }
 
-      songloft.log.info(`[VoiceMemory] hit query="${query}" song="${playedSong.songName}" artist="${playedSong.artist}"`);
-      this.queueMemorySuccess(query, playedSong);
+      if (matchMode === 'entity_hit') {
+        songloft.log.info(`[VoiceMemoryV2] entity_hit query="${query}" song="${playedSong.songName}" artist="${playedSong.artist}" score=${(score ?? 0).toFixed(2)} reason="${reason}" canonicalKey="${canonicalKey || ''}"`);
+        this.queueMemorySuccess(query, playedSong, record.id);
+      } else {
+        this.queueMemorySuccess(query, playedSong);
+      }
       return true;
     } catch (error) {
-      songloft.log.warn('[VoiceMemory] error fallback: ' + String(error));
+      songloft.log.warn('[VoiceMemoryV2] error fallback stage="play" error="' + String(error) + '"');
       return false;
     }
   }
@@ -410,8 +434,8 @@ export class VoiceEngine {
     return null;
   }
 
-  private queueMemorySuccess(query: string, song: PlayedSong): void {
-    songloft.log.info(`[VoiceMemory] recordSuccess queued query="${query}" song="${song.songName}"`);
+  private queueMemorySuccess(query: string, song: PlayedSong, matchedRecordId?: string): void {
+    songloft.log.info(`[VoiceMemoryV2] lazy_migrate queued query="${query}" song="${song.songName}"`);
     void this.memoryService.recordSuccess({
       query,
       type: 'play_song',
@@ -421,14 +445,15 @@ export class VoiceEngine {
       playlistId: song.playlistId,
       playlistName: song.playlistName,
       songIndex: song.songIndex,
+      matchedRecordId,
     }).then(saved => {
       if (saved) {
-        songloft.log.info(`[VoiceMemory] recordSuccess done query="${query}"`);
+        songloft.log.info(`[VoiceMemoryV2] lazy_migrate done query="${query}"`);
       } else {
-        songloft.log.warn(`[VoiceMemory] recordSuccess failed query="${query}" reason="save returned false"`);
+        songloft.log.warn(`[VoiceMemoryV2] lazy_migrate failed query="${query}" reason="save_returned_false"`);
       }
     }).catch(error => {
-      songloft.log.warn(`[VoiceMemory] recordSuccess failed query="${query}" error=${String(error)}`);
+      songloft.log.warn(`[VoiceMemoryV2] error fallback stage="record_success" error="${String(error)}"`);
     });
   }
 

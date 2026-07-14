@@ -4,7 +4,8 @@ import { jsonResponse, parseQuery } from '@songloft/plugin-sdk';
 import type { Router, HTTPRequest } from '@songloft/plugin-sdk';
 import { MemoryService } from '../memory';
 import type { ConfigManager } from '../config/manager';
-import type { MemoryRecord, MemoryStorageAdapter, MemoryStoreSnapshot } from '../memory';
+import type { MemoryLoadResult, MemoryRecord, MemoryStorageAdapter, MemoryStoreSnapshot } from '../memory';
+import { runMemoryV2SelfTest } from '../memory/self_test';
 
 const MEMORY_STORAGE_KEY = 'memory:v1:records';
 
@@ -54,25 +55,27 @@ function isMemoryRecord(value: unknown): value is MemoryRecord {
     typeof value.failureCount === 'number' &&
     typeof value.createdAt === 'string' &&
     typeof value.updatedAt === 'string' &&
-    typeof value.lastUsedAt === 'string'
+    typeof value.lastUsedAt === 'string' &&
+    (value.query === undefined || typeof value.query === 'string') &&
+    (value.recordVersion === undefined || value.recordVersion === 2) &&
+    (value.canonicalKey === undefined || typeof value.canonicalKey === 'string')
   );
 }
 
 function parseSnapshot(raw: unknown): MemoryStoreSnapshot {
-  try {
-    const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
-    if (!isObject(parsed) || parsed.version !== 1 || !Array.isArray(parsed.records)) {
-      return emptySnapshot();
-    }
-
-    return {
-      version: 1,
-      records: parsed.records.filter(isMemoryRecord),
-      updatedAt: typeof parsed.updatedAt === 'string' ? parsed.updatedAt : new Date().toISOString(),
-    };
-  } catch {
-    return emptySnapshot();
+  const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
+  if (!isObject(parsed) || parsed.version !== 1 || !Array.isArray(parsed.records)) {
+    throw new Error('invalid memory snapshot envelope');
   }
+  const records = parsed.records.filter(isMemoryRecord);
+  if (parsed.records.length > 0 && records.length === 0) {
+    throw new Error('memory snapshot contains no valid records');
+  }
+  return {
+    version: 1,
+    records,
+    updatedAt: typeof parsed.updatedAt === 'string' ? parsed.updatedAt : new Date().toISOString(),
+  };
 }
 
 function normalizeErrorText(message: string): string {
@@ -154,17 +157,23 @@ class SelfTestStorageAdapter implements MemoryStorageAdapter {
     this.lastError = null;
   }
 
-  async load(): Promise<MemoryStoreSnapshot> {
+  async load(): Promise<MemoryLoadResult> {
+    let raw: unknown;
     try {
       this.clearLastError();
-      const raw = await songloft.storage.get(MEMORY_STORAGE_KEY);
-      if (raw === null || raw === undefined || raw === '') {
-        return emptySnapshot();
-      }
-      return parseSnapshot(raw);
+      raw = await songloft.storage.get(MEMORY_STORAGE_KEY);
     } catch (error) {
       this.lastError = toErrorDetails(error);
-      throw error;
+      return { status: 'read_error', error: this.lastError.message };
+    }
+    if (raw === null || raw === undefined || raw === '') {
+      return { status: 'missing', snapshot: emptySnapshot() };
+    }
+    try {
+      return { status: 'ok', snapshot: parseSnapshot(raw) };
+    } catch (error) {
+      this.lastError = toErrorDetails(error);
+      return { status: 'format_error', error: this.lastError.message };
     }
   }
 
@@ -191,7 +200,7 @@ export function registerMemoryHandlers(
 ): void {
   const ensureMemoryReady = async (): Promise<void> => {
     const config = await configManager.getConfig();
-    memoryService.setMaxRecords(config.voice_memory_max_records);
+    await memoryService.setMaxRecords(config.voice_memory_max_records);
     await memoryService.init();
   };
 
@@ -314,7 +323,11 @@ export function registerMemoryHandlers(
       };
 
       try {
-        originalSnapshot = await adapter.load();
+        const originalLoad = await adapter.load();
+        originalSnapshot = originalLoad.snapshot ?? null;
+        if (!originalSnapshot) {
+          throw new Error(originalLoad.error || `storage load failed: ${originalLoad.status}`);
+        }
         steps['load-original'] = { ok: true, message: '已读取原始记忆快照' };
       } catch (error) {
         const errorDetails = adapter.getLastError() ?? toErrorDetails(error);
@@ -425,6 +438,14 @@ export function registerMemoryHandlers(
         failureCount: foundAfterFailure.failureCount,
       } : null;
       logStep('recordFailure', 'success', 'recordFailure 调用成功');
+
+      const v2Result = await runMemoryV2SelfTest();
+      details.v2 = v2Result;
+      if (!v2Result.ok) {
+        await restoreOriginalSnapshot();
+        logStep('done', 'failed', 'V2 实体匹配自测失败');
+        return makeResponse(false, 'done', 'V2 实体匹配自测失败', details);
+      }
 
       await restoreOriginalSnapshot();
       if (!steps.restore.ok) {
