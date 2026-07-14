@@ -27,6 +27,8 @@ export interface MemoryRecord {
   createdAt: string;
   updatedAt: string;
   lastUsedAt: string;
+  recordVersion?: 2;
+  canonicalKey?: string;
 }
 
 export interface MemoryRecordInput {
@@ -38,6 +40,7 @@ export interface MemoryRecordInput {
   playlistId?: number;
   playlistName?: string;
   songIndex?: number;
+  matchedRecordId?: string;
 }
 
 export interface MemoryStoreSnapshot {
@@ -48,7 +51,28 @@ export interface MemoryStoreSnapshot {
 
 export type MemoryFindResult = MemoryRecord | null;
 
+export type MemoryLoadStatus = 'ok' | 'missing' | 'read_error' | 'format_error';
+
+export interface MemoryLoadResult {
+  status: MemoryLoadStatus;
+  snapshot?: MemoryStoreSnapshot;
+  error?: string;
+  invalidRecordCount?: number;
+}
+
+export type MemoryResolveStatus = 'exact' | 'entity_hit' | 'ambiguous' | 'miss';
+
+export interface MemoryResolveResult {
+  status: MemoryResolveStatus;
+  record?: MemoryRecord;
+  canonicalKey?: string;
+  score?: number;
+  reason?: string;
+  candidateCount?: number;
+  margin?: number;
+}
+
 export interface MemoryStorageAdapter {
-  load(): Promise<MemoryStoreSnapshot>;
+  load(): Promise<MemoryLoadResult>;
   save(snapshot: MemoryStoreSnapshot): Promise<boolean>;
 }

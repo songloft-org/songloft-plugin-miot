@@ -326,7 +326,7 @@ export function registerConfigHandlers(
       let memoryWarning = '';
       if (memoryMaxChanged) {
         try {
-          memoryService.setMaxRecords(config.voice_memory_max_records);
+          await memoryService.setMaxRecords(config.voice_memory_max_records);
           await memoryService.init();
           if (!(await memoryService.trimToLimit())) {
             memoryWarning = '最大记忆数量已保存，但现有记忆暂时无法完成淘汰。';
