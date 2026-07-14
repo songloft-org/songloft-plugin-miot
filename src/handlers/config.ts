@@ -7,6 +7,8 @@ import { ConfigManager } from '../config/manager';
 import { ConversationMonitor } from '../conversation/monitor';
 import { Scheduler } from '../schedule/scheduler';
 import { VoiceEngine } from '../voicecmd/engine';
+import { normalizeMemoryMaxRecords } from '../memory';
+import type { MemoryService } from '../memory';
 import { setHostBaseUrl, callHostAPI } from '../utils/http';
 import { setPollDebug } from '../utils/debug';
 import type { SearchPriority } from '../types';
@@ -65,6 +67,7 @@ export function registerConfigHandlers(
   conversationMonitor: ConversationMonitor,
   scheduler: Scheduler,
   voiceEngine: VoiceEngine,
+  memoryService: MemoryService,
 ): void {
 
   // GET /config - 获取配置
@@ -84,6 +87,8 @@ export function registerConfigHandlers(
           server_host: config.server_host,
           conversation_monitor_enabled: config.conversation_monitor_enabled,
           voice_command_enabled: config.voice_command_enabled,
+          voice_memory_enabled: config.voice_memory_enabled,
+          voice_memory_max_records: config.voice_memory_max_records,
           scheduled_tasks_enabled: config.scheduled_tasks_enabled,
           timezone: config.timezone,
           force_mp3: !!config.force_mp3,
@@ -120,6 +125,7 @@ export function registerConfigHandlers(
     try {
       const body = parseBody(req);
       const config = await configManager.getConfig();
+      let memoryMaxChanged = false;
 
       // 更新 server_host
       if (body.server_host !== undefined) {
@@ -152,6 +158,15 @@ export function registerConfigHandlers(
         const enabled = !!body.voice_command_enabled;
         config.voice_command_enabled = enabled;
         voiceEngine.setEnabled(enabled);
+      }
+
+      if (body.voice_memory_enabled !== undefined) {
+        config.voice_memory_enabled = !!body.voice_memory_enabled;
+      }
+
+      if (body.voice_memory_max_records !== undefined) {
+        config.voice_memory_max_records = normalizeMemoryMaxRecords(body.voice_memory_max_records);
+        memoryMaxChanged = true;
       }
 
       // 更新 force_mp3
@@ -308,6 +323,20 @@ export function registerConfigHandlers(
 
       await configManager.saveConfig(config);
 
+      let memoryWarning = '';
+      if (memoryMaxChanged) {
+        try {
+          memoryService.setMaxRecords(config.voice_memory_max_records);
+          await memoryService.init();
+          if (!(await memoryService.trimToLimit())) {
+            memoryWarning = '最大记忆数量已保存，但现有记忆暂时无法完成淘汰。';
+          }
+        } catch (e) {
+          memoryWarning = '最大记忆数量已保存，但现有记忆暂时无法完成淘汰。';
+          songloft.log.warn('[MemoryConfig] trim failed: ' + String(e));
+        }
+      }
+
       // 配置保存后再联动监听器启停：start() 会 await 到设备列表初始化完成，
       // 之后前端请求 /conversation/status 即可拿到真实设备数量
       if (monitorAction === 'start' || monitorAction === 'restart') {
@@ -323,6 +352,9 @@ export function registerConfigHandlers(
         warning = '服务器地址为空，MIoT 智能音箱将无法播放音乐。请配置局域网 IP 地址（如 http://192.168.x.x:58091）。';
       } else if (isLoopbackAddress(config.server_host)) {
         warning = '检测到服务器地址为本地回环地址，MIoT 智能音箱将无法通过此地址访问服务器播放音乐。请使用局域网 IP 地址。';
+      }
+      if (memoryWarning) {
+        warning = warning ? `${warning} ${memoryWarning}` : memoryWarning;
       }
 
       const resp: any = { success: true };

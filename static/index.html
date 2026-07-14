@@ -558,6 +558,46 @@
                 </div>
             </div>
 
+            <!-- 语音记忆卡片 -->
+            <div class="card">
+                <div class="card-header">
+                    <span class="material-symbols-outlined">memory</span>
+                    语音记忆
+                </div>
+                <div class="card-body">
+                    <div class="switch-row">
+                        <div class="switch-row-label">
+                            <span class="switch-row-title">启用语音记忆</span>
+                            <span class="switch-row-subtitle" id="voiceMemoryStatusText">已开启</span>
+                        </div>
+                        <label class="switch">
+                            <input type="checkbox" id="voiceMemorySwitch" aria-label="启用语音记忆">
+                            <span class="switch-slider"></span>
+                        </label>
+                    </div>
+                    <div class="form-group" style="margin-top:12px">
+                        <label class="form-label" for="voiceMemoryMaxRecords">最大记忆数量</label>
+                        <input type="number" class="text-field" id="voiceMemoryMaxRecords" min="10" max="1000" step="10" value="100">
+                        <div class="memory-help">超过上限时自动淘汰最久未使用的记忆，范围 10–1000</div>
+                    </div>
+                    <div class="memory-toolbar">
+                        <div class="memory-count">
+                            已保存 <strong id="voiceMemoryCount">0</strong> 条
+                        </div>
+                        <button class="btn-icon" id="refreshVoiceMemoryBtn" title="刷新记忆列表" aria-label="刷新记忆列表">
+                            <span class="material-symbols-outlined">refresh</span>
+                        </button>
+                        <button class="btn-text memory-clear-btn" id="clearVoiceMemoryBtn">
+                            <span class="material-symbols-outlined">delete_sweep</span>
+                            清空全部
+                        </button>
+                    </div>
+                    <div class="memory-list" id="voiceMemoryList">
+                        <div class="empty-state memory-empty">加载中...</div>
+                    </div>
+                </div>
+            </div>
+
             <!-- 外部搜索卡片 -->
             <div class="card">
                 <div class="card-header">

@@ -8,8 +8,7 @@ import type {
   MemoryStorageAdapter,
   MemoryStoreSnapshot,
 } from './types';
-
-const MAX_MEMORY_RECORDS = 200;
+import { DEFAULT_MEMORY_MAX_RECORDS, normalizeMemoryMaxRecords } from './types';
 
 function hashString(value: string): string {
   let hash = 5381;
@@ -27,12 +26,30 @@ export class MemoryService {
   private adapter: MemoryStorageAdapter;
   private records: Map<string, MemoryRecord> = new Map();
   private initialized = false;
+  private maxRecords: number;
+  private initPromise: Promise<void> | null = null;
 
-  constructor(adapter: MemoryStorageAdapter = new SongloftStorageMemoryAdapter()) {
+  constructor(
+    adapter: MemoryStorageAdapter = new SongloftStorageMemoryAdapter(),
+    maxRecords: number = DEFAULT_MEMORY_MAX_RECORDS,
+  ) {
     this.adapter = adapter;
+    this.maxRecords = normalizeMemoryMaxRecords(maxRecords);
   }
 
   async init(): Promise<void> {
+    if (this.initialized) return;
+    if (this.initPromise) return await this.initPromise;
+
+    this.initPromise = this.initialize();
+    try {
+      await this.initPromise;
+    } finally {
+      this.initPromise = null;
+    }
+  }
+
+  private async initialize(): Promise<void> {
     try {
       await this.load();
       this.initialized = true;
@@ -47,6 +64,10 @@ export class MemoryService {
     try {
       const snapshot = await this.adapter.load();
       this.records = new Map(snapshot.records.map(record => [record.normalizedQuery, record]));
+      const evicted = this.enforceLimit();
+      if (evicted > 0) {
+        await this.save();
+      }
       return Array.from(this.records.values());
     } catch (error) {
       this.records.clear();
@@ -57,14 +78,8 @@ export class MemoryService {
 
   async save(): Promise<boolean> {
     try {
-      const records = Array.from(this.records.values())
-        .sort((a, b) => {
-          const scoreA = a.successCount * 2 + a.hitCount - a.failureCount;
-          const scoreB = b.successCount * 2 + b.hitCount - b.failureCount;
-          if (scoreB !== scoreA) return scoreB - scoreA;
-          return b.updatedAt.localeCompare(a.updatedAt);
-        })
-        .slice(0, MAX_MEMORY_RECORDS);
+      this.enforceLimit();
+      const records = this.list();
 
       const snapshot: MemoryStoreSnapshot = {
         version: 1,
@@ -98,6 +113,7 @@ export class MemoryService {
       const timestamp = nowIso();
       const record: MemoryRecord = {
         id: existing?.id ?? `memory_${hashString(normalizedQuery)}`,
+        query: input.query,
         normalizedQuery,
         type: input.type,
         songId: input.songId,
@@ -158,5 +174,93 @@ export class MemoryService {
 
   isInitialized(): boolean {
     return this.initialized;
+  }
+
+  setMaxRecords(maxRecords: number): void {
+    this.maxRecords = normalizeMemoryMaxRecords(maxRecords);
+    this.enforceLimit();
+  }
+
+  getMaxRecords(): number {
+    return this.maxRecords;
+  }
+
+  list(): MemoryRecord[] {
+    return Array.from(this.records.values())
+      .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  }
+
+  count(): number {
+    return this.records.size;
+  }
+
+  findById(id: string): MemoryRecord | null {
+    for (const record of this.records.values()) {
+      if (record.id === id) return record;
+    }
+    return null;
+  }
+
+  async trimToLimit(): Promise<boolean> {
+    try {
+      this.enforceLimit();
+      return await this.save();
+    } catch (error) {
+      songloft.log.warn('[MemoryService] trimToLimit failed: ' + String(error));
+      return false;
+    }
+  }
+
+  async deleteById(id: string): Promise<boolean> {
+    try {
+      const record = this.findById(id);
+      if (!record) return false;
+
+      this.records.delete(record.normalizedQuery);
+      const saved = await this.save();
+      if (!saved) {
+        this.records.set(record.normalizedQuery, record);
+      }
+      return saved;
+    } catch (error) {
+      songloft.log.warn('[MemoryService] deleteById failed: ' + String(error));
+      return false;
+    }
+  }
+
+  async clear(): Promise<boolean> {
+    try {
+      const previous = new Map(this.records);
+      this.records.clear();
+      const saved = await this.save();
+      if (!saved) {
+        this.records = previous;
+      }
+      return saved;
+    } catch (error) {
+      songloft.log.warn('[MemoryService] clear failed: ' + String(error));
+      return false;
+    }
+  }
+
+  private enforceLimit(): number {
+    const overflow = this.records.size - this.maxRecords;
+    if (overflow <= 0) return 0;
+
+    const oldest = Array.from(this.records.values())
+      .sort((a, b) => {
+        const lastUsedCompare = a.lastUsedAt.localeCompare(b.lastUsedAt);
+        if (lastUsedCompare !== 0) return lastUsedCompare;
+        const updatedCompare = a.updatedAt.localeCompare(b.updatedAt);
+        if (updatedCompare !== 0) return updatedCompare;
+        return a.createdAt.localeCompare(b.createdAt);
+      })
+      .slice(0, overflow);
+
+    for (const record of oldest) {
+      this.records.delete(record.normalizedQuery);
+    }
+    songloft.log.info(`[MemoryService] evicted ${oldest.length} old record(s), limit=${this.maxRecords}`);
+    return oldest.length;
   }
 }

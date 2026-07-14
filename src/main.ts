@@ -12,6 +12,7 @@ import { VoiceEngine } from './voicecmd/engine';
 import { AIAnalyzer } from './voicecmd/ai_analyzer';
 import { getDefaultVoiceCommands } from './voicecmd/engine';
 import { IndexingManager } from './indexing/manager';
+import { MemoryService } from './memory';
 
 // 导入所有handler注册函数
 import { registerAccountHandlers } from './handlers/account';
@@ -39,6 +40,7 @@ let scheduler: Scheduler;
 let conversationMonitor: ConversationMonitor;
 let voiceEngine: VoiceEngine;
 let indexingManager: IndexingManager;
+let memoryService: MemoryService;
 
 async function onInit(): Promise<void> {
   songloft.log.info('MIoT 智能音箱插件初始化...');
@@ -52,6 +54,7 @@ async function onInit(): Promise<void> {
   authService = new AuthService(configManager, accountManager);
   minaService = new MinaService(accountManager, configManager);
   playlistManagerMap = new PlaylistManagerMap(minaService, configManager);
+  memoryService = new MemoryService();
 
   // 从配置中读取服务器地址并设置音箱播放 URL 基础地址
   const pluginConfig = await configManager.getConfig();
@@ -64,7 +67,7 @@ async function onInit(): Promise<void> {
   setPollDebug(pluginConfig.conversation_poll_debug ?? false);
 
   conversationMonitor = new ConversationMonitor(accountManager, configManager);
-  voiceEngine = new VoiceEngine(configManager, accountManager, minaService, playlistManagerMap, indexingManager, new AIAnalyzer());
+  voiceEngine = new VoiceEngine(configManager, accountManager, minaService, playlistManagerMap, indexingManager, new AIAnalyzer(), memoryService);
 
   const executor = new TaskExecutor(configManager, accountManager, minaService, playlistManagerMap, indexingManager, conversationMonitor);
   scheduler = new Scheduler(configManager, executor);
@@ -82,12 +85,12 @@ async function onInit(): Promise<void> {
   registerAuthHandlers(router, authService, accountManager);
   registerDeviceHandlers(router, minaService, accountManager, conversationMonitor);
   registerPlaylistHandlers(router, playlistManagerMap, minaService, configManager);
-  registerConfigHandlers(router, configManager, conversationMonitor, scheduler, voiceEngine);
+  registerConfigHandlers(router, configManager, conversationMonitor, scheduler, voiceEngine, memoryService);
   registerConversationHandlers(router, conversationMonitor, configManager);
   registerScheduleHandlers(router, scheduler, configManager);
   registerVoiceCommandHandlers(router, configManager, voiceEngine);
   registerIndexingHandlers(router, indexingManager);
-  registerMemoryHandlers(router);
+  registerMemoryHandlers(router, memoryService, configManager);
 
   // 自动登录 + 启动后台服务（异步，不阻塞插件初始化）
   authService.autoLoginAll().catch(e => {

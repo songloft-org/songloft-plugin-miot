@@ -65,6 +65,18 @@ export function loadConfig() {
             updateVoiceCommandStatus(voiceEnabled);
             updateVoiceCommandDependency();
 
+            const memoryEnabled = data.data.voice_memory_enabled !== false;
+            const memorySwitchEl = document.getElementById('voiceMemorySwitch');
+            if (memorySwitchEl) {
+                memorySwitchEl.checked = memoryEnabled;
+            }
+            updateVoiceMemoryStatus(memoryEnabled);
+
+            const memoryMaxInput = document.getElementById('voiceMemoryMaxRecords');
+            if (memoryMaxInput) {
+                memoryMaxInput.value = data.data.voice_memory_max_records ?? 100;
+            }
+
             // 音频格式开关
             const forceMp3 = !!data.data.force_mp3;
             const forceMp3Switch = document.getElementById('forceMp3Switch');
@@ -207,6 +219,7 @@ export function loadConfig() {
 
             // 加载语音口令配置
             loadVoiceCommands();
+            loadVoiceMemoryData();
 
             // 加载 AI 配置
             if (data.data.ai_config) {
@@ -426,6 +439,185 @@ export function initMaxSongIndexUI() {
             })
             .catch(error => showSnackbar('保存失败：' + error.message, 'error'));
     });
+}
+
+// ========== 语音记忆 ==========
+
+export function initVoiceMemoryUI() {
+    const switchEl = document.getElementById('voiceMemorySwitch');
+    const maxInput = document.getElementById('voiceMemoryMaxRecords');
+    const refreshBtn = document.getElementById('refreshVoiceMemoryBtn');
+    const clearBtn = document.getElementById('clearVoiceMemoryBtn');
+    const listEl = document.getElementById('voiceMemoryList');
+
+    if (switchEl) {
+        switchEl.addEventListener('change', function() {
+            const enabled = this.checked;
+            apiPost('/config', { voice_memory_enabled: enabled })
+                .then(data => {
+                    if (data.success) {
+                        updateVoiceMemoryStatus(enabled);
+                        showSnackbar(enabled ? '语音记忆已开启' : '语音记忆已关闭，已保存记忆仍会保留', 'success');
+                    } else {
+                        this.checked = !enabled;
+                        showSnackbar('操作失败：' + (data.error || '未知错误'), 'error');
+                    }
+                })
+                .catch(error => {
+                    this.checked = !enabled;
+                    showSnackbar('操作失败：' + error.message, 'error');
+                });
+        });
+    }
+
+    if (maxInput) {
+        maxInput.addEventListener('change', function() {
+            const value = Math.max(10, Math.min(1000, parseInt(this.value) || 100));
+            this.value = value;
+            apiPost('/config', { voice_memory_max_records: value })
+                .then(data => {
+                    if (data.success) {
+                        showSnackbar(data.warning || ('最大记忆数量已设为 ' + value), data.warning ? 'warning' : 'success');
+                        loadVoiceMemoryData();
+                    } else {
+                        showSnackbar('保存失败：' + (data.error || '未知错误'), 'error');
+                        loadConfig();
+                    }
+                })
+                .catch(error => {
+                    showSnackbar('保存失败：' + error.message, 'error');
+                    loadConfig();
+                });
+        });
+    }
+
+    if (refreshBtn) {
+        refreshBtn.addEventListener('click', loadVoiceMemoryData);
+    }
+
+    if (clearBtn) {
+        clearBtn.addEventListener('click', clearAllVoiceMemory);
+    }
+
+    if (listEl) {
+        listEl.addEventListener('click', event => {
+            const button = event.target.closest('.memory-delete-btn');
+            if (!button) return;
+            deleteVoiceMemory(
+                decodeURIComponent(button.dataset.memoryId || ''),
+                decodeURIComponent(button.dataset.memoryQuery || ''),
+            );
+        });
+    }
+}
+
+function updateVoiceMemoryStatus(enabled) {
+    const statusText = document.getElementById('voiceMemoryStatusText');
+    if (statusText) {
+        statusText.textContent = enabled ? '已开启' : '已关闭，现有记忆保留';
+    }
+}
+
+export function loadVoiceMemoryData() {
+    const listEl = document.getElementById('voiceMemoryList');
+    if (listEl) {
+        listEl.innerHTML = '<div class="empty-state memory-empty">加载中...</div>';
+    }
+
+    return apiGet('/memory')
+        .then(data => {
+            if (!data.success || !data.data) {
+                throw new Error(data.error || '未知错误');
+            }
+
+            const countEl = document.getElementById('voiceMemoryCount');
+            if (countEl) countEl.textContent = String(data.data.count || 0);
+
+            const clearBtn = document.getElementById('clearVoiceMemoryBtn');
+            if (clearBtn) clearBtn.disabled = !data.data.count;
+
+            const maxInput = document.getElementById('voiceMemoryMaxRecords');
+            if (maxInput) maxInput.value = data.data.max_records ?? 100;
+
+            renderVoiceMemoryList(data.data.records || []);
+        })
+        .catch(error => {
+            if (listEl) {
+                listEl.innerHTML = '<div class="empty-state memory-empty">读取记忆失败</div>';
+            }
+            showSnackbar('读取语音记忆失败：' + error.message, 'error');
+        });
+}
+
+function renderVoiceMemoryList(records) {
+    const listEl = document.getElementById('voiceMemoryList');
+    if (!listEl) return;
+    if (!records.length) {
+        listEl.innerHTML = '<div class="empty-state memory-empty">暂无已保存的语音记忆</div>';
+        return;
+    }
+
+    listEl.innerHTML = records.map(record => {
+        const query = record.query || record.normalizedQuery || '';
+        const song = record.songName || '未知歌曲';
+        const artist = record.artist || '未知歌手';
+        return `<div class="memory-item">
+            <div class="memory-item-main">
+                <div class="memory-query" title="${escapeHtml(query)}">${escapeHtml(query)}</div>
+                <div class="memory-song">${escapeHtml(song)} · ${escapeHtml(artist)}</div>
+                <div class="memory-meta">
+                    <span>命中 ${Number(record.hitCount) || 0}</span>
+                    <span>成功 ${Number(record.successCount) || 0}</span>
+                    <span>更新 ${escapeHtml(formatMemoryDate(record.updatedAt))}</span>
+                </div>
+            </div>
+            <button class="btn-icon danger memory-delete-btn" data-memory-id="${encodeURIComponent(record.id)}" data-memory-query="${encodeURIComponent(query)}" title="删除该条记忆" aria-label="删除该条记忆">
+                <span class="material-symbols-outlined">delete</span>
+            </button>
+        </div>`;
+    }).join('');
+}
+
+function formatMemoryDate(value) {
+    const date = new Date(value);
+    if (!value || Number.isNaN(date.getTime())) return '未知';
+    return date.toLocaleString('zh-CN', { hour12: false });
+}
+
+function deleteVoiceMemory(id, query) {
+    if (!id) return;
+    if (!confirm(`确定删除语音记忆“${query || id}”吗？`)) return;
+
+    apiDelete('/memory?id=' + encodeURIComponent(id))
+        .then(data => {
+            if (data.success) {
+                showSnackbar('记忆已删除', 'success');
+                loadVoiceMemoryData();
+            } else {
+                showSnackbar('删除失败：' + (data.error || '未知错误'), 'error');
+            }
+        })
+        .catch(error => showSnackbar('删除失败：' + error.message, 'error'));
+}
+
+function clearAllVoiceMemory() {
+    const count = Number(document.getElementById('voiceMemoryCount')?.textContent || 0);
+    if (count === 0) {
+        showSnackbar('当前没有可清空的记忆', 'info');
+        return;
+    }
+    if (!confirm(`确定清空全部 ${count} 条语音记忆吗？此操作无法撤销。`)) return;
+
+    apiDelete('/memory/all')
+        .then(data => {
+            if (data.success) {
+                showSnackbar('全部语音记忆已清空', 'success');
+                loadVoiceMemoryData();
+            } else {
+                showSnackbar('清空失败：' + (data.error || '未知错误'), 'error');
+            }
+        })
+        .catch(error => showSnackbar('清空失败：' + error.message, 'error'));
 }
 
 // ========== 服务器地址警告 ==========

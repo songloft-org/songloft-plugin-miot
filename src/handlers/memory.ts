@@ -1,8 +1,9 @@
 // MIoT 智能音箱插件 - 智能记忆调试 Handler
 
-import { jsonResponse } from '@songloft/plugin-sdk';
+import { jsonResponse, parseQuery } from '@songloft/plugin-sdk';
 import type { Router, HTTPRequest } from '@songloft/plugin-sdk';
 import { MemoryService } from '../memory';
+import type { ConfigManager } from '../config/manager';
 import type { MemoryRecord, MemoryStorageAdapter, MemoryStoreSnapshot } from '../memory';
 
 const MEMORY_STORAGE_KEY = 'memory:v1:records';
@@ -183,7 +184,88 @@ class SelfTestStorageAdapter implements MemoryStorageAdapter {
  * 注册智能记忆调试路由
  * GET /memory/self-test -> 验证 songloft.storage 读写智能记忆数据
  */
-export function registerMemoryHandlers(router: Router): void {
+export function registerMemoryHandlers(
+  router: Router,
+  memoryService: MemoryService,
+  configManager: ConfigManager,
+): void {
+  const ensureMemoryReady = async (): Promise<void> => {
+    const config = await configManager.getConfig();
+    memoryService.setMaxRecords(config.voice_memory_max_records);
+    await memoryService.init();
+  };
+
+  router.get('/memory', async (_req: HTTPRequest) => {
+    try {
+      await ensureMemoryReady();
+      const config = await configManager.getConfig();
+      const records = memoryService.list().map(record => ({
+        id: record.id,
+        query: record.query || record.normalizedQuery,
+        normalizedQuery: record.normalizedQuery,
+        type: record.type,
+        songId: record.songId,
+        songName: record.songName || '',
+        artist: record.artist || '',
+        playlistId: record.playlistId,
+        playlistName: record.playlistName,
+        songIndex: record.songIndex,
+        hitCount: record.hitCount,
+        successCount: record.successCount,
+        failureCount: record.failureCount,
+        createdAt: record.createdAt,
+        updatedAt: record.updatedAt,
+        lastUsedAt: record.lastUsedAt,
+      }));
+      return jsonResponse({
+        success: true,
+        data: {
+          enabled: config.voice_memory_enabled,
+          max_records: config.voice_memory_max_records,
+          count: records.length,
+          records,
+        },
+      });
+    } catch (error) {
+      songloft.log.warn('[MemoryHandler] list failed: ' + String(error));
+      return jsonResponse({ success: false, error: '读取语音记忆失败' }, 500);
+    }
+  });
+
+  router.delete('/memory', async (req: HTTPRequest) => {
+    try {
+      await ensureMemoryReady();
+      const query = parseQuery(req.query);
+      const id = query.id;
+      if (!id) {
+        return jsonResponse({ success: false, error: '缺少记忆 id' }, 400);
+      }
+      if (!memoryService.findById(id)) {
+        return jsonResponse({ success: false, error: '未找到该条记忆' }, 404);
+      }
+      if (!(await memoryService.deleteById(id))) {
+        return jsonResponse({ success: false, error: '删除记忆失败，原记录已保留' }, 500);
+      }
+      return jsonResponse({ success: true, data: { id, count: memoryService.count() } });
+    } catch (error) {
+      songloft.log.warn('[MemoryHandler] delete failed: ' + String(error));
+      return jsonResponse({ success: false, error: '删除记忆失败' }, 500);
+    }
+  });
+
+  router.delete('/memory/all', async (_req: HTTPRequest) => {
+    try {
+      await ensureMemoryReady();
+      if (!(await memoryService.clear())) {
+        return jsonResponse({ success: false, error: '清空记忆失败，原记录已保留' }, 500);
+      }
+      return jsonResponse({ success: true, data: { count: 0 } });
+    } catch (error) {
+      songloft.log.warn('[MemoryHandler] clear failed: ' + String(error));
+      return jsonResponse({ success: false, error: '清空记忆失败' }, 500);
+    }
+  });
+
   router.get('/memory/self-test', async (req: HTTPRequest) => {
     const adapter = new SelfTestStorageAdapter();
     const service = new MemoryService(adapter);

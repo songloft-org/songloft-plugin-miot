@@ -95,9 +95,6 @@ const INDEX_READY_WAIT_MS = 5000;
 /** 本地独立歌曲 URL 健康检查超时（ms），利用 TTS 播报窗口期异步验证，不增加用户感知延迟。 */
 const URL_HEALTH_CHECK_TIMEOUT_MS = 3000;
 
-/** 智能记忆语音接入总开关。需要快速回滚时改为 false 后重新构建。 */
-const VOICE_MEMORY_ENABLED = true;
-
 const FIXED_CONTROL_COMMAND_TYPES = new Set(['set_play_mode', 'set_volume', 'next', 'previous', 'stop']);
 const SEARCH_COMMAND_TYPES = new Set(['play_song', 'play_playlist']);
 const BUILTIN_STOP_KEYWORDS = ['暂停播放', '停止播放', '暂停音乐', '停一下', 'pause', 'stop'];
@@ -192,6 +189,7 @@ export class VoiceEngine {
     playlistManagerMap: PlaylistManagerMap,
     indexingManager: IndexingManager,
     aiAnalyzer?: AIAnalyzer,
+    memoryService?: MemoryService,
   ) {
     this.configManager = configManager;
     this.accountManager = accountManager;
@@ -200,7 +198,7 @@ export class VoiceEngine {
     this.indexingManager = indexingManager;
     this.aiAnalyzer = aiAnalyzer || new AIAnalyzer();
     this.onlineSearcher = new OnlineSearcher(configManager);
-    this.memoryService = new MemoryService();
+    this.memoryService = memoryService || new MemoryService();
   }
 
   // ===== 公开方法 =====
@@ -248,7 +246,11 @@ export class VoiceEngine {
       return;
     }
 
-    if (VOICE_MEMORY_ENABLED) {
+    const pluginConfig = await this.configManager.getConfig();
+    const memoryEnabled = pluginConfig.voice_memory_enabled;
+    this.memoryService.setMaxRecords(pluginConfig.voice_memory_max_records);
+
+    if (memoryEnabled) {
       try {
         const memoryHandled = await this.tryHandleMemory(query, accountId, msg.device_id);
         if (memoryHandled) {
@@ -269,7 +271,7 @@ export class VoiceEngine {
 
       // 执行口令
       const playedSong = await this.executeCommand(result, accountId, msg.device_id);
-      if (result.command.type === 'play_song' && playedSong) {
+      if (memoryEnabled && result.command.type === 'play_song' && playedSong) {
         this.queueMemorySuccess(query, playedSong);
       }
       return;
@@ -287,7 +289,7 @@ export class VoiceEngine {
         if (aiResult.confidence === 'high' && aiResult.action !== 'unknown') {
           songloft.log.info(`[VoiceEngine] [AI] → Executing fallback (high confidence, action=${aiResult.action})`);
           const playedSong = await this.executeAIResult(aiResult, accountId, msg.device_id);
-          if (aiResult.action === 'play_song' && playedSong) {
+          if (memoryEnabled && aiResult.action === 'play_song' && playedSong) {
             this.queueMemorySuccess(query, playedSong);
           }
           return;
@@ -310,6 +312,10 @@ export class VoiceEngine {
 
   private async ensureMemoryInitialized(): Promise<void> {
     if (this.memoryInitialized) return;
+    if (this.memoryService.isInitialized()) {
+      this.memoryInitialized = true;
+      return;
+    }
     await this.memoryService.init();
     this.memoryInitialized = this.memoryService.isInitialized();
   }
@@ -405,8 +411,6 @@ export class VoiceEngine {
   }
 
   private queueMemorySuccess(query: string, song: PlayedSong): void {
-    if (!VOICE_MEMORY_ENABLED) return;
-
     songloft.log.info(`[VoiceMemory] recordSuccess queued query="${query}" song="${song.songName}"`);
     void this.memoryService.recordSuccess({
       query,

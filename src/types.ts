@@ -111,6 +111,8 @@ export interface PluginConfig {
   timezone: string;
   conversation_monitor_enabled: boolean;
   voice_command_enabled: boolean;
+  voice_memory_enabled: boolean;
+  voice_memory_max_records: number;
   scheduled_tasks_enabled: boolean;
   force_mp3: boolean;
   external_search_enabled: boolean; // 是否启用外部搜索（全局总开关）

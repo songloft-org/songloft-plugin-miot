@@ -60,15 +60,16 @@ Relevant logs:
 [VoiceMemory] error fallback
 ```
 
-## Quick Rollback
+## Settings And Management
 
-Set this constant in `src/voicecmd/engine.ts` to `false`, then rebuild:
+The settings page persists these fields through the existing `/config` API and `songloft.storage` configuration key:
 
-```ts
-const VOICE_MEMORY_ENABLED = false;
-```
+- `voice_memory_enabled`: defaults to `true`.
+- `voice_memory_max_records`: defaults to `100`, clamped to `10..1000`.
 
-This disables the memory branch while preserving the rest of the voice flow.
+Turning memory off skips lookup and new writes without deleting saved records. The settings page also lists records and supports single-record deletion and confirmed clearing through the `/memory` routes.
+
+When the configured limit is exceeded, the least recently used records are evicted first. Use the settings-page switch for quick rollback; the existing rule and AI fallback flow remains active.
 
 ## Current Diagnostic Limit
 

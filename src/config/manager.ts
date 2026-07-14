@@ -15,6 +15,7 @@ import type {
   TaskLog,
   AIConfig,
 } from '../types';
+import { DEFAULT_MEMORY_MAX_RECORDS, normalizeMemoryMaxRecords } from '../memory/types';
 
 // ===== 存储键常量 =====
 const STORAGE_KEY_CONFIG = 'config';
@@ -40,6 +41,8 @@ function defaultPluginConfig(): PluginConfig {
     timezone: 'Asia/Shanghai',
     conversation_monitor_enabled: false,
     voice_command_enabled: false,
+    voice_memory_enabled: true,
+    voice_memory_max_records: DEFAULT_MEMORY_MAX_RECORDS,
     scheduled_tasks_enabled: false,
     force_mp3: false,
     external_search_enabled: false,
@@ -126,6 +129,8 @@ export class ConfigManager {
     }
     const stored = await this.configCache;
     const merged = { ...defaultPluginConfig(), ...stored };
+    merged.voice_memory_enabled = stored.voice_memory_enabled !== false;
+    merged.voice_memory_max_records = normalizeMemoryMaxRecords(stored.voice_memory_max_records);
     // 惰性迁移：把旧单值外部搜索源归一化为源列表（不写盘，每次读计算）
     merged.external_search_sources = this.normalizeSearchSources(merged);
     return merged;
