@@ -117,7 +117,94 @@ function showPage(pageId) {
         loadConfig();
         loadSchedules();
         loadIndexStatus();
+        initSettingsMasterDetail();
+        const layout = document.getElementById('settingsLayout');
+        if (layout) layout.classList.remove('view-detail');
+        // 列表态（含宽屏双栏）：顶部返回按钮保留，用于退出设置页回到播放页
+        settingsInDetail = false;
     }
+}
+
+// ========== 设置页 Master/Detail（对齐主程序设置页响应式范式） ==========
+const SETTINGS_CATEGORIES = [
+    { id: 'device',   icon: 'router',            title: '设备与连接',   subtitle: '服务器、自定义型号、指示灯' },
+    { id: 'playback', icon: 'lyrics',            title: '播放与显示',   subtitle: '音频格式、触屏歌词、默认封面' },
+    { id: 'voice',    icon: 'record_voice_over', title: '语音交互',     subtitle: '对话监听、口令、记忆、外部搜索' },
+    { id: 'schedule', icon: 'schedule',          title: '定时与自动化', subtitle: '时区、定时任务' },
+    { id: 'toolbox',  icon: 'build',             title: '工具箱',       subtitle: 'URL 播放、文字播报、操作结果' },
+];
+let settingsNavBuilt = false;
+let settingsSelectedCategory = 'device';
+let settingsInDetail = false;  // 手机端：是否处于「分类详情」视图（决定顶部返回行为）
+
+function buildSettingsNav() {
+    const nav = document.getElementById('settingsNav');
+    if (!nav) return;
+    nav.innerHTML = '';
+    SETTINGS_CATEGORIES.forEach(cat => {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'settings-nav-item';
+        btn.dataset.category = cat.id;
+        btn.setAttribute('aria-label', cat.title);
+        btn.innerHTML =
+            '<span class="settings-nav-icon"><span class="material-symbols-outlined">' + cat.icon + '</span></span>' +
+            '<span class="settings-nav-text">' +
+                '<span class="settings-nav-title">' + cat.title + '</span>' +
+                '<span class="settings-nav-subtitle">' + cat.subtitle + '</span>' +
+            '</span>' +
+            '<span class="material-symbols-outlined settings-nav-chevron">chevron_right</span>';
+        btn.addEventListener('click', () => {
+            selectSettingsCategory(cat.id);
+            const layout = document.getElementById('settingsLayout');
+            const isNarrow = window.matchMedia('(max-width: 599px)').matches;
+            // 手机端进入分类详情：顶部返回按钮改为「回到分类列表」，标题显示分类名
+            if (layout && isNarrow) {
+                layout.classList.add('view-detail');
+                settingsInDetail = true;
+                const navBackBtn = document.getElementById('navBackBtn');
+                if (navBackBtn) navBackBtn.style.display = '';
+                const appBarTitle = document.getElementById('appBarTitle');
+                if (appBarTitle) appBarTitle.textContent = cat.title;
+            }
+        });
+        nav.appendChild(btn);
+    });
+    settingsNavBuilt = true;
+}
+
+function selectSettingsCategory(id) {
+    settingsSelectedCategory = id;
+    document.querySelectorAll('#settingsNav .settings-nav-item').forEach(el => {
+        el.classList.toggle('active', el.dataset.category === id);
+    });
+    document.querySelectorAll('#tab-settings .card[data-category]').forEach(card => {
+        card.style.display = card.dataset.category === id ? '' : 'none';
+    });
+}
+
+function initSettingsMasterDetail() {
+    if (!settingsNavBuilt) buildSettingsNav();
+    selectSettingsCategory(settingsSelectedCategory);
+}
+
+// 回到分类列表（手机端详情态的返回目标）
+function exitSettingsDetail() {
+    const layout = document.getElementById('settingsLayout');
+    if (layout) layout.classList.remove('view-detail');
+    settingsInDetail = false;
+    // 返回列表后仍保留顶部返回按钮（用于退出设置页），标题恢复为「设置」
+    const appBarTitle = document.getElementById('appBarTitle');
+    if (appBarTitle) appBarTitle.textContent = '设置';
+}
+
+// 顶部返回按钮：设置页详情态回到列表，其余情况走应用级返回
+function onNavBack() {
+    if (currentPage === 'settings' && settingsInDetail) {
+        exitSettingsDetail();
+        return;
+    }
+    navigateBack();
 }
 
 // ========== 将函数挂载到 window 供 HTML onclick 调用 ==========
@@ -249,8 +336,15 @@ document.addEventListener('DOMContentLoaded', () => {
     // ========== 导航按钮事件绑定 ==========
     const navBackBtn = document.getElementById('navBackBtn');
     if (navBackBtn) {
-        navBackBtn.addEventListener('click', navigateBack);
+        navBackBtn.addEventListener('click', onNavBack);
     }
+
+    // 旋转/缩放跨断点时，退出设置详情态，避免宽屏残留顶部返回按钮
+    window.addEventListener('resize', () => {
+        if (currentPage === 'settings' && window.matchMedia('(min-width: 600px)').matches) {
+            exitSettingsDetail();
+        }
+    });
 
     const accountBtn = document.getElementById('accountBtn');
     if (accountBtn) {
