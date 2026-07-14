@@ -188,9 +188,12 @@
 
     <!-- Page: 设置 -->
     <div class="page-content" id="tab-settings">
+        <div class="settings-layout" id="settingsLayout">
+            <nav class="settings-nav" id="settingsNav" aria-label="设置分类"></nav>
+            <div class="settings-content" id="settingsContent">
         <div class="container">
             <!-- 服务器地址配置卡片 -->
-            <div class="card">
+            <div class="card" data-category="device">
                 <div class="card-header">
                     <span class="material-symbols-outlined">dns</span>
                     服务器配置
@@ -221,7 +224,7 @@
             </div>
 
             <!-- 音频格式卡片 -->
-            <div class="card">
+            <div class="card" data-category="playback">
                 <div class="card-header">
                     <span class="material-symbols-outlined">audio_file</span>
                     音频格式
@@ -241,7 +244,7 @@
             </div>
 
             <!-- 指示灯 -->
-            <div class="card">
+            <div class="card" data-category="device">
                 <div class="card-header">
                     <span class="material-symbols-outlined">lightbulb</span>
                     指示灯
@@ -261,7 +264,7 @@
             </div>
 
             <!-- 触屏歌词 -->
-            <div class="card">
+            <div class="card" data-category="playback">
                 <div class="card-header">
                     <span class="material-symbols-outlined">lyrics</span>
                     触屏歌词
@@ -281,7 +284,7 @@
             </div>
 
             <!-- 默认封面 -->
-            <div class="card">
+            <div class="card" data-category="playback">
                 <div class="card-header">
                     <span class="material-symbols-outlined">image</span>
                     默认封面
@@ -323,7 +326,7 @@
             </div>
 
             <!-- 自定义 Music API 型号 -->
-            <div class="card">
+            <div class="card" data-category="device">
                 <div class="card-header">
                     <span class="material-symbols-outlined">speaker</span>
                     自定义 Music API 型号
@@ -338,7 +341,7 @@
             </div>
 
             <!-- 对话监听卡片 -->
-            <div class="card">
+            <div class="card" data-category="voice">
                 <div class="card-header">
                     <span class="material-symbols-outlined">record_voice_over</span>
                     对话监听
@@ -415,7 +418,7 @@
             </div>
 
             <!-- 歌曲/歌单索引卡片 -->
-            <div class="card">
+            <div class="card" data-category="voice">
                 <div class="card-header">
                     <span class="material-symbols-outlined">database</span>
                     歌曲索引
@@ -438,7 +441,7 @@
             </div>
 
             <!-- 语音口令卡片 -->
-            <div class="card">
+            <div class="card" data-category="voice">
                 <div class="card-header">
                     <span class="material-symbols-outlined">mic</span>
                     语音口令
@@ -559,7 +562,7 @@
             </div>
 
             <!-- 语音记忆卡片 -->
-            <div class="card">
+            <div class="card" data-category="voice">
                 <div class="card-header">
                     <span class="material-symbols-outlined">memory</span>
                     语音记忆
@@ -599,7 +602,7 @@
             </div>
 
             <!-- 外部搜索卡片 -->
-            <div class="card">
+            <div class="card" data-category="voice">
                 <div class="card-header">
                     <span class="material-symbols-outlined">search</span>
                     外部搜索
@@ -709,7 +712,7 @@
             </div>
 
             <!-- 搜索提示卡片 -->
-            <div class="card">
+            <div class="card" data-category="voice">
                 <div class="card-header">
                     <span class="material-symbols-outlined">record_voice_over</span>
                     搜索提示
@@ -747,7 +750,7 @@
             </div>
 
             <!-- URL 播放卡片 -->
-            <div class="card">
+            <div class="card" data-category="toolbox">
                 <div class="card-header">
                     <span class="material-symbols-outlined">link</span>
                     URL 播放
@@ -767,7 +770,7 @@
             </div>
 
             <!-- 文字播报 (TTS) 卡片 -->
-            <div class="card">
+            <div class="card" data-category="toolbox">
                 <div class="card-header">
                     <span class="material-symbols-outlined">record_voice_over</span>
                     文字播报
@@ -792,7 +795,7 @@
             </div>
 
             <!-- 时区配置 -->
-            <div class="card">
+            <div class="card" data-category="schedule">
                 <div class="card-header">
                     <span class="material-symbols-outlined">schedule</span>
                     时区设置
@@ -824,7 +827,7 @@
             </div>
 
             <!-- 定时任务卡片 -->
-            <div class="card">
+            <div class="card" data-category="schedule">
                 <div class="card-header">
                     <span class="material-symbols-outlined">schedule</span>
                     定时任务
@@ -873,7 +876,7 @@
             </div>
 
             <!-- 操作结果卡片 -->
-            <div class="card">
+            <div class="card" data-category="toolbox">
                 <div class="card-header">
                     <span class="material-symbols-outlined">terminal</span>
                     操作结果
@@ -883,8 +886,10 @@
                     </button>
                 </div>
                 <div class="card-body">
-                    <pre class="result-pre" id="resultContent">暂无操作结果</pre>
+                <pre class="result-pre" id="resultContent">暂无操作结果</pre>
                 </div>
+            </div>
+        </div>
             </div>
         </div>
     </div>
