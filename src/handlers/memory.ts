@@ -44,6 +44,19 @@ function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
 }
 
+function parseBody(req: HTTPRequest): Record<string, unknown> {
+  if (!req.body) return {};
+  try {
+    const text = typeof req.body === 'string'
+      ? req.body
+      : String.fromCharCode.apply(null, Array.from(req.body as Uint8Array));
+    const parsed = JSON.parse(text);
+    return isObject(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
 function isMemoryRecord(value: unknown): value is MemoryRecord {
   if (!isObject(value)) return false;
   return (
@@ -58,7 +71,12 @@ function isMemoryRecord(value: unknown): value is MemoryRecord {
     typeof value.lastUsedAt === 'string' &&
     (value.query === undefined || typeof value.query === 'string') &&
     (value.recordVersion === undefined || value.recordVersion === 2) &&
-    (value.canonicalKey === undefined || typeof value.canonicalKey === 'string')
+    (value.canonicalKey === undefined || typeof value.canonicalKey === 'string') &&
+    (value.manualAlias === undefined || typeof value.manualAlias === 'boolean') &&
+    (value.aliasSource === undefined || value.aliasSource === 'auto' || value.aliasSource === 'manual') &&
+    (value.memoryHitCount === undefined || typeof value.memoryHitCount === 'number') &&
+    (value.savedAiCalls === undefined || typeof value.savedAiCalls === 'number') &&
+    (value.lastHitReason === undefined || typeof value.lastHitReason === 'string')
   );
 }
 
@@ -241,6 +259,101 @@ export function registerMemoryHandlers(
     }
   });
 
+  router.get('/memory/stats', async (_req: HTTPRequest) => {
+    try {
+      await ensureMemoryReady();
+      await memoryService.listAmbiguities();
+      return jsonResponse({ success: true, data: memoryService.getStats() });
+    } catch (error) {
+      songloft.log.warn('[MemoryHandler] stats failed: ' + String(error));
+      return jsonResponse({ success: false, error: '读取语音记忆统计失败' }, 500);
+    }
+  });
+
+  router.get('/memory/entities', async (_req: HTTPRequest) => {
+    try {
+      await ensureMemoryReady();
+      await memoryService.listAmbiguities();
+      return jsonResponse({
+        success: true,
+        data: {
+          stats: memoryService.getStats(),
+          entities: memoryService.listEntities(),
+          unclassified: memoryService.listUnclassified(),
+        },
+      });
+    } catch (error) {
+      songloft.log.warn('[MemoryHandler] entities failed: ' + String(error));
+      return jsonResponse({ success: false, error: '读取歌曲记忆实体失败' }, 500);
+    }
+  });
+
+  router.post('/memory/aliases', async (req: HTTPRequest) => {
+    try {
+      await ensureMemoryReady();
+      const body = parseBody(req);
+      const canonicalKey = typeof body.canonicalKey === 'string' ? body.canonicalKey : '';
+      const alias = typeof body.alias === 'string' ? body.alias : '';
+      if (!canonicalKey || !alias) {
+        return jsonResponse({ success: false, error: '缺少 canonicalKey 或 alias' }, 400);
+      }
+      const result = await memoryService.addManualAlias(canonicalKey, alias);
+      if (!result.ok) {
+        const status = result.error?.startsWith('保存') ? 500 : 400;
+        return jsonResponse({ success: false, error: result.error || '添加别名失败' }, status);
+      }
+      return jsonResponse({ success: true, data: { record: result.record, stats: memoryService.getStats() } });
+    } catch (error) {
+      songloft.log.warn('[MemoryHandler] add alias failed: ' + String(error));
+      return jsonResponse({ success: false, error: '添加别名失败' }, 500);
+    }
+  });
+
+  router.delete('/memory/aliases', async (req: HTTPRequest) => {
+    try {
+      await ensureMemoryReady();
+      const query = parseQuery(req.query);
+      if (!query.canonicalKey || !query.recordId) {
+        return jsonResponse({ success: false, error: '缺少 canonicalKey 或 recordId' }, 400);
+      }
+      if (!(await memoryService.deleteEntityAlias(query.canonicalKey, query.recordId))) {
+        return jsonResponse({ success: false, error: '删除用户说法失败，原记录已保留' }, 500);
+      }
+      return jsonResponse({ success: true, data: { stats: memoryService.getStats() } });
+    } catch (error) {
+      songloft.log.warn('[MemoryHandler] delete alias failed: ' + String(error));
+      return jsonResponse({ success: false, error: '删除用户说法失败' }, 500);
+    }
+  });
+
+  router.delete('/memory/entity', async (req: HTTPRequest) => {
+    try {
+      await ensureMemoryReady();
+      const query = parseQuery(req.query);
+      if (!query.canonicalKey) {
+        return jsonResponse({ success: false, error: '缺少 canonicalKey' }, 400);
+      }
+      if (!(await memoryService.deleteEntity(query.canonicalKey))) {
+        return jsonResponse({ success: false, error: '删除歌曲记忆失败，原记录已保留' }, 500);
+      }
+      return jsonResponse({ success: true, data: { stats: memoryService.getStats() } });
+    } catch (error) {
+      songloft.log.warn('[MemoryHandler] delete entity failed: ' + String(error));
+      return jsonResponse({ success: false, error: '删除歌曲记忆失败' }, 500);
+    }
+  });
+
+  router.get('/memory/ambiguous', async (_req: HTTPRequest) => {
+    try {
+      await ensureMemoryReady();
+      const records = await memoryService.listAmbiguities();
+      return jsonResponse({ success: true, data: { count: records.length, records } });
+    } catch (error) {
+      songloft.log.warn('[MemoryHandler] ambiguities failed: ' + String(error));
+      return jsonResponse({ success: false, error: '读取歧义记录失败' }, 500);
+    }
+  });
+
   router.delete('/memory', async (req: HTTPRequest) => {
     try {
       await ensureMemoryReady();
@@ -268,7 +381,12 @@ export function registerMemoryHandlers(
       if (!(await memoryService.clear())) {
         return jsonResponse({ success: false, error: '清空记忆失败，原记录已保留' }, 500);
       }
-      return jsonResponse({ success: true, data: { count: 0 } });
+      const ambiguitiesCleared = await memoryService.clearAmbiguities();
+      return jsonResponse({
+        success: true,
+        data: { count: 0 },
+        ...(!ambiguitiesCleared ? { warning: '记忆已清空，但歧义记录清理失败' } : {}),
+      });
     } catch (error) {
       songloft.log.warn('[MemoryHandler] clear failed: ' + String(error));
       return jsonResponse({ success: false, error: '清空记忆失败' }, 500);

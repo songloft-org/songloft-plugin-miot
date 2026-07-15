@@ -128,6 +128,11 @@ export class MemoryResolver {
         reason: duplicateTitleWithoutArtist ? 'duplicate_title' : 'candidate_margin_too_small',
         candidateCount: scored.length,
         margin,
+        candidates: scored.slice(0, 5).map(item => ({
+          canonicalKey: item.entity.canonicalKey,
+          songName: item.entity.representative.songName || '',
+          artist: item.entity.representative.artist || '',
+        })),
       };
     }
 

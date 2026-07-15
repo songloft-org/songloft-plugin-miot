@@ -580,23 +580,54 @@
                     </div>
                     <div class="form-group" style="margin-top:12px">
                         <label class="form-label" for="voiceMemoryMaxRecords">最大记忆数量</label>
-                        <input type="number" class="text-field" id="voiceMemoryMaxRecords" min="10" max="1000" step="10" value="100">
-                        <div class="memory-help">超过上限时自动淘汰最久未使用的记忆，范围 10–1000</div>
+                        <input type="number" class="text-field" id="voiceMemoryMaxRecords" min="10" max="500" step="10" value="100">
+                        <div class="memory-help">超过上限时自动淘汰最久未使用的记忆，范围 10–500</div>
                     </div>
-                    <div class="memory-toolbar">
-                        <div class="memory-count">
-                            已保存 <strong id="voiceMemoryCount">0</strong> 条
+                    <div class="memory-ai-note">
+                        <span class="material-symbols-outlined">info</span>
+                        <span>建议同时开启 AI 口令分析用于学习新口令；已有记忆命中时不会重复调用 AI。</span>
+                    </div>
+                    <button class="memory-management-toggle" id="memoryManagementToggle" type="button" aria-expanded="false" aria-controls="memoryManagementPanel">
+                        <span class="memory-management-title">记忆管理</span>
+                        <span class="memory-management-summary">
+                            已保存 <strong id="voiceMemoryCount">0</strong> 条 / 已学习 <strong id="voiceMemoryEntityCount">0</strong> 首 / 本地命中 <strong id="voiceMemoryHitCount">0</strong> 次<span id="memoryUnclassifiedSummary" hidden> / 未归类 <strong id="voiceMemoryUnclassifiedCount">0</strong> 条</span>
+                        </span>
+                        <span class="material-symbols-outlined memory-chevron">chevron_right</span>
+                    </button>
+                    <div class="memory-management-panel" id="memoryManagementPanel" hidden>
+                        <div class="memory-stats" aria-label="语音记忆统计">
+                            <div class="memory-stat"><strong id="memoryStatEntities">0</strong><span>已学习歌曲</span></div>
+                            <div class="memory-stat"><strong id="memoryStatQueries">0</strong><span>用户说法</span></div>
+                            <div class="memory-stat"><strong id="memoryStatHits">0</strong><span>本地命中</span></div>
+                            <div class="memory-stat"><strong id="memoryStatSavedAi">0</strong><span>节省 AI 调用</span></div>
                         </div>
-                        <button class="btn-icon" id="refreshVoiceMemoryBtn" title="刷新记忆列表" aria-label="刷新记忆列表">
-                            <span class="material-symbols-outlined">refresh</span>
-                        </button>
-                        <button class="btn-text memory-clear-btn" id="clearVoiceMemoryBtn">
-                            <span class="material-symbols-outlined">delete_sweep</span>
-                            清空全部
-                        </button>
-                    </div>
-                    <div class="memory-list" id="voiceMemoryList">
-                        <div class="empty-state memory-empty">加载中...</div>
+                        <div class="memory-toolbar">
+                            <div class="memory-count">按歌曲聚合展示</div>
+                            <button class="btn-icon" id="refreshVoiceMemoryBtn" title="刷新记忆列表" aria-label="刷新记忆列表">
+                                <span class="material-symbols-outlined">refresh</span>
+                            </button>
+                            <button class="btn-text memory-clear-btn" id="clearVoiceMemoryBtn">
+                                <span class="material-symbols-outlined">delete_sweep</span>
+                                清空全部
+                            </button>
+                        </div>
+                        <div class="memory-list" id="voiceMemoryList">
+                            <div class="empty-state memory-empty">展开后加载记忆</div>
+                        </div>
+                        <div class="memory-unclassified-section">
+                            <button class="memory-subsection-toggle" id="memoryUnclassifiedToggle" type="button" aria-expanded="false" aria-controls="memoryUnclassifiedList">
+                                <span>未归类记忆 <strong id="memoryUnclassifiedCount">0</strong> 条</span>
+                                <span class="material-symbols-outlined">expand_more</span>
+                            </button>
+                            <div class="memory-unclassified-list" id="memoryUnclassifiedList" hidden></div>
+                        </div>
+                        <div class="memory-ambiguity-section">
+                            <button class="memory-subsection-toggle" id="memoryAmbiguityToggle" type="button" aria-expanded="false" aria-controls="memoryAmbiguityList">
+                                <span>最近歧义 <strong id="memoryAmbiguityCount">0</strong> 条</span>
+                                <span class="material-symbols-outlined">expand_more</span>
+                            </button>
+                            <div class="memory-ambiguity-list" id="memoryAmbiguityList" hidden></div>
+                        </div>
                     </div>
                 </div>
             </div>

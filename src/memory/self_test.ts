@@ -3,6 +3,7 @@ import { MemoryResolver } from './memory_resolver';
 import { MemoryService } from './memory_service';
 import { normalizeMemoryQuery } from './query_normalizer';
 import type { MemoryLoadResult, MemoryRecord, MemoryStorageAdapter, MemoryStoreSnapshot } from './types';
+import { normalizeMemoryMaxRecords } from './types';
 
 export interface MemoryV2SelfTestCheck {
   name: string;
@@ -111,11 +112,31 @@ export async function runMemoryV2SelfTest(): Promise<MemoryV2SelfTestResult> {
   ];
   check('same_song_queries_one_entity', resolve(sameSongRecords, '放晴天').index.entities.size === 1);
 
+  const v3Adapter = new InMemoryAdapter([sunny]);
+  const v3Service = new MemoryService(v3Adapter);
+  await v3Service.init();
+  const addedAlias = await v3Service.addManualAlias('song:id:101', '再听一遍晴天');
+  check('v3_manual_alias_saved', addedAlias.ok && v3Service.findByQuery('再听一遍晴天')?.manualAlias === true);
+  check('v3_entity_aggregation', v3Service.listEntities().length === 1 && v3Service.listEntities()[0].queryCount === 2);
+  v3Service.queueHit(sunny.id, 'self_test_exact');
+  check('v3_pending_hit_visible', v3Service.getStats().localHitCount >= 1);
+  await v3Service.flushPendingHits();
+  check('v3_debounced_hit_saved', (v3Service.findById(sunny.id)?.memoryHitCount ?? 0) === 1);
+  const blockedAlias = await v3Service.addManualAlias('song:id:101', '暂停播放');
+  check('v3_fixed_control_alias_blocked', !blockedAlias.ok);
+  if (addedAlias.record) await v3Service.deleteEntityAlias('song:id:101', addedAlias.record.id);
+  check('v3_alias_delete_rebuilds_index', v3Service.findByQuery('再听一遍晴天') === null);
+  await v3Service.deleteEntity('song:id:101');
+  check('v3_entity_delete_rebuilds_index', v3Service.count() === 0 && v3Service.getIndexStats().entities === 0);
+  check('v3_max_records_clamped', normalizeMemoryMaxRecords(1000) === 500);
+
   const duplicated = [
     record('later-1', '播放刘若英后来', '后来', '刘若英', 201),
     record('later-2', '播放其他歌手后来', '后来', '其他歌手', 202),
   ];
-  check('duplicate_title_ambiguous', resolve(duplicated, '播放后来').result.status === 'ambiguous');
+  const ambiguousResult = resolve(duplicated, '播放后来').result;
+  check('duplicate_title_ambiguous', ambiguousResult.status === 'ambiguous');
+  check('v3_ambiguity_candidates_bounded', (ambiguousResult.candidates?.length ?? 0) === 2);
   check('duplicate_title_full_artist_hit', resolve(duplicated, '播放刘若英的后来').result.status === 'entity_hit');
 
   const shortCollision = [
@@ -137,6 +158,9 @@ export async function runMemoryV2SelfTest(): Promise<MemoryV2SelfTestResult> {
   await legacyService.init();
   check('legacy_v1_loads', legacyService.findByQuery('旧口令')?.id === legacy.id);
   check('legacy_without_song_not_v2', legacyService.resolveEntity('旧口令').status !== 'entity_hit');
+  check('v3_legacy_visible_as_unclassified', legacyService.listUnclassified().length === 1 && legacyService.getStats().recordCount === 1);
+  await legacyService.deleteById(legacy.id);
+  check('v3_unclassified_delete_keeps_indexes_consistent', legacyService.listUnclassified().length === 0 && legacyService.count() === 0);
 
   const deleteService = new MemoryService(new InMemoryAdapter([sunny]));
   await deleteService.init();
@@ -203,7 +227,7 @@ export async function runMemoryV2SelfTest(): Promise<MemoryV2SelfTestResult> {
   ]);
   check('mixed_concurrency_consistent', concurrentService.count() <= 10 && concurrentService.getIndexStats().records === concurrentService.count());
 
-  for (const size of [10, 100, 1000]) {
+  for (const size of [10, 100, 500]) {
     const records = Array.from({ length: size }, (_, i) => record(`perf-${size}-${i}`, `播放性能歌曲${i}`, `性能歌曲${i}`, '性能歌手', 10000 + i));
     const start = Date.now();
     const index = new MemoryEntityIndex();

@@ -341,6 +341,9 @@ export class VoiceEngine {
         const resolved = this.memoryService.resolveEntity(query);
         if (resolved.status === 'ambiguous') {
           songloft.log.info(`[VoiceMemoryV2] ambiguous query="${query}" candidates=${resolved.candidateCount ?? 0} reason="${resolved.reason || 'ambiguous'}"`);
+          void this.memoryService.recordAmbiguity(query, resolved).catch(error => {
+            songloft.log.warn('[VoiceMemoryV3] error fallback stage="record_ambiguous" error="' + String(error) + '"');
+          });
           return false;
         }
         if (resolved.status !== 'entity_hit' || !resolved.record) {
@@ -370,9 +373,13 @@ export class VoiceEngine {
 
       if (matchMode === 'entity_hit') {
         songloft.log.info(`[VoiceMemoryV2] entity_hit query="${query}" song="${playedSong.songName}" artist="${playedSong.artist}" score=${(score ?? 0).toFixed(2)} reason="${reason}" canonicalKey="${canonicalKey || ''}"`);
-        this.queueMemorySuccess(query, playedSong, record.id);
+        this.queueMemorySuccess(query, playedSong, record.id, reason);
       } else {
-        this.queueMemorySuccess(query, playedSong);
+        if (record.recordVersion !== 2 || !record.canonicalKey) {
+          this.queueMemorySuccess(query, playedSong, record.id, 'v1_exact');
+        } else {
+          this.memoryService.queueHit(record.id, 'v1_exact');
+        }
       }
       return true;
     } catch (error) {
@@ -434,7 +441,7 @@ export class VoiceEngine {
     return null;
   }
 
-  private queueMemorySuccess(query: string, song: PlayedSong, matchedRecordId?: string): void {
+  private queueMemorySuccess(query: string, song: PlayedSong, matchedRecordId?: string, memoryHitReason?: string): void {
     songloft.log.info(`[VoiceMemoryV2] lazy_migrate queued query="${query}" song="${song.songName}"`);
     void this.memoryService.recordSuccess({
       query,
@@ -446,6 +453,7 @@ export class VoiceEngine {
       playlistName: song.playlistName,
       songIndex: song.songIndex,
       matchedRecordId,
+      memoryHitReason,
     }).then(saved => {
       if (saved) {
         songloft.log.info(`[VoiceMemoryV2] lazy_migrate done query="${query}"`);
