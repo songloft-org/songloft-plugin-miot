@@ -219,7 +219,7 @@ export function loadConfig() {
 
             // 加载语音口令配置
             loadVoiceCommands();
-            loadVoiceMemoryData();
+            loadVoiceMemoryStats();
 
             // 加载 AI 配置
             if (data.data.ai_config) {
@@ -443,12 +443,21 @@ export function initMaxSongIndexUI() {
 
 // ========== 语音记忆 ==========
 
+let voiceMemoryEntities = [];
+let voiceMemoryAmbiguities = [];
+let voiceMemoryUnclassified = [];
+
 export function initVoiceMemoryUI() {
     const switchEl = document.getElementById('voiceMemorySwitch');
     const maxInput = document.getElementById('voiceMemoryMaxRecords');
     const refreshBtn = document.getElementById('refreshVoiceMemoryBtn');
     const clearBtn = document.getElementById('clearVoiceMemoryBtn');
     const listEl = document.getElementById('voiceMemoryList');
+    const managementToggle = document.getElementById('memoryManagementToggle');
+    const managementPanel = document.getElementById('memoryManagementPanel');
+    const ambiguityToggle = document.getElementById('memoryAmbiguityToggle');
+    const unclassifiedToggle = document.getElementById('memoryUnclassifiedToggle');
+    const unclassifiedList = document.getElementById('memoryUnclassifiedList');
 
     if (switchEl) {
         switchEl.addEventListener('change', function() {
@@ -472,13 +481,13 @@ export function initVoiceMemoryUI() {
 
     if (maxInput) {
         maxInput.addEventListener('change', function() {
-            const value = Math.max(10, Math.min(1000, parseInt(this.value) || 100));
+            const value = Math.max(10, Math.min(500, parseInt(this.value) || 100));
             this.value = value;
             apiPost('/config', { voice_memory_max_records: value })
                 .then(data => {
                     if (data.success) {
                         showSnackbar(data.warning || ('最大记忆数量已设为 ' + value), data.warning ? 'warning' : 'success');
-                        loadVoiceMemoryData();
+                        refreshVoiceMemoryView();
                     } else {
                         showSnackbar('保存失败：' + (data.error || '未知错误'), 'error');
                         loadConfig();
@@ -501,11 +510,77 @@ export function initVoiceMemoryUI() {
 
     if (listEl) {
         listEl.addEventListener('click', event => {
-            const button = event.target.closest('.memory-delete-btn');
+            const toggle = event.target.closest('.memory-entity-toggle');
+            if (toggle) {
+                toggleMemoryEntity(toggle);
+                return;
+            }
+            const deleteAlias = event.target.closest('.memory-alias-delete');
+            if (deleteAlias) {
+                deleteMemoryAlias(
+                    decodeURIComponent(deleteAlias.dataset.canonicalKey || ''),
+                    decodeURIComponent(deleteAlias.dataset.recordId || ''),
+                    decodeURIComponent(deleteAlias.dataset.query || ''),
+                );
+                return;
+            }
+            const addAlias = event.target.closest('.memory-alias-add');
+            if (addAlias) {
+                addMemoryAlias(decodeURIComponent(addAlias.dataset.canonicalKey || ''), addAlias.closest('.memory-entity-details'));
+                return;
+            }
+            const deleteEntity = event.target.closest('.memory-entity-delete');
+            if (deleteEntity) {
+                deleteMemoryEntity(
+                    decodeURIComponent(deleteEntity.dataset.canonicalKey || ''),
+                    decodeURIComponent(deleteEntity.dataset.song || ''),
+                );
+            }
+        });
+        listEl.addEventListener('keydown', event => {
+            if (event.key !== 'Enter' || !event.target.classList.contains('memory-alias-input')) return;
+            event.preventDefault();
+            const details = event.target.closest('.memory-entity-details');
+            const button = details?.querySelector('.memory-alias-add');
+            if (button) addMemoryAlias(decodeURIComponent(button.dataset.canonicalKey || ''), details);
+        });
+    }
+
+    if (managementToggle && managementPanel) {
+        managementToggle.addEventListener('click', () => {
+            const expanded = managementToggle.getAttribute('aria-expanded') === 'true';
+            managementToggle.setAttribute('aria-expanded', String(!expanded));
+            managementPanel.hidden = expanded;
+            if (!expanded) loadVoiceMemoryData();
+        });
+    }
+
+    if (ambiguityToggle) {
+        ambiguityToggle.addEventListener('click', () => {
+            const list = document.getElementById('memoryAmbiguityList');
+            if (!list) return;
+            const expanded = ambiguityToggle.getAttribute('aria-expanded') === 'true';
+            ambiguityToggle.setAttribute('aria-expanded', String(!expanded));
+            list.hidden = expanded;
+        });
+    }
+
+    if (unclassifiedToggle) {
+        unclassifiedToggle.addEventListener('click', () => {
+            if (!unclassifiedList) return;
+            const expanded = unclassifiedToggle.getAttribute('aria-expanded') === 'true';
+            unclassifiedToggle.setAttribute('aria-expanded', String(!expanded));
+            unclassifiedList.hidden = expanded;
+        });
+    }
+
+    if (unclassifiedList) {
+        unclassifiedList.addEventListener('click', event => {
+            const button = event.target.closest('.memory-unclassified-delete');
             if (!button) return;
-            deleteVoiceMemory(
-                decodeURIComponent(button.dataset.memoryId || ''),
-                decodeURIComponent(button.dataset.memoryQuery || ''),
+            deleteUnclassifiedMemory(
+                decodeURIComponent(button.dataset.recordId || ''),
+                decodeURIComponent(button.dataset.query || ''),
             );
         });
     }
@@ -518,64 +593,174 @@ function updateVoiceMemoryStatus(enabled) {
     }
 }
 
+function updateVoiceMemoryStats(stats = {}) {
+    const values = {
+        voiceMemoryCount: stats.recordCount || 0,
+        voiceMemoryEntityCount: stats.entityCount || 0,
+        voiceMemoryHitCount: stats.localHitCount || 0,
+        voiceMemoryUnclassifiedCount: stats.unclassifiedCount || 0,
+        memoryStatEntities: stats.entityCount || 0,
+        memoryStatQueries: stats.recordCount || 0,
+        memoryStatHits: stats.localHitCount || 0,
+        memoryStatSavedAi: stats.savedAiCalls || 0,
+        memoryAmbiguityCount: stats.ambiguousCount || 0,
+        memoryUnclassifiedCount: stats.unclassifiedCount || 0,
+    };
+    Object.entries(values).forEach(([id, value]) => {
+        const el = document.getElementById(id);
+        if (el) el.textContent = String(value);
+    });
+    const clearBtn = document.getElementById('clearVoiceMemoryBtn');
+    if (clearBtn) clearBtn.disabled = !values.voiceMemoryCount;
+    const unclassifiedSummary = document.getElementById('memoryUnclassifiedSummary');
+    if (unclassifiedSummary) unclassifiedSummary.hidden = !values.voiceMemoryUnclassifiedCount;
+}
+
+function loadVoiceMemoryStats() {
+    return apiGet('/memory/stats')
+        .then(data => {
+            if (!data.success || !data.data) throw new Error(data.error || '未知错误');
+            updateVoiceMemoryStats(data.data);
+        })
+        .catch(error => console.warn('[VoiceMemoryV3] stats failed', error));
+}
+
+function refreshVoiceMemoryView() {
+    const panel = document.getElementById('memoryManagementPanel');
+    return panel && !panel.hidden ? loadVoiceMemoryData() : loadVoiceMemoryStats();
+}
+
 export function loadVoiceMemoryData() {
     const listEl = document.getElementById('voiceMemoryList');
-    if (listEl) {
-        listEl.innerHTML = '<div class="empty-state memory-empty">加载中...</div>';
-    }
+    if (listEl) listEl.innerHTML = '<div class="empty-state memory-empty">加载中...</div>';
 
-    return apiGet('/memory')
-        .then(data => {
-            if (!data.success || !data.data) {
-                throw new Error(data.error || '未知错误');
-            }
-
-            const countEl = document.getElementById('voiceMemoryCount');
-            if (countEl) countEl.textContent = String(data.data.count || 0);
-
-            const clearBtn = document.getElementById('clearVoiceMemoryBtn');
-            if (clearBtn) clearBtn.disabled = !data.data.count;
-
-            const maxInput = document.getElementById('voiceMemoryMaxRecords');
-            if (maxInput) maxInput.value = data.data.max_records ?? 100;
-
-            renderVoiceMemoryList(data.data.records || []);
+    return Promise.all([apiGet('/memory/entities'), apiGet('/memory/ambiguous')])
+        .then(([entityData, ambiguityData]) => {
+            if (!entityData.success || !entityData.data) throw new Error(entityData.error || '未知错误');
+            if (!ambiguityData.success || !ambiguityData.data) throw new Error(ambiguityData.error || '未知错误');
+            voiceMemoryEntities = entityData.data.entities || [];
+            voiceMemoryUnclassified = entityData.data.unclassified || [];
+            voiceMemoryAmbiguities = ambiguityData.data.records || [];
+            updateVoiceMemoryStats({
+                ...(entityData.data.stats || {}),
+                ambiguousCount: voiceMemoryAmbiguities.length,
+            });
+            renderVoiceMemoryList(voiceMemoryEntities);
+            renderUnclassifiedMemory(voiceMemoryUnclassified);
+            renderMemoryAmbiguities(voiceMemoryAmbiguities);
         })
         .catch(error => {
-            if (listEl) {
-                listEl.innerHTML = '<div class="empty-state memory-empty">读取记忆失败</div>';
-            }
+            if (listEl) listEl.innerHTML = '<div class="empty-state memory-empty">读取记忆失败</div>';
             showSnackbar('读取语音记忆失败：' + error.message, 'error');
         });
 }
 
-function renderVoiceMemoryList(records) {
+function renderVoiceMemoryList(entities) {
     const listEl = document.getElementById('voiceMemoryList');
     if (!listEl) return;
-    if (!records.length) {
-        listEl.innerHTML = '<div class="empty-state memory-empty">暂无已保存的语音记忆</div>';
+    if (!entities.length) {
+        listEl.innerHTML = '<div class="empty-state memory-empty">暂无可聚合的歌曲记忆</div>';
         return;
     }
 
-    listEl.innerHTML = records.map(record => {
+    listEl.innerHTML = entities.map(entity => {
+        const canonicalKey = encodeURIComponent(entity.canonicalKey || '');
+        const songLabel = `${entity.songName || '未知歌曲'}${entity.artist ? ` · ${entity.artist}` : ''}`;
+        const aliases = (entity.aliases || []).map(alias => `<div class="memory-alias-row">
+            <div class="memory-alias-text">
+                <span>${escapeHtml(alias.query || alias.normalizedQuery || '')}</span>
+                ${alias.manualAlias ? '<span class="memory-alias-badge">手动</span>' : ''}
+            </div>
+            <button class="btn-icon danger memory-alias-delete" data-canonical-key="${canonicalKey}" data-record-id="${encodeURIComponent(alias.id)}" data-query="${encodeURIComponent(alias.query || alias.normalizedQuery || '')}" title="删除该用户说法" aria-label="删除该用户说法">
+                <span class="material-symbols-outlined">delete</span>
+            </button>
+        </div>`).join('');
+        return `<div class="memory-entity">
+            <button class="memory-entity-toggle" type="button" aria-expanded="false">
+                <div class="memory-entity-main">
+                    <div class="memory-entity-title">${escapeHtml(songLabel)}</div>
+                    <div class="memory-entity-meta">${Number(entity.queryCount) || 0} 种说法 · 命中 ${Number(entity.localHitCount) || 0} 次 · 最近使用：${escapeHtml(formatMemoryRelative(entity.lastUsedAt))}</div>
+                </div>
+                <span class="material-symbols-outlined">chevron_right</span>
+            </button>
+            <div class="memory-entity-details" hidden>
+                <div class="memory-alias-heading">用户说法</div>
+                <div class="memory-alias-list">${aliases || '<div class="memory-empty-inline">暂无用户说法</div>'}</div>
+                <div class="memory-alias-form">
+                    <input class="text-field memory-alias-input" type="text" minlength="2" maxlength="30" placeholder="添加 2–30 字别名" aria-label="添加用户说法">
+                    <button class="btn-icon memory-alias-add" type="button" data-canonical-key="${canonicalKey}" title="添加别名" aria-label="添加别名">
+                        <span class="material-symbols-outlined">add</span>
+                    </button>
+                </div>
+                <button class="btn-text memory-entity-delete" type="button" data-canonical-key="${canonicalKey}" data-song="${encodeURIComponent(songLabel)}">
+                    <span class="material-symbols-outlined">delete_sweep</span> 删除整组歌曲记忆
+                </button>
+            </div>
+        </div>`;
+    }).join('');
+}
+
+function toggleMemoryEntity(button) {
+    const details = button.closest('.memory-entity')?.querySelector('.memory-entity-details');
+    if (!details) return;
+    const expanded = button.getAttribute('aria-expanded') === 'true';
+    button.setAttribute('aria-expanded', String(!expanded));
+    details.hidden = expanded;
+}
+
+function renderMemoryAmbiguities(records) {
+    const list = document.getElementById('memoryAmbiguityList');
+    if (!list) return;
+    if (!records.length) {
+        list.innerHTML = '<div class="memory-empty-inline">暂无歧义记录</div>';
+        return;
+    }
+    list.innerHTML = records.map(record => {
+        const candidates = (record.candidates || [])
+            .map(candidate => `${candidate.songName || '未知歌曲'}${candidate.artist ? ` · ${candidate.artist}` : ''}`)
+            .join('、');
+        return `<div class="memory-ambiguity-item">
+            <div class="memory-query">${escapeHtml(record.query || record.normalizedQuery || '')}</div>
+            <div class="memory-song">${escapeHtml(candidates || `${Number(record.candidateCount) || 0} 个候选`)}</div>
+            <div class="memory-meta">出现 ${Number(record.occurrenceCount) || 1} 次 · ${escapeHtml(formatMemoryDate(record.lastSeenAt))}</div>
+        </div>`;
+    }).join('');
+}
+
+function renderUnclassifiedMemory(records) {
+    const list = document.getElementById('memoryUnclassifiedList');
+    if (!list) return;
+    if (!records.length) {
+        list.innerHTML = '<div class="memory-empty-inline">暂无未归类记忆</div>';
+        return;
+    }
+    list.innerHTML = records.map(record => {
         const query = record.query || record.normalizedQuery || '';
-        const song = record.songName || '未知歌曲';
-        const artist = record.artist || '未知歌手';
-        return `<div class="memory-item">
+        const metadata = record.songName
+            ? `${record.songName}${record.artist ? ` · ${record.artist}` : ''}`
+            : '旧版记录，缺少歌曲元数据';
+        return `<div class="memory-unclassified-item">
             <div class="memory-item-main">
                 <div class="memory-query" title="${escapeHtml(query)}">${escapeHtml(query)}</div>
-                <div class="memory-song">${escapeHtml(song)} · ${escapeHtml(artist)}</div>
-                <div class="memory-meta">
-                    <span>命中 ${Number(record.hitCount) || 0}</span>
-                    <span>成功 ${Number(record.successCount) || 0}</span>
-                    <span>更新 ${escapeHtml(formatMemoryDate(record.updatedAt))}</span>
-                </div>
+                <div class="memory-song">${escapeHtml(metadata)}</div>
+                <div class="memory-meta"><span>命中 ${Number(record.hitCount) || 0}</span><span>成功 ${Number(record.successCount) || 0}</span><span>更新 ${escapeHtml(formatMemoryDate(record.updatedAt))}</span></div>
             </div>
-            <button class="btn-icon danger memory-delete-btn" data-memory-id="${encodeURIComponent(record.id)}" data-memory-query="${encodeURIComponent(query)}" title="删除该条记忆" aria-label="删除该条记忆">
+            <button class="btn-icon danger memory-unclassified-delete" data-record-id="${encodeURIComponent(record.id)}" data-query="${encodeURIComponent(query)}" title="删除该条未归类记忆" aria-label="删除该条未归类记忆">
                 <span class="material-symbols-outlined">delete</span>
             </button>
         </div>`;
     }).join('');
+}
+
+function formatMemoryRelative(value) {
+    const date = new Date(value);
+    if (!value || Number.isNaN(date.getTime())) return '未知';
+    const seconds = Math.max(0, Math.floor((Date.now() - date.getTime()) / 1000));
+    if (seconds < 60) return '刚刚';
+    if (seconds < 3600) return `${Math.floor(seconds / 60)} 分钟前`;
+    if (seconds < 86400) return `${Math.floor(seconds / 3600)} 小时前`;
+    if (seconds < 604800) return `${Math.floor(seconds / 86400)} 天前`;
+    return formatMemoryDate(value);
 }
 
 function formatMemoryDate(value) {
@@ -584,18 +769,53 @@ function formatMemoryDate(value) {
     return date.toLocaleString('zh-CN', { hour12: false });
 }
 
-function deleteVoiceMemory(id, query) {
-    if (!id) return;
-    if (!confirm(`确定删除语音记忆“${query || id}”吗？`)) return;
-
-    apiDelete('/memory?id=' + encodeURIComponent(id))
+function addMemoryAlias(canonicalKey, details) {
+    const input = details?.querySelector('.memory-alias-input');
+    const alias = input?.value.trim() || '';
+    const length = Array.from(alias).length;
+    if (length < 2 || length > 30) {
+        showSnackbar('别名长度必须为 2 到 30 个字符', 'error');
+        return;
+    }
+    apiPost('/memory/aliases', { canonicalKey, alias })
         .then(data => {
-            if (data.success) {
-                showSnackbar('记忆已删除', 'success');
-                loadVoiceMemoryData();
-            } else {
-                showSnackbar('删除失败：' + (data.error || '未知错误'), 'error');
-            }
+            if (!data.success) throw new Error(data.error || '未知错误');
+            showSnackbar('别名已添加', 'success');
+            loadVoiceMemoryData();
+        })
+        .catch(error => showSnackbar('添加失败：' + error.message, 'error'));
+}
+
+function deleteMemoryAlias(canonicalKey, recordId, query) {
+    if (!confirm(`确定删除用户说法“${query}”吗？`)) return;
+    apiDelete('/memory/aliases?canonicalKey=' + encodeURIComponent(canonicalKey) + '&recordId=' + encodeURIComponent(recordId))
+        .then(data => {
+            if (!data.success) throw new Error(data.error || '未知错误');
+            showSnackbar('用户说法已删除', 'success');
+            loadVoiceMemoryData();
+        })
+        .catch(error => showSnackbar('删除失败：' + error.message, 'error'));
+}
+
+function deleteMemoryEntity(canonicalKey, song) {
+    if (!confirm(`确定删除“${song}”的全部语音记忆吗？此操作无法撤销。`)) return;
+    apiDelete('/memory/entity?canonicalKey=' + encodeURIComponent(canonicalKey))
+        .then(data => {
+            if (!data.success) throw new Error(data.error || '未知错误');
+            showSnackbar('整组歌曲记忆已删除', 'success');
+            loadVoiceMemoryData();
+        })
+        .catch(error => showSnackbar('删除失败：' + error.message, 'error'));
+}
+
+function deleteUnclassifiedMemory(recordId, query) {
+    if (!recordId) return;
+    if (!confirm(`确定删除未归类记忆“${query || recordId}”吗？`)) return;
+    apiDelete('/memory?id=' + encodeURIComponent(recordId))
+        .then(data => {
+            if (!data.success) throw new Error(data.error || '未知错误');
+            showSnackbar('未归类记忆已删除', 'success');
+            loadVoiceMemoryData();
         })
         .catch(error => showSnackbar('删除失败：' + error.message, 'error'));
 }
@@ -611,7 +831,7 @@ function clearAllVoiceMemory() {
     apiDelete('/memory/all')
         .then(data => {
             if (data.success) {
-                showSnackbar('全部语音记忆已清空', 'success');
+                showSnackbar(data.warning || '全部语音记忆已清空', data.warning ? 'warning' : 'success');
                 loadVoiceMemoryData();
             } else {
                 showSnackbar('清空失败：' + (data.error || '未知错误'), 'error');

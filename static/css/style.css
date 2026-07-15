@@ -2204,6 +2204,117 @@ html[data-theme="dark"] {
     color: var(--md-on-surface-variant);
 }
 
+.memory-ai-note {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    margin-top: 12px;
+    padding: 10px 0;
+    border-top: 1px solid var(--md-outline-variant);
+    color: var(--md-on-surface-variant);
+    font-size: 12px;
+    line-height: 1.6;
+}
+
+.memory-ai-note .material-symbols-outlined {
+    flex: 0 0 auto;
+    margin-top: 1px;
+    font-size: 18px;
+    color: var(--md-primary);
+}
+
+.memory-management-toggle,
+.memory-entity-toggle,
+.memory-subsection-toggle {
+    width: 100%;
+    border: 0;
+    background: transparent;
+    color: inherit;
+    cursor: pointer;
+    text-align: left;
+}
+
+.memory-management-toggle {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 10px;
+    margin-top: 4px;
+    padding: 12px 0;
+    border-top: 1px solid var(--md-outline-variant);
+    border-bottom: 1px solid var(--md-outline-variant);
+}
+
+.memory-management-title {
+    font-size: 14px;
+    font-weight: 600;
+}
+
+.memory-management-summary {
+    overflow: hidden;
+    color: var(--md-on-surface-variant);
+    font-size: 12px;
+    line-height: 1.5;
+    text-align: right;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.memory-management-summary strong {
+    color: var(--md-on-surface);
+    font-variant-numeric: tabular-nums;
+}
+
+.memory-management-toggle .memory-chevron,
+.memory-entity-toggle > .material-symbols-outlined {
+    transition: transform .18s ease;
+}
+
+.memory-management-toggle[aria-expanded="true"] .memory-chevron,
+.memory-entity-toggle[aria-expanded="true"] > .material-symbols-outlined {
+    transform: rotate(90deg);
+}
+
+.memory-management-panel {
+    padding-top: 12px;
+}
+
+.memory-stats {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 1px;
+    overflow: hidden;
+    border: 1px solid var(--md-outline-variant);
+    border-radius: var(--md-radius-sm);
+    background: var(--md-outline-variant);
+}
+
+.memory-stat {
+    min-width: 0;
+    padding: 10px 6px;
+    background: var(--md-surface);
+    text-align: center;
+}
+
+.memory-stat strong,
+.memory-stat span {
+    display: block;
+}
+
+.memory-stat strong {
+    font-size: 18px;
+    font-variant-numeric: tabular-nums;
+}
+
+.memory-stat span {
+    margin-top: 3px;
+    overflow: hidden;
+    color: var(--md-on-surface-variant);
+    font-size: 11px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
 .memory-toolbar {
     display: flex;
     align-items: center;
@@ -2236,6 +2347,144 @@ html[data-theme="dark"] {
 
 .memory-list {
     min-height: 48px;
+    max-height: 50vh;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+}
+
+.memory-entity {
+    border-bottom: 1px solid var(--md-outline-variant);
+}
+
+.memory-entity:last-child {
+    border-bottom: 0;
+}
+
+.memory-entity-toggle {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 12px 2px;
+}
+
+.memory-entity-main {
+    flex: 1;
+    min-width: 0;
+}
+
+.memory-entity-title {
+    overflow: hidden;
+    font-size: 14px;
+    font-weight: 600;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.memory-entity-meta {
+    margin-top: 4px;
+    overflow: hidden;
+    color: var(--md-on-surface-variant);
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+    line-height: 1.45;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.memory-entity-details {
+    padding: 0 2px 14px 12px;
+}
+
+.memory-alias-heading {
+    margin-bottom: 4px;
+    color: var(--md-on-surface-variant);
+    font-size: 12px;
+    font-weight: 600;
+}
+
+.memory-alias-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-height: 38px;
+    border-bottom: 1px solid var(--md-outline-variant);
+}
+
+.memory-alias-text {
+    display: flex;
+    flex: 1;
+    min-width: 0;
+    align-items: center;
+    gap: 6px;
+    font-size: 13px;
+}
+
+.memory-alias-text > span:first-child {
+    overflow-wrap: anywhere;
+}
+
+.memory-alias-badge {
+    flex: 0 0 auto;
+    padding: 1px 5px;
+    border: 1px solid var(--md-outline-variant);
+    border-radius: var(--md-radius-sm);
+    color: var(--md-on-surface-variant);
+    font-size: 10px;
+}
+
+.memory-alias-form {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 40px;
+    gap: 6px;
+    margin-top: 10px;
+}
+
+.memory-entity-delete {
+    margin-top: 8px;
+    color: var(--md-error);
+}
+
+.memory-empty-inline {
+    padding: 10px 0;
+    color: var(--md-on-surface-variant);
+    font-size: 12px;
+}
+
+.memory-unclassified-section,
+.memory-ambiguity-section {
+    border-top: 1px solid var(--md-outline-variant);
+}
+
+.memory-subsection-toggle {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 2px;
+    font-size: 13px;
+    font-weight: 600;
+}
+
+.memory-subsection-toggle strong {
+    font-variant-numeric: tabular-nums;
+}
+
+.memory-unclassified-list,
+.memory-ambiguity-list {
+    max-height: 220px;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+}
+
+.memory-unclassified-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.memory-unclassified-item,
+.memory-ambiguity-item {
+    padding: 10px 2px;
+    border-top: 1px solid var(--md-outline-variant);
 }
 
 .memory-item {
@@ -2287,6 +2536,34 @@ html[data-theme="dark"] {
     min-height: 72px;
     padding: 20px 12px;
     font-size: 13px;
+}
+
+@media (min-width: 600px) {
+    .memory-list {
+        max-height: 480px;
+    }
+}
+
+@media (max-width: 599px) {
+    .memory-management-toggle {
+        grid-template-columns: minmax(0, 1fr) auto;
+    }
+
+    .memory-management-summary {
+        grid-column: 1 / -1;
+        grid-row: 2;
+        text-align: left;
+        white-space: normal;
+    }
+
+    .memory-management-toggle .memory-chevron {
+        grid-column: 2;
+        grid-row: 1;
+    }
+
+    .memory-stats {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
 }
 
 /* Status Chips */

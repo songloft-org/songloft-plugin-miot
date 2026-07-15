@@ -35,7 +35,12 @@ function isMemoryRecord(value: unknown): value is MemoryRecord {
     typeof value.lastUsedAt === 'string' &&
     (value.query === undefined || typeof value.query === 'string') &&
     (value.recordVersion === undefined || value.recordVersion === 2) &&
-    (value.canonicalKey === undefined || typeof value.canonicalKey === 'string')
+    (value.canonicalKey === undefined || typeof value.canonicalKey === 'string') &&
+    (value.manualAlias === undefined || typeof value.manualAlias === 'boolean') &&
+    (value.aliasSource === undefined || value.aliasSource === 'auto' || value.aliasSource === 'manual') &&
+    (value.memoryHitCount === undefined || typeof value.memoryHitCount === 'number') &&
+    (value.savedAiCalls === undefined || typeof value.savedAiCalls === 'number') &&
+    (value.lastHitReason === undefined || typeof value.lastHitReason === 'string')
   );
 }
 
