@@ -23,6 +23,24 @@ let progressRAF = null;     // requestAnimationFrame ID
 let currentLyrics = [];     // 解析后的歌词数组
 let currentLyricUrl = '';   // 当前歌词 URL
 let lyricFetchTimer = null; // 歌词获取防抖定时器
+let lastBarLyricIndex = -1; // 播放栏当前高亮歌词行索引（去重，避免重复写 DOM）
+
+/**
+ * 根据播放位置更新播放栏当前歌词行。
+ * 与全屏播放器一致，接受插值后的估算位置：播放栏歌词由 RAF 每帧驱动，
+ * 而非只在状态帧到达时刷新，避免因后端 ~4s 设备缓存导致歌词慢几秒才更新。
+ * @param {number} position - 当前播放位置（秒，可为 RAF 插值估算值）
+ */
+function updatePlayerBarLyric(position) {
+    if (currentLyrics.length === 0) return;
+    const idx = getCurrentLyricIndex(currentLyrics, position);
+    if (idx === lastBarLyricIndex) return;
+    lastBarLyricIndex = idx;
+    if (idx >= 0) {
+        const playerBarLyric = document.getElementById('playerBarLyric');
+        if (playerBarLyric) playerBarLyric.textContent = currentLyrics[idx].text;
+    }
+}
 
 /** toggle 防护时间戳（防止过期轮询覆盖 toggle 后的 UI 状态） */
 let lastToggleMs = 0;
@@ -98,6 +116,7 @@ function startProgressAnimation() {
             : estimatedPosition;
 
         updateProgressDOM(clampedPosition, currentDuration);
+        updatePlayerBarLyric(clampedPosition);
 
         progressRAF = requestAnimationFrame(animate);
     }
@@ -306,20 +325,14 @@ export function updatePlayerUI(status) {
         const lyricUrl = status.current_song.lyric_url;
         if (lyricUrl !== currentLyricUrl) {
             currentLyricUrl = lyricUrl;
+            lastBarLyricIndex = -1; // 换歌词源，重置高亮索引强制刷新
             fetchLyrics(status.current_song.id);
         }
     } else {
         currentLyricUrl = '';
         currentLyrics = [];
+        lastBarLyricIndex = -1;
         if (playerBarLyric) playerBarLyric.textContent = '暂无歌词';
-    }
-
-    // 更新当前歌词行
-    if (currentLyrics.length > 0) {
-        const lyricIdx = getCurrentLyricIndex(currentLyrics, currentPosition);
-        if (lyricIdx >= 0) {
-            if (playerBarLyric) playerBarLyric.textContent = currentLyrics[lyricIdx].text;
-        }
     }
 
     // 更新歌曲信息
@@ -373,6 +386,8 @@ export function updatePlayerUI(status) {
     } else {
         stopProgressAnimation();
         updateProgressDOM(currentPosition, currentDuration);
+        // 非播放态 RAF 不跑，在此直接同步一次播放栏歌词行（暂停/首帧）
+        updatePlayerBarLyric(currentPosition);
     }
 
     // 高亮当前播放歌曲
@@ -944,9 +959,13 @@ function fetchLyrics(songId) {
         apiGet('/lyric?song_id=' + encodeURIComponent(songId)).then(data => {
             const lrcText = (data && typeof data.lyric === 'string') ? data.lyric : '';
             currentLyrics = parseLrc(lrcText);
+            lastBarLyricIndex = -1; // 新歌词就绪，重置高亮索引
             if (currentLyrics.length === 0) {
                 const playerBarLyric = document.getElementById('playerBarLyric');
                 if (playerBarLyric) playerBarLyric.textContent = '暂无歌词';
+            } else if (!isCurrentlyPlaying) {
+                // 暂停态 RAF 不跑，歌词异步到达后直接同步一次
+                updatePlayerBarLyric(currentPosition);
             }
         }).catch(err => {
             currentLyrics = [];
