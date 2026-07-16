@@ -2222,10 +2222,15 @@ export function initAIConfigUI() {
 
             try {
                 const json = await apiPost('/voice-commands/ai-test', { query });
-                if (json.success && json.data) {
-                    const d = json.data;
-                    testResult.style.color = 'var(--md-primary)';
-                    testResult.textContent = `操作: ${d.action}\n参数: ${JSON.stringify(d.params, null, 2)}\n置信度: ${d.confidence}\n有效文本: ${d.rawText}\n耗时: ${json.elapsed_ms}ms`;
+                if (json.success) {
+                    if (json.data){
+                        const d = json.data;
+                        testResult.style.color = 'var(--md-primary)';
+                        testResult.textContent = `操作: ${d.action}\n参数: ${JSON.stringify(d.params, null, 2)}\n置信度: ${d.confidence}\n有效文本: ${d.rawText}\n耗时: ${json.elapsed_ms}ms`;
+                    }else {
+                        testResult.style.color = 'var(--md-error)';
+                        testResult.textContent = '分析失败: 接口请求成功，但未返回结果';
+                    }
                 } else {
                     testResult.style.color = 'var(--md-error)';
                     testResult.textContent = '分析失败: ' + (json.error || '未知错误');

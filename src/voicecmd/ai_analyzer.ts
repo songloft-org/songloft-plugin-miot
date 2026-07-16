@@ -33,7 +33,7 @@ const AI_SYSTEM_PROMPT = `从指令中提取出操作和音乐信息，返回JSO
  */
 export class AIAnalyzer {
   /**
-   * 调用 AI 分析用户语音指令
+   * 调用 AI 分析用户语音指令（静默模式，失败返回 null）
    * @param query 用户语音文本
    * @param config AI 配置
    * @returns 分析结果，超时或失败返回 null
@@ -49,6 +49,20 @@ export class AIAnalyzer {
       songloft.log.warn(`[AIAnalyzer] AI analysis failed: ${String(e)}`);
       return null;
     }
+  }
+
+  /**
+   * 调用 AI 分析用户语音指令（严格模式，失败则抛出异常）
+   * 用于测试页面等需要显示具体错误原因的场景
+   * @param query 用户语音文本
+   * @param config AI 配置
+   * @returns 分析结果
+   */
+  async strictAnalyze(query: string, config: AIConfig): Promise<AIAnalysisResult | null> {
+    if (!config.enabled || !config.api_url || !config.api_key) {
+      return null;
+    }
+    return await this.callAI(query, config);
   }
 
   /**
