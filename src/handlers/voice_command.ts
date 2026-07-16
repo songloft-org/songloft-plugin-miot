@@ -83,7 +83,8 @@ export function registerVoiceCommandHandlers(
       aiConfig.enabled = true;
       const analyzer = new AIAnalyzer();
       const start = Date.now();
-      const result = await analyzer.analyze(query, aiConfig);
+      //严格模式，失败则抛出异常
+      const result = await analyzer.strictAnalyze(query, aiConfig);
       const elapsed_ms = Date.now() - start;
       return jsonResponse({ success: true, data: result, elapsed_ms });
     } catch (e: any) {
