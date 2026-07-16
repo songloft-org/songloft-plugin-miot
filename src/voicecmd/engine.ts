@@ -287,7 +287,7 @@ export class VoiceEngine {
       const aiResult = await this.aiAnalyzer.analyze(query, aiConfig);
       if (aiResult) {
         songloft.log.info(`[VoiceEngine] [AI] Done: action=${aiResult.action} confidence=${aiResult.confidence} params=${JSON.stringify(aiResult.params)}`);
-        if (aiResult.confidence === 'high' && aiResult.action !== 'unknown') {
+        if (aiResult.confidence !== 'low' && aiResult.action !== 'unknown') {
           songloft.log.info(`[VoiceEngine] [AI] → Executing fallback (high confidence, action=${aiResult.action})`);
           const playedSong = await this.executeAIResult(aiResult, accountId, msg.device_id);
           if (memoryEnabled && aiResult.action === 'play_song' && playedSong) {
@@ -510,7 +510,7 @@ export class VoiceEngine {
       const aiStart = Date.now();
       const aiResult = await this.aiAnalyzer.analyze(q, aiConfig);
       songloft.log.info(`[VoiceEngine] [Test] AI analyze done in ${Date.now() - aiStart}ms → ${aiResult ? `action=${aiResult.action} confidence=${aiResult.confidence}` : 'null'}`);
-      if (aiResult && aiResult.confidence === 'high' && aiResult.action !== 'unknown') {
+      if (aiResult && aiResult.confidence !== 'low' && aiResult.action !== 'unknown') {
         const search = await this.previewForAI(aiResult);
         const execStart = Date.now();
         await this.executeAIResult(aiResult, acc, deviceId);
@@ -814,12 +814,12 @@ export class VoiceEngine {
         await this.executeSetPlayMode(accountId, deviceId, mode);
         break;
       }
-      case 'set_volume': {
+      /*case 'set_volume': {
         const direction = result.params.direction || 'absolute';
         const volume = result.params.volume;
         await this.executeSetVolume(accountId, deviceId, direction, volume !== undefined ? String(volume) : '');
         break;
-      }
+      }*/
       case 'next':
         await this.executeNext(accountId, deviceId);
         break;

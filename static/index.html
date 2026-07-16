@@ -489,9 +489,6 @@
                             <span class="material-symbols-outlined" style="font-size:18px">psychology</span>
                             AI 口令分析
                         </div>
-                        <div style="margin-top:8px;padding:8px 12px;background:rgba(0,0,0,0.03);border-radius:6px;font-size:13px;color:#666;line-height:1.5">
-                            💡 启用后，系统将优先使用 AI 分析用户语音口令，上面的语音口令规则将不再生效。
-                        </div>
                         <div class="switch-row" style="margin-top:8px">
                             <div class="switch-row-label">
                                 <span class="switch-row-title">启用 AI 分析</span>
@@ -511,6 +508,9 @@
 
                         <!-- AI 配置表单 -->
                         <div id="aiConfigPanel" style="display:none;margin-top:12px">
+                            <div style="margin-top:8px;padding:8px 12px;background:rgba(0,0,0,0.03);border-radius:6px;font-size:13px;color:#666;line-height:1.5">
+                                💡 优先使用口令规则和缓存记忆，上述规则未命中才会进行AI口令分析。
+                            </div>
                             <div class="form-group">
                                 <label class="form-label">API 地址</label>
                                 <input type="text" class="text-field" id="aiApiUrl" placeholder="例如: https://dashscope.aliyuncs.com/compatible-mode/v1" aria-label="AI API 地址">

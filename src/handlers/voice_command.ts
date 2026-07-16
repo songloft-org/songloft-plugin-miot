@@ -82,8 +82,10 @@ export function registerVoiceCommandHandlers(
       // 测试时强制启用（忽略 saved enabled 状态）
       aiConfig.enabled = true;
       const analyzer = new AIAnalyzer();
+      const start = Date.now();
       const result = await analyzer.analyze(query, aiConfig);
-      return jsonResponse({ success: true, data: result });
+      const elapsed_ms = Date.now() - start;
+      return jsonResponse({ success: true, data: result, elapsed_ms });
     } catch (e: any) {
       return jsonResponse({ success: false, error: e.message || String(e) });
     }
