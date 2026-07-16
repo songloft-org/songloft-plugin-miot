@@ -129,7 +129,6 @@ html[data-theme="dark"] {
     padding-top: 112px;
 }
 
-#tab-devices,
 #tab-settings {
     padding-bottom: calc(24px + env(safe-area-inset-bottom));
 }
@@ -2029,10 +2028,6 @@ html[data-theme="dark"] {
         bottom: 120px;
     }
 
-    #tab-devices .container {
-        max-width: 900px;
-    }
-
     .dialog {
         min-width: 560px;
     }
@@ -2043,17 +2038,6 @@ html[data-theme="dark"] {
 
     .container {
         max-width: 900px;
-    }
-
-    #tab-devices .container {
-        display: grid;
-        grid-template-columns: 1fr 1fr;
-        gap: 24px;
-        max-width: 1100px;
-    }
-
-    #tab-devices .container > .card {
-        margin-bottom: 0;
     }
 
     .player-bar-top {
@@ -2074,10 +2058,6 @@ html[data-theme="dark"] {
 
     .container {
         max-width: 1000px;
-    }
-
-    #tab-devices .container {
-        max-width: 1200px;
     }
 
     .player-bar-top {
@@ -3820,6 +3800,10 @@ html.embed .player-bar-cover {
     border: 1px solid var(--md-outline-variant);
     border-radius: var(--md-radius-lg);
     box-shadow: none;
+}
+
+#accountManagementSection {
+    scroll-margin-top: 72px;
 }
 
 /* 宽屏（>=600px）：双栏 Master/Detail，对齐主程序 useWideLayout */

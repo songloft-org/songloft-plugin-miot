@@ -16,9 +16,6 @@
         </button>
         <span class="material-symbols-outlined app-bar-icon" id="appBarIcon">speaker</span>
         <h1 id="appBarTitle">MIoT 智能音箱</h1>
-        <button class="btn-icon" id="accountBtn" title="账号管理">
-            <span class="material-symbols-outlined">person</span>
-        </button>
         <button class="btn-icon" id="settingsBtn" title="设置">
             <span class="material-symbols-outlined">settings</span>
         </button>
@@ -60,9 +57,44 @@
         </div>
     </div>
 
-    <!-- Page: 账号管理 -->
-    <div class="page-content" id="tab-devices">
+    <!-- Page: 设置 -->
+    <div class="page-content" id="tab-settings">
+        <div class="settings-layout" id="settingsLayout">
+            <nav class="settings-nav" id="settingsNav" aria-label="设置分类"></nav>
+            <div class="settings-content" id="settingsContent">
         <div class="container">
+            <!-- 服务器地址配置卡片 -->
+            <div class="card" data-category="device">
+                <div class="card-header">
+                    <span class="material-symbols-outlined">dns</span>
+                    服务器配置
+                </div>
+                <div class="card-body">
+                    <div class="form-group">
+                        <label class="form-label">服务器地址</label>
+                        <select class="text-field" id="serverHostSelect" aria-label="选择服务器地址">
+                            <option value="" disabled selected>请选择服务器地址...</option>
+                        </select>
+                        <input type="text" class="text-field" id="serverHostCustom" placeholder="例如: http://192.168.1.100:58091" aria-label="自定义服务器地址" style="display:none;margin-top:8px">
+                    </div>
+                    <div class="server-host-warning" id="serverHostWarning" style="display:none">
+                        <span class="material-symbols-outlined" style="font-size:16px;flex-shrink:0">warning</span>
+                        <span id="serverHostWarningText"></span>
+                    </div>
+                    <div class="toolbar" style="padding:12px 0 0;justify-content:flex-end">
+                        <button class="btn-text" id="autoFillBtn">
+                            <span class="material-symbols-outlined">auto_fix_high</span>
+                            自动填充
+                        </button>
+                        <button class="btn-filled" id="saveConfigBtn">
+                            <span class="material-symbols-outlined">save</span>
+                            保存
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 账号管理区域 -->
             <!-- 隐藏的 select 元素供 JS 使用 -->
             <div style="display:none">
                 <select id="accountSelect" aria-label="选择账号"></select>
@@ -73,7 +105,7 @@
             </div>
 
             <!-- 账号登录卡片 -->
-            <div class="card">
+            <div class="card" id="accountManagementSection" data-category="device">
                 <div class="card-header">
                     <span class="material-symbols-outlined">person_add</span>
                     添加账号
@@ -174,52 +206,13 @@
             </div>
 
             <!-- 已登录账号列表卡片 -->
-            <div class="card">
+            <div class="card" data-category="device">
                 <div class="card-header">
                     <span class="material-symbols-outlined">group</span>
                     已登录账号
                 </div>
                 <div class="card-body" id="accountList">
                     <div class="empty-state">暂无账号，请先添加</div>
-                </div>
-            </div>
-        </div>
-    </div>
-
-    <!-- Page: 设置 -->
-    <div class="page-content" id="tab-settings">
-        <div class="settings-layout" id="settingsLayout">
-            <nav class="settings-nav" id="settingsNav" aria-label="设置分类"></nav>
-            <div class="settings-content" id="settingsContent">
-        <div class="container">
-            <!-- 服务器地址配置卡片 -->
-            <div class="card" data-category="device">
-                <div class="card-header">
-                    <span class="material-symbols-outlined">dns</span>
-                    服务器配置
-                </div>
-                <div class="card-body">
-                    <div class="form-group">
-                        <label class="form-label">服务器地址</label>
-                        <select class="text-field" id="serverHostSelect" aria-label="选择服务器地址">
-                            <option value="" disabled selected>请选择服务器地址...</option>
-                        </select>
-                        <input type="text" class="text-field" id="serverHostCustom" placeholder="例如: http://192.168.1.100:58091" aria-label="自定义服务器地址" style="display:none;margin-top:8px">
-                    </div>
-                    <div class="server-host-warning" id="serverHostWarning" style="display:none">
-                        <span class="material-symbols-outlined" style="font-size:16px;flex-shrink:0">warning</span>
-                        <span id="serverHostWarningText"></span>
-                    </div>
-                    <div class="toolbar" style="padding:12px 0 0;justify-content:flex-end">
-                        <button class="btn-text" id="autoFillBtn">
-                            <span class="material-symbols-outlined">auto_fix_high</span>
-                            自动填充
-                        </button>
-                        <button class="btn-filled" id="saveConfigBtn">
-                            <span class="material-symbols-outlined">save</span>
-                            保存
-                        </button>
-                    </div>
                 </div>
             </div>
 

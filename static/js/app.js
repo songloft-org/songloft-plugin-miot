@@ -58,12 +58,19 @@ let currentPage = 'player';
 
 /**
  * 导航到子页面
- * @param {string} pageId - 'devices' 或 'settings'
+ * @param {string} pageId - 'settings'，兼容旧的 'devices' 账号管理入口
  */
 window.navigateTo = function(pageId) {
-    if (currentPage === pageId) return;
-    history.pushState({ page: pageId }, '', '#' + pageId);
-    showPage(pageId);
+    const openAccountManagement = pageId === 'devices';
+    const targetPage = openAccountManagement ? 'settings' : pageId;
+
+    if (currentPage === targetPage) {
+        if (openAccountManagement) openAccountManagementSettings();
+        return;
+    }
+
+    history.pushState({ page: targetPage, accountManagement: openAccountManagement }, '', '#' + targetPage);
+    showPage(targetPage, { openAccountManagement });
 };
 
 /**
@@ -75,9 +82,13 @@ window.navigateBack = function() {
 
 /**
  * 显示指定页面，更新 AppBar 状态
- * @param {string} pageId - 'player', 'devices', 'settings'
+ * @param {string} pageId - 'player' 或 'settings'，兼容旧的 'devices'
+ * @param {{ openAccountManagement?: boolean }} [options]
  */
-function showPage(pageId) {
+function showPage(pageId, options = {}) {
+    const openAccountManagement = options.openAccountManagement || pageId === 'devices';
+    if (pageId === 'devices') pageId = 'settings';
+
     currentPage = pageId;
 
     document.querySelectorAll('.page-content').forEach(el => el.classList.remove('active'));
@@ -92,13 +103,11 @@ function showPage(pageId) {
     const navBackBtn = document.getElementById('navBackBtn');
     const appBarIcon = document.getElementById('appBarIcon');
     const appBarTitle = document.getElementById('appBarTitle');
-    const accountBtn = document.getElementById('accountBtn');
     const settingsBtn = document.getElementById('settingsBtn');
 
     if (navBackBtn) navBackBtn.style.display = isMain ? 'none' : '';
     if (appBarIcon) appBarIcon.style.display = isMain ? '' : 'none';
-    if (appBarTitle) appBarTitle.textContent = isMain ? 'MIoT 智能音箱' : pageId === 'devices' ? '账号管理' : '设置';
-    if (accountBtn) accountBtn.style.display = isMain ? '' : 'none';
+    if (appBarTitle) appBarTitle.textContent = isMain ? 'MIoT 智能音箱' : '设置';
     if (settingsBtn) settingsBtn.style.display = isMain ? '' : 'none';
 
     // 工具栏 + 播放栏仅播放页可见
@@ -109,25 +118,23 @@ function showPage(pageId) {
     if (playerBar) playerBar.style.display = isMain ? '' : 'none';
 
     // 子页面数据加载
-    if (pageId === 'devices') {
-        loadDevices();
-        loadAccounts();
-    }
     if (pageId === 'settings') {
         loadConfig();
         loadSchedules();
         loadIndexStatus();
+        loadAccounts();
         initSettingsMasterDetail();
         const layout = document.getElementById('settingsLayout');
         if (layout) layout.classList.remove('view-detail');
         // 列表态（含宽屏双栏）：顶部返回按钮保留，用于退出设置页回到播放页
         settingsInDetail = false;
+        if (openAccountManagement) openAccountManagementSettings();
     }
 }
 
 // ========== 设置页 Master/Detail（对齐主程序设置页响应式范式） ==========
 const SETTINGS_CATEGORIES = [
-    { id: 'device',   icon: 'router',            title: '设备与连接',   subtitle: '服务器、自定义型号、指示灯' },
+    { id: 'device',   icon: 'router',            title: '设备与连接',   subtitle: '服务器、账号、指示灯、自定义型号' },
     { id: 'playback', icon: 'lyrics',            title: '播放与显示',   subtitle: '音频格式、触屏歌词、默认封面' },
     { id: 'voice',    icon: 'record_voice_over', title: '语音交互',     subtitle: '对话监听、口令、记忆、外部搜索' },
     { id: 'schedule', icon: 'schedule',          title: '定时与自动化', subtitle: '时区、定时任务' },
@@ -186,6 +193,28 @@ function selectSettingsCategory(id) {
 function initSettingsMasterDetail() {
     if (!settingsNavBuilt) buildSettingsNav();
     selectSettingsCategory(settingsSelectedCategory);
+}
+
+// 兼容旧账号管理入口：进入设置的设备分类并定位到账号管理区域
+function openAccountManagementSettings() {
+    selectSettingsCategory('device');
+
+    const layout = document.getElementById('settingsLayout');
+    if (layout && window.matchMedia('(max-width: 599px)').matches) {
+        layout.classList.add('view-detail');
+        settingsInDetail = true;
+
+        const navBackBtn = document.getElementById('navBackBtn');
+        if (navBackBtn) navBackBtn.style.display = '';
+
+        const appBarTitle = document.getElementById('appBarTitle');
+        if (appBarTitle) appBarTitle.textContent = '设备与连接';
+    }
+
+    requestAnimationFrame(() => {
+        const section = document.getElementById('accountManagementSection');
+        if (section) section.scrollIntoView({ block: 'start' });
+    });
 }
 
 // 回到分类列表（手机端详情态的返回目标）
@@ -304,7 +333,9 @@ document.addEventListener('DOMContentLoaded', () => {
     // 监听浏览器返回/前进
     window.addEventListener('popstate', (event) => {
         const page = event.state?.page || event.state?.tab || 'player';
-        showPage(page);
+        showPage(page, {
+            openAccountManagement: page === 'devices' || event.state?.accountManagement === true,
+        });
     });
 
     // 初始化 Tracely 监控 SDK
@@ -345,11 +376,6 @@ document.addEventListener('DOMContentLoaded', () => {
             exitSettingsDetail();
         }
     });
-
-    const accountBtn = document.getElementById('accountBtn');
-    if (accountBtn) {
-        accountBtn.addEventListener('click', () => navigateTo('devices'));
-    }
 
     const settingsNavBtn = document.getElementById('settingsBtn');
     if (settingsNavBtn) {
