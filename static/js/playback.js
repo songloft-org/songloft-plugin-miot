@@ -306,7 +306,7 @@ export function updatePlayerUI(status) {
         const lyricUrl = status.current_song.lyric_url;
         if (lyricUrl !== currentLyricUrl) {
             currentLyricUrl = lyricUrl;
-            fetchLyrics(lyricUrl);
+            fetchLyrics(status.current_song.id);
         }
     } else {
         currentLyricUrl = '';
@@ -926,10 +926,13 @@ export function fetchWithAuth(url, timeoutMs = DEFAULT_FETCH_TIMEOUT_MS) {
 
 /**
  * 获取并解析歌词
- * @param {string} lyricUrl - 歌词 URL
+ * 经插件后端 /lyric 代理拉取：主程序对无歌词的 remote 歌曲会返回 404（设计如此，
+ * 用于触发歌词插件懒搜索），直连会被浏览器记为网络错误刷控制台。插件后端把 404
+ * 归一化为 200 空 payload，前端只与本插件端点通信，从而消除控制台 404 噪音。
+ * @param {number|string} songId - 歌曲 ID
  */
-function fetchLyrics(lyricUrl) {
-    if (!lyricUrl) return;
+function fetchLyrics(songId) {
+    if (!songId) return;
 
     if (lyricFetchTimer) {
         clearTimeout(lyricFetchTimer);
@@ -938,25 +941,17 @@ function fetchLyrics(lyricUrl) {
 
     lyricFetchTimer = setTimeout(() => {
         lyricFetchTimer = null;
-        fetchWithAuth(lyricUrl).then(blob => {
-            if (!blob) return;
-            blob.text().then(rawText => {
-                let lrcText = rawText;
-                try {
-                    const json = JSON.parse(rawText);
-                    if (json.lyric) {
-                        lrcText = json.lyric;
-                    } else if (json.success && json.data && json.data.lyric) {
-                        lrcText = json.data.lyric;
-                    } else if (json.data) {
-                        lrcText = typeof json.data === 'string' ? json.data : '';
-                    }
-                } catch {
-                    // 不是 JSON，直接使用原始文本
-                }
-                currentLyrics = parseLrc(lrcText);
-            });
+        apiGet('/lyric?song_id=' + encodeURIComponent(songId)).then(data => {
+            const lrcText = (data && typeof data.lyric === 'string') ? data.lyric : '';
+            currentLyrics = parseLrc(lrcText);
+            if (currentLyrics.length === 0) {
+                const playerBarLyric = document.getElementById('playerBarLyric');
+                if (playerBarLyric) playerBarLyric.textContent = '暂无歌词';
+            }
         }).catch(err => {
+            currentLyrics = [];
+            const playerBarLyric = document.getElementById('playerBarLyric');
+            if (playerBarLyric) playerBarLyric.textContent = '暂无歌词';
             console.warn('获取歌词失败:', err);
         });
     }, 500);

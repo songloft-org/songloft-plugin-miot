@@ -8,8 +8,10 @@ import { showSnackbar, showLoading, hideLoading, showResult, getAccountId, getDe
 import { loadDeviceStatus } from './playback.js';
 import { initPlaylistSearch, initSongSearch } from './search.js';
 
-const COVER_FETCH_TIMEOUT_MS = 3500;
-const MAX_COVER_FETCH_CONCURRENCY = 4;
+const COVER_FETCH_TIMEOUT_MS = 8000;
+const MAX_COVER_FETCH_CONCURRENCY = 3;
+const MAX_COVER_RETRIES = 2;          // 失败/超时后最多重试次数（远程封面首访较慢/易限流）
+const COVER_RETRY_DELAY_MS = 1500;    // 每次重试前的延迟
 
 const coverQueue = [];
 let activeCoverFetches = 0;
@@ -19,8 +21,10 @@ const coverObserver = typeof IntersectionObserver !== 'undefined'
         entries.forEach(entry => {
             if (!entry.isIntersecting) return;
             coverObserver.unobserve(entry.target);
-            const url = entry.target.dataset.coverUrl;
-            if (url) enqueueCoverLoad(entry.target, url);
+            // 观察的是可见容器 .song-item-cover-wrap，真正要填充的 img 挂在 _coverImg 上
+            const img = entry.target._coverImg;
+            const url = img && img.dataset.coverUrl;
+            if (img && url) enqueueCoverLoad(img, url);
         });
     }, { rootMargin: '240px 0px' })
     : null;
@@ -57,7 +61,11 @@ function fetchCoverWithAuth(url, timeoutMs = COVER_FETCH_TIMEOUT_MS) {
 function scheduleCoverLoad(img, url) {
     img.dataset.coverUrl = url;
     if (coverObserver) {
-        coverObserver.observe(img);
+        // img 初始 display:none（无 src 时用占位音符），display:none 元素永远不会被
+        // IntersectionObserver 命中，故改为观察其可见容器 .song-item-cover-wrap。
+        const target = img.parentElement || img;
+        target._coverImg = img;
+        coverObserver.observe(target);
     } else {
         enqueueCoverLoad(img, url);
     }
@@ -66,7 +74,7 @@ function scheduleCoverLoad(img, url) {
 function enqueueCoverLoad(img, url) {
     if (!img || !url || img.dataset.coverQueued === '1') return;
     img.dataset.coverQueued = '1';
-    coverQueue.push({ img, url });
+    coverQueue.push({ img, url, attempt: 0 });
     drainCoverQueue();
 }
 
@@ -81,13 +89,26 @@ function drainCoverQueue() {
         fetchCoverWithAuth(task.url)
             .then(blob => renderCoverBlob(task.img, task.url, blob))
             .catch(() => {
-                // 封面获取失败，保持占位图标
+                // 封面获取失败/超时：远程封面首访较慢，延迟重试若干次后再放弃（保持占位图标）
+                scheduleCoverRetry(task);
             })
             .finally(() => {
                 activeCoverFetches--;
                 drainCoverQueue();
             });
     }
+}
+
+// 失败重试：图片仍在 DOM 且 url 未被新封面覆盖时，延迟后重新入队，最多 MAX_COVER_RETRIES 次
+function scheduleCoverRetry(task) {
+    const attempt = task.attempt || 0;
+    if (attempt >= MAX_COVER_RETRIES) return;
+    if (!task.img.isConnected || task.img.dataset.coverUrl !== task.url) return;
+    setTimeout(() => {
+        if (!task.img.isConnected || task.img.dataset.coverUrl !== task.url) return;
+        coverQueue.push({ img: task.img, url: task.url, attempt: attempt + 1 });
+        drainCoverQueue();
+    }, COVER_RETRY_DELAY_MS);
 }
 
 function renderCoverBlob(img, url, blob) {
@@ -103,10 +124,9 @@ function renderCoverBlob(img, url, blob) {
 
 function cancelQueuedCovers(container) {
     if (!container) return;
-    const imgs = container.querySelectorAll('.song-item-cover');
-    imgs.forEach(img => {
-        if (coverObserver) coverObserver.unobserve(img);
-    });
+    if (coverObserver) {
+        container.querySelectorAll('.song-item-cover-wrap').forEach(wrap => coverObserver.unobserve(wrap));
+    }
     for (let i = coverQueue.length - 1; i >= 0; i--) {
         if (container.contains(coverQueue[i].img)) {
             coverQueue.splice(i, 1);

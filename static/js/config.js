@@ -5,9 +5,9 @@
 
 const { apiGet, apiPost, apiDelete, getAuthToken } = SongloftPlugin;
 import { showSnackbar, getDeviceId, getAccountId } from './utils.js';
+import { connectConversationStream, disconnectConversationStream } from './conversation-stream.js';
 
-// 对话记录轮询定时器
-let conversationPollTimer = null;
+// 对话记录最新时间戳（快照/增量渲染共享，供兜底轮询增量拉取）
 let lastConversationTimestamp = 0;
 
 /**
@@ -50,9 +50,9 @@ export function loadConfig() {
             }
             updateConversationStatus(enabled);
 
-            // 如果已启用，启动轮询并加载状态
+            // 如果已启用，连接对话推送（WS 优先，失败降级轮询）并加载状态
             if (enabled) {
-                startConversationPoll();
+                connectConversationStream();
                 loadConversationStatus();
             }
 
@@ -1503,10 +1503,10 @@ function toggleConversationMonitor(enabled) {
                 showSnackbar(enabled ? '对话监听已开启' : '对话监听已关闭', 'success');
                 updateConversationStatus(enabled);
                 if (enabled) {
-                    startConversationPoll();
+                    connectConversationStream();
                     loadConversationStatus();
                 } else {
-                    stopConversationPoll();
+                    disconnectConversationStream();
                     // 关闭对话监听时联动关闭语音口令和 AI 分析
                     const voiceSwitchEl = document.getElementById('voiceCommandSwitch');
                     if (voiceSwitchEl && voiceSwitchEl.checked) {
@@ -1567,28 +1567,63 @@ function loadConversationStatus() {
 }
 
 /**
- * 开始对话记录轮询（每 2 秒）
+ * 渲染单条对话记录到列表顶部（最新在前），并更新 lastConversationTimestamp。
+ * 快照推送、增量推送与兜底轮询共用此渲染逻辑。
  */
-function startConversationPoll() {
-    stopConversationPoll();
-    loadConversationMessages();
-    conversationPollTimer = setInterval(loadConversationMessages, 2000);
-}
+export function renderConversationItem(item) {
+    const listEl = document.getElementById('conversationList');
+    if (!listEl || !item || !item.message) return;
 
-/**
- * 停止对话记录轮询
- */
-function stopConversationPoll() {
-    if (conversationPollTimer) {
-        clearInterval(conversationPollTimer);
-        conversationPollTimer = null;
+    const msg = item.message;
+    const ts = msg.timestamp_ms;
+    if (ts > lastConversationTimestamp) {
+        lastConversationTimestamp = ts;
+    }
+
+    // 提取问题和回答
+    let question = '';
+    let answer = '';
+    if (msg.response && msg.response.answer && msg.response.answer.length > 0) {
+        const ans = msg.response.answer[0];
+        question = ans.question || '';
+        answer = ans.content || '';
+    }
+
+    const timeStr = new Date(ts).toLocaleTimeString('zh-CN');
+    const itemEl = document.createElement('div');
+    itemEl.className = 'conversation-item';
+    itemEl.innerHTML =
+        `<div class="conversation-meta">` +
+        `<span class="conversation-device">${item.device_name || item.device_id}</span>` +
+        `<span class="conversation-time">${timeStr}</span>` +
+        `</div>` +
+        (question ? `<div class="conversation-question"><span class="material-symbols-outlined" style="font-size:14px">person</span> ${escapeHtml(question)}</div>` : '') +
+        (answer ? `<div class="conversation-answer"><span class="material-symbols-outlined" style="font-size:14px">smart_toy</span> ${escapeHtml(answer)}</div>` : '');
+
+    // 插入到列表顶部（最新的在前）
+    listEl.insertBefore(itemEl, listEl.firstChild);
+
+    // 限制列表最多显示 100 条
+    while (listEl.children.length > 100) {
+        listEl.removeChild(listEl.lastChild);
     }
 }
 
 /**
- * 加载对话记录
+ * 渲染一帧快照（建连时后端推送的最近 N 条）：清空后按 oldest→newest 顺序渲染。
  */
-function loadConversationMessages() {
+export function renderConversationSnapshot(items) {
+    const listEl = document.getElementById('conversationList');
+    if (!listEl) return;
+    listEl.innerHTML = '';
+    lastConversationTimestamp = 0;
+    (items || []).forEach(item => renderConversationItem(item));
+}
+
+/**
+ * 加载对话记录（WebSocket 不可用时的兜底轮询链路，亦供刷新按钮调用）
+ */
+export function loadConversationMessages() {
     const params = lastConversationTimestamp > 0 ? `?since=${lastConversationTimestamp}` : '?limit=50';
     apiGet('/conversation/messages' + params).then(data => {
         if (data.success && data.data && data.data.length > 0) {
@@ -1600,41 +1635,7 @@ function loadConversationMessages() {
                 listEl.innerHTML = '';
             }
 
-            data.data.forEach(item => {
-                const msg = item.message;
-                const ts = msg.timestamp_ms;
-                if (ts > lastConversationTimestamp) {
-                    lastConversationTimestamp = ts;
-                }
-
-                // 提取问题和回答
-                let question = '';
-                let answer = '';
-                if (msg.response && msg.response.answer && msg.response.answer.length > 0) {
-                    const ans = msg.response.answer[0];
-                    question = ans.question || '';
-                    answer = ans.content || '';
-                }
-
-                const timeStr = new Date(ts).toLocaleTimeString('zh-CN');
-                const itemEl = document.createElement('div');
-                itemEl.className = 'conversation-item';
-                itemEl.innerHTML =
-                    `<div class="conversation-meta">` +
-                    `<span class="conversation-device">${item.device_name || item.device_id}</span>` +
-                    `<span class="conversation-time">${timeStr}</span>` +
-                    `</div>` +
-                    (question ? `<div class="conversation-question"><span class="material-symbols-outlined" style="font-size:14px">person</span> ${escapeHtml(question)}</div>` : '') +
-                    (answer ? `<div class="conversation-answer"><span class="material-symbols-outlined" style="font-size:14px">smart_toy</span> ${escapeHtml(answer)}</div>` : '');
-
-                // 插入到列表顶部（最新的在前）
-                listEl.insertBefore(itemEl, listEl.firstChild);
-            });
-
-            // 限制列表最多显示 100 条
-            while (listEl.children.length > 100) {
-                listEl.removeChild(listEl.lastChild);
-            }
+            data.data.forEach(item => renderConversationItem(item));
         }
     }).catch(err => console.error('加载对话记录失败:', err));
 }
