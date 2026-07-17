@@ -98,6 +98,14 @@ function syncManagerFromDeviceState(
     manager.resetAutoNextTimer(devicePosition);
   } else if (localState === 'playing' && deviceState === 'playing' && manager.isVoiceSuspended()) {
     manager.resetAutoNextTimer(devicePosition);
+  } else if (localState === 'playing' && deviceState === 'playing') {
+    // 远程歌曲需要缓冲时间，本地定时器从发送 URL 就开始计时，
+    // 但设备要等缓冲完成才开始播放，导致本地位置显著超前设备实际位置。
+    // 当偏差 ≥ 5s 时用设备实际位置校准定时器，防止歌曲提前切歌。
+    const localPosition = manager.getPosition();
+    if (localPosition - devicePosition >= 5) {
+      manager.resetAutoNextTimer(devicePosition);
+    }
   }
 }
 

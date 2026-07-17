@@ -591,7 +591,30 @@ export class PlaylistManager {
       songloft.log.warn('[PlaylistManager] Song duration invalid, no auto-next timer: ' + song.duration);
     }
 
+    this.prefetchNextSong();
+
     return true;
+  }
+
+  /**
+   * 预缓存下一首歌曲（fire-and-forget）
+   * 调用后端 ?prefetch=1 端点触发异步缓存+转码，减少切歌时的冷启动延迟
+   */
+  private prefetchNextSong(): void {
+    const nextIdx = this.getNextIndex();
+    if (nextIdx < 0 || nextIdx === this.currentIndex) return;
+
+    const nextSong = this.songs[nextIdx];
+    if (!nextSong || !nextSong.url) return;
+    if (nextSong.type === 'local') return;
+    if (nextSong.url.startsWith('http://') || nextSong.url.startsWith('https://')) return;
+
+    const separator = nextSong.url.includes('?') ? '&' : '?';
+    const prefetchPath = nextSong.url + separator + 'prefetch=1';
+    callHostAPI('GET', prefetchPath, undefined, { timeoutMs: 5000 }).catch(e => {
+      songloft.log.warn('[PlaylistManager] Prefetch failed: ' + String(e));
+    });
+    songloft.log.info(`[PlaylistManager] Prefetch next song index=${nextIdx} title=${nextSong.title}`);
   }
 
   /**
