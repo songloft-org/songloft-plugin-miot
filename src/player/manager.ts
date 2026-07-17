@@ -455,6 +455,9 @@ export class PlaylistManager {
     if (remaining > 0) {
       this.startCheckTimer(remaining);
       songloft.log.info(`[PlaylistManager] Timer reset: remaining=${remaining.toFixed(1)}s`);
+    } else {
+      this.startCheckTimer(0.1);
+      songloft.log.info(`[PlaylistManager] Timer reset: song ended (remaining=${remaining.toFixed(1)}s), triggering auto-next`);
     }
   }
 

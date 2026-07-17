@@ -1555,6 +1555,12 @@ export class VoiceEngine {
       return;
     }
 
+    const resumed = await pm.resumePlayback();
+    if (resumed) {
+      songloft.log.info('[VoiceEngine] Playback resumed (continue position) after voice interaction');
+      return;
+    }
+
     const ok = await pm.replayCurrent();
     if (ok) {
       songloft.log.info('[VoiceEngine] Playback restored via replay after voice interaction');
