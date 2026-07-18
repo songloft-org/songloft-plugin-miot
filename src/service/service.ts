@@ -8,6 +8,7 @@ import { AccountManager } from '../account/manager';
 import { ConfigManager } from '../config/manager';
 import { MinaAuth } from '../mina/auth';
 import { MinaHTTPClient } from '../mina/client';
+import type { PlayMetadata } from '../mina/client';
 import { getTTSCommand, XIAOMI_IO_SID, LoginState } from '../mina/constants';
 import type { DeviceConfig, MinaDevice } from '../types';
 
@@ -106,7 +107,7 @@ export class MinaService {
    * 播放指定URL
    * 先暂停当前播放（防止声音叠加），再根据设备型号选择播放接口
    */
-  async playURL(accountId: string, deviceId: string, url: string, songName?: string): Promise<boolean> {
+  async playURL(accountId: string, deviceId: string, url: string, song?: string | PlayMetadata): Promise<boolean> {
     const client = this.getClient(accountId);
     if (!client) {
       songloft.log.warn('[MinaService] playURL: no client for account: ' + accountId);
@@ -129,7 +130,9 @@ export class MinaService {
       const customAudioId = config.default_cover_id;
       const lyricsEnabled = !!config.touchscreen_lyrics_enabled;
       return await client.playByUrl(deviceId, url, hardware, extraModels, keepLight, customAudioId,
-        { enabled: lyricsEnabled, songName: songName || '' });
+        typeof song === 'string'
+          ? { enabled: lyricsEnabled, songName: song || '' }
+          : { enabled: lyricsEnabled, metadata: song });
     } catch (e) {
       songloft.log.error('[MinaService] playURL failed: ' + String(e));
       return false;

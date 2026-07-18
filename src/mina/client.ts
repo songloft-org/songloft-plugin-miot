@@ -25,6 +25,11 @@ import type { DeviceInfoRaw, DeviceListResponse, UbusResponse, NlpResultData, Nl
 const DEFAULT_MUSIC_AUDIO_ID = '1732418460076477549';
 const MUSIC_CP_ID = '355454500';
 
+export interface PlayMetadata {
+  title: string;
+  artist?: string;
+}
+
 /**
  * MinaHTTPClient - 小爱音箱 API 客户端
  * 提供设备控制、播放管理、对话记录获取等功能
@@ -126,13 +131,14 @@ export class MinaHTTPClient {
    *   逐首搜小米曲库匹配真实 audioID（搜不到回退 customAudioId），使触屏音箱显示歌词。
    *   参考 xiaomusic：player_play_music 有兼容性风险，非兼容型号仍走 player_play_url。
    */
-  async playByUrl(deviceId: string, url: string, hardware = '', extraModels?: string[], keepLight = false, customAudioId?: string, lyricsMode?: { enabled: boolean; songName: string }): Promise<boolean> {
+  async playByUrl(deviceId: string, url: string, hardware = '', extraModels?: string[], keepLight = false, customAudioId?: string, lyricsMode?: { enabled: boolean; songName?: string; metadata?: PlayMetadata }): Promise<boolean> {
     const useMusicAPI = hardware ? needUsePlayMusicAPI(hardware, extraModels) : false;
     if (useMusicAPI) {
       const fallbackAudioId = customAudioId || DEFAULT_MUSIC_AUDIO_ID;
       if (lyricsMode?.enabled) {
-        const audioId = await this.searchAudioId(lyricsMode.songName, fallbackAudioId);
-        songloft.log.info(`[MinaClient] touchscreen lyrics selected audioID=${audioId} fallbackAudioID=${fallbackAudioId} song=${lyricsMode.songName || ''}`);
+        const audioId = await this.searchAudioId(lyricsMode.metadata || lyricsMode.songName || '', fallbackAudioId);
+        const displayName = this.formatPlayMetadataForLog(lyricsMode.metadata || lyricsMode.songName || '');
+        songloft.log.info(`[MinaClient] touchscreen lyrics selected audioID=${audioId} fallbackAudioID=${fallbackAudioId} song=${displayName}`);
         // xiaomusic 的 continue_play 通过 _type=1 设置 audio_type=MUSIC；这是触屏歌词/封面的前提。
         const ok = await this.playByMusicURL(deviceId, url, true, audioId, 'play-music:lyrics');
         if (ok) {
@@ -165,13 +171,14 @@ export class MinaHTTPClient {
   /**
    * 搜索小米官方曲库匹配歌曲，返回真实 audioID（供触屏音箱拉取歌词/封面）
    * 参照 xiaomusic _get_audio_id：按「歌名完全相等 + 歌手包含匹配」精确命中
-   * @param name - 「歌名-歌手」格式；为空直接返回默认 audioID（TTS/无名场景不请求，避免小米账号报错）
+   * @param target - 歌曲信息；字符串参数兼容旧的「歌名-歌手」格式
    * @param fallbackAudioId - 默认封面/歌词 ID；无结果或失败时返回
    * @returns 匹配到的 audioID；无结果或失败返回 fallbackAudioId
    */
-  async searchAudioId(name: string, fallbackAudioId = DEFAULT_MUSIC_AUDIO_ID): Promise<string> {
+  async searchAudioId(target: string | PlayMetadata, fallbackAudioId = DEFAULT_MUSIC_AUDIO_ID): Promise<string> {
     let audioId = fallbackAudioId || DEFAULT_MUSIC_AUDIO_ID;
-    const query = (name || '').trim();
+    const parsed = this.normalizePlayMetadata(target);
+    const query = parsed.artist ? `${parsed.title}-${parsed.artist}` : parsed.title;
     if (!query) {
       songloft.log.info('[MinaClient] searchAudioId empty name, using default audioID');
       return audioId;
@@ -215,15 +222,8 @@ export class MinaHTTPClient {
 
     audioId = songList[0].audioID || audioId;
 
-    // 拆「歌名-歌手」，仅用于日志辅助判断
-    let targetSong = query;
-    let targetArtist = '';
-    const dashIdx = query.indexOf('-');
-    if (dashIdx >= 0) {
-      targetSong = query.slice(0, dashIdx).trim();
-      targetArtist = query.slice(dashIdx + 1).trim();
-    }
-    let firstArtist = targetArtist;
+    const targetSong = parsed.title;
+    let firstArtist = parsed.artist;
     if (firstArtist) {
       for (const sep of [';', '；', ',', '，', '&', '、', '/']) {
         firstArtist = firstArtist.split(sep).join('|');
@@ -244,6 +244,30 @@ export class MinaHTTPClient {
 
     songloft.log.info(`[MinaClient] searchAudioId selected query=${query} audioID=${audioId} reason=${selectedReason} targetSong=${targetSong} targetArtist=${firstArtist || ''}`);
     return audioId;
+  }
+
+  private normalizePlayMetadata(target: string | PlayMetadata): PlayMetadata {
+    if (typeof target !== 'string') {
+      return {
+        title: (target.title || '').trim(),
+        artist: (target.artist || '').trim(),
+      };
+    }
+
+    const query = (target || '').trim();
+    const dashIdx = query.lastIndexOf('-');
+    if (dashIdx < 0) {
+      return { title: query, artist: '' };
+    }
+    return {
+      title: query.slice(0, dashIdx).trim(),
+      artist: query.slice(dashIdx + 1).trim(),
+    };
+  }
+
+  private formatPlayMetadataForLog(target: string | PlayMetadata): string {
+    const metadata = this.normalizePlayMetadata(target);
+    return metadata.artist ? `${metadata.title}-${metadata.artist}` : metadata.title;
   }
 
   /**

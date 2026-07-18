@@ -249,7 +249,10 @@ export class OnlineSearcher {
       if (isDirectLink) {
         const songName = song.artist ? `${song.title}-${song.artist}` : song.title;
         songloft.log.info('[OnlineSearcher] [Diag] No-import direct push: songName="' + songName + '" url="' + directUrl + '"');
-        const played = await minaService.playURL(accountId, deviceId, directUrl, songName);
+        const played = await minaService.playURL(accountId, deviceId, directUrl, {
+          title: song.title,
+          artist: song.artist,
+        });
         if (!played) {
           songloft.log.error('[OnlineSearcher] No-import: failed to push URL to device: ' + directUrl);
           return false;
@@ -322,7 +325,10 @@ export class OnlineSearcher {
     // 推送 URL 到音箱（传「歌名-歌手」供触屏歌词模式匹配曲库）
     const songName = song.artist ? `${song.title}-${song.artist}` : song.title;
     songloft.log.info('[OnlineSearcher] [Diag] Push to device: songName="' + songName + '" importedUrl="' + imported.url + '" playUrl="' + playUrl + '"');
-    const played = await minaService.playURL(accountId, deviceId, playUrl, songName);
+    const played = await minaService.playURL(accountId, deviceId, playUrl, {
+      title: song.title,
+      artist: song.artist,
+    });
     if (!played) {
       songloft.log.error('[OnlineSearcher] Failed to push URL to device: ' + playUrl);
       return false;

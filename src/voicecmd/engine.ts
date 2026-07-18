@@ -1273,8 +1273,10 @@ export class VoiceEngine {
       return false;
     }
 
-    const standaloneName = standalone.artist ? `${standalone.title}-${standalone.artist}` : standalone.title;
-    const played = await this.minaService.playURL(accountId, deviceId, playUrl, standaloneName);
+    const played = await this.minaService.playURL(accountId, deviceId, playUrl, {
+      title: standalone.title,
+      artist: standalone.artist,
+    });
     if (!played) {
       songloft.log.error('[VoiceEngine] Failed to play standalone remote song: ' + standalone.title + ' - ' + standalone.artist);
       return false;
