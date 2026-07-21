@@ -486,11 +486,20 @@ export class MinaHTTPClient {
 
   /**
    * 验证 Token 有效性（通过调用 API）
+   *
+   * 直接判定底层响应：token 有效时 device_list 返回 code=0（即使账号名下没有
+   * 任何设备也是 code=0，返回 true）；token 失效时 doGetRequest 遇 401 返回 null，
+   * 返回 false。
+   *
+   * 不能复用 getDeviceList()：它把 401/网络失败兜底成空数组 []，而 `[] !== null`
+   * 恒为 true，会让失效 token 被误判为有效——正是 token 过期后刷新链条持续「假成功」、
+   * 既不提示重登又持续 401 的根因（issue #57）。
    */
   async validateToken(): Promise<boolean> {
     try {
-      const devices = await this.getDeviceList();
-      return devices !== null;
+      const apiUrl = `${MINA_API_BASE_URL}/admin/v2/device_list?master=1`;
+      const result = await this.doGetRequest<DeviceListResponse>(apiUrl);
+      return result !== null && result.code === 0;
     } catch {
       return false;
     }
