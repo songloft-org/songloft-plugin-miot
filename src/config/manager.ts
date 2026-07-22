@@ -48,6 +48,7 @@ function defaultPluginConfig(): PluginConfig {
     voice_memory_max_records: DEFAULT_MEMORY_MAX_RECORDS,
     scheduled_tasks_enabled: false,
     force_mp3: false,
+    radio_force_mp3: false,
     external_search_enabled: false,
     external_search_url: '',
     external_search_token: '',

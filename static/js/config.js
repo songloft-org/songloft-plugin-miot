@@ -84,6 +84,13 @@ export function loadConfig() {
                 forceMp3Switch.checked = forceMp3;
             }
 
+            // 电台转码开关
+            const radioForceMp3 = !!data.data.radio_force_mp3;
+            const radioForceMp3Switch = document.getElementById('radioForceMp3Switch');
+            if (radioForceMp3Switch) {
+                radioForceMp3Switch.checked = radioForceMp3;
+            }
+
             // 指示灯开关
             const indicatorLightEnabled = !!data.data.indicator_light_enabled;
             const indicatorLightSwitch = document.getElementById('indicatorLightSwitch');
@@ -874,6 +881,13 @@ export function initForceMp3UI() {
             toggleForceMp3(this.checked);
         });
     }
+
+    const radioSwitchEl = document.getElementById('radioForceMp3Switch');
+    if (radioSwitchEl) {
+        radioSwitchEl.addEventListener('change', function() {
+            toggleRadioForceMp3(this.checked);
+        });
+    }
 }
 
 // ========== 指示灯 ==========
@@ -1462,6 +1476,27 @@ function toggleForceMp3(enabled) {
         .catch(error => {
             showSnackbar('操作失败：' + error.message, 'error');
             const switchEl = document.getElementById('forceMp3Switch');
+            if (switchEl) switchEl.checked = !enabled;
+        });
+}
+
+/**
+ * 切换电台转码 MP3 开关
+ */
+function toggleRadioForceMp3(enabled) {
+    apiPost('/config', { radio_force_mp3: enabled })
+        .then(data => {
+            if (data.success) {
+                showSnackbar(enabled ? '已开启电台转为 MP3' : '已关闭电台转为 MP3', 'success');
+            } else {
+                showSnackbar('操作失败：' + (data.error || '未知错误'), 'error');
+                const switchEl = document.getElementById('radioForceMp3Switch');
+                if (switchEl) switchEl.checked = !enabled;
+            }
+        })
+        .catch(error => {
+            showSnackbar('操作失败：' + error.message, 'error');
+            const switchEl = document.getElementById('radioForceMp3Switch');
             if (switchEl) switchEl.checked = !enabled;
         });
 }

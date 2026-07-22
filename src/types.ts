@@ -130,6 +130,7 @@ export interface PluginConfig {
   voice_memory_max_records: number;
   scheduled_tasks_enabled: boolean;
   force_mp3: boolean;
+  radio_force_mp3: boolean; // 电台转码：部分音箱无法解码 AAC/HE-AAC 或不支持 HLS 电台，开启后电台流服务端实时转码为 MP3
   external_search_enabled: boolean; // 是否启用外部搜索（全局总开关）
   /** @deprecated 迁移到 external_search_sources[0]，仅读取用于兼容 */
   external_search_url: string;      // 外部搜索 API 地址

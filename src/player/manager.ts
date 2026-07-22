@@ -623,12 +623,13 @@ export class PlaylistManager {
       return false;
     }
 
-    // 读取是否强制 MP3
+    // 读取是否强制 MP3 / 电台转码
     const config = await this.configManager.getConfig();
     const forceMp3 = !!config.force_mp3;
+    const radioForceMp3 = !!config.radio_force_mp3;
 
     // 构造播放URL
-    const songURL = await URLBuilder.buildSongURL(song, { forceMp3 });
+    const songURL = await URLBuilder.buildSongURL(song, { forceMp3, radioForceMp3 });
     if (!songURL) {
       songloft.log.error('[PlaylistManager] Failed to build song URL: ' + song.title);
       return false;

@@ -92,6 +92,7 @@ export function registerConfigHandlers(
           scheduled_tasks_enabled: config.scheduled_tasks_enabled,
           timezone: config.timezone,
           force_mp3: !!config.force_mp3,
+          radio_force_mp3: !!config.radio_force_mp3,
           external_search_enabled: !!config.external_search_enabled,
           external_search_url: config.external_search_url || '',
           external_search_token: config.external_search_token || '',
@@ -172,6 +173,11 @@ export function registerConfigHandlers(
       // 更新 force_mp3
       if (body.force_mp3 !== undefined) {
         config.force_mp3 = !!body.force_mp3;
+      }
+
+      // 更新 radio_force_mp3（电台转码）
+      if (body.radio_force_mp3 !== undefined) {
+        config.radio_force_mp3 = !!body.radio_force_mp3;
       }
 
       // 更新 external_search_url
