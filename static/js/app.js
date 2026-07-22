@@ -48,6 +48,7 @@ import { addAccount, addAccountWithToken, deleteAccount, toggleDeviceManagement,
 import { submitCaptcha, openVerifyUrl, submitVerifyCode, startQRCodeLogin } from './auth.js';
 import { Tracely } from './tracely-sdk.js';
 import { initScheduleUI, loadSchedules } from './schedule.js';
+import { loadGroups, openGroupEditor, closeGroupEditor, saveGroup, deleteGroup } from './group.js';
 import { initIndexingUI, loadIndexStatus } from './indexing.js';
 import { initFullscreenPlayer, openFullscreenPlayer, closeFullscreenPlayer } from './fullscreen-player.js';
 
@@ -123,6 +124,7 @@ function showPage(pageId, options = {}) {
         loadSchedules();
         loadIndexStatus();
         loadAccounts();
+        loadGroups();
         initSettingsMasterDetail();
         const layout = document.getElementById('settingsLayout');
         if (layout) layout.classList.remove('view-detail');
@@ -287,6 +289,10 @@ window.addAccount = addAccount;
 window.addAccountWithToken = addAccountWithToken;
 window._deleteAccount = deleteAccount;
 window._toggleDeviceManagement = toggleDeviceManagement;
+window._openGroupEditor = openGroupEditor;
+window._closeGroupEditor = closeGroupEditor;
+window._saveGroup = saveGroup;
+window._deleteGroup = deleteGroup;
 // 供设备勾选后刷新「对话监听」设备列表展示（后端已在 /mina/device/managed 内同步 refresh，前端仅需重拉状态）
 window._refreshConversationStatus = loadConversationStatus;
 

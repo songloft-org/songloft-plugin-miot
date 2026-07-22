@@ -9,6 +9,7 @@ import { AccountManager } from '../account/manager';
 import { MinaService } from '../service/service';
 import { PlaylistManagerMap } from '../player/manager';
 import { IndexingManager } from '../indexing/manager';
+import { GroupCoordinator } from '../group/coordinator';
 import { URLBuilder } from '../player/url_builder';
 import { AIAnalyzer } from './ai_analyzer';
 import { OnlineSearcher } from './online_searcher';
@@ -177,6 +178,7 @@ export class VoiceEngine {
   private aiAnalyzer: AIAnalyzer;
   private onlineSearcher: OnlineSearcher;
   private memoryService: MemoryService;
+  private groupCoordinator?: GroupCoordinator;
   private memoryInitialized: boolean = false;
   private enabled: boolean = false;
   private resumeTimer: any = null;
@@ -190,6 +192,7 @@ export class VoiceEngine {
     indexingManager: IndexingManager,
     aiAnalyzer?: AIAnalyzer,
     memoryService?: MemoryService,
+    groupCoordinator?: GroupCoordinator,
   ) {
     this.configManager = configManager;
     this.accountManager = accountManager;
@@ -197,7 +200,8 @@ export class VoiceEngine {
     this.playlistManagerMap = playlistManagerMap;
     this.indexingManager = indexingManager;
     this.aiAnalyzer = aiAnalyzer || new AIAnalyzer();
-    this.onlineSearcher = new OnlineSearcher(configManager);
+    this.groupCoordinator = groupCoordinator;
+    this.onlineSearcher = new OnlineSearcher(configManager, groupCoordinator);
     this.memoryService = memoryService || new MemoryService();
   }
 
@@ -860,7 +864,7 @@ export class VoiceEngine {
     // 空参数 + 有活跃歌单：直接恢复播放，无需搜索和打断
     if (!playlistName && pm.hasPlaylist()) {
       songloft.log.info('[VoiceEngine] Play playlist: resume last playback');
-      await pm.next();
+      const ok = await pm.next();
       return;
     }
 
@@ -963,7 +967,7 @@ export class VoiceEngine {
     if (!songName) {
       if (pm.hasPlaylist()) {
         songloft.log.info('[VoiceEngine] Play song: resume last playback');
-        await pm.next();
+        const ok = await pm.next();
         return null;
       }
       songloft.log.warn('[VoiceEngine] No song name specified and no active playlist');
@@ -1282,6 +1286,12 @@ export class VoiceEngine {
       return false;
     }
 
+    // 分组同步：让组内其他成员播放同一 URL
+    await this.groupCoordinator?.fanOutPlayURL(accountId, deviceId, playUrl, {
+      title: standalone.title,
+      artist: standalone.artist,
+    });
+
     songloft.log.info('[VoiceEngine] Played standalone remote song: ' + standalone.title + ' - ' + standalone.artist);
     return true;
   }
@@ -1364,17 +1374,11 @@ export class VoiceEngine {
       return;
     }
 
-    const pm = this.playlistManagerMap.get(accountId, deviceId);
-    if (pm) {
-      await pm.setPlayMode(playMode);
-    } else {
-      // 没有活跃的播放管理器，仅更新配置
-      try {
-        await this.configManager.updateDevice(accountId, deviceId, { play_mode: playMode });
-      } catch (e) {
-        songloft.log.error(`[VoiceEngine] Failed to update play mode config: ${String(e)}`);
-      }
-    }
+    // 用 getOrCreate 解析到（分组则为共享）manager，保证分组下模式落到共享 manager 及其主设备配置，
+    // 不会误写到非主成员的配置而丢失。
+    const pm = await this.playlistManagerMap.getOrCreate(accountId, deviceId);
+    await pm.setPlayMode(playMode);
+
 
     songloft.log.info(`[VoiceEngine] Play mode set to: ${playMode}`);
   }
@@ -1432,6 +1436,7 @@ export class VoiceEngine {
     const ok = await this.minaService.setVolume(accountId, deviceId, targetVolume);
     if (ok) {
       updateDeviceStatusCache(accountId, deviceId, { volume: targetVolume, lockVolume: true });
+      await this.groupCoordinator?.fanOutSetVolume(accountId, deviceId, targetVolume);
       songloft.log.info(`[VoiceEngine] Volume set to: ${targetVolume}`);
     } else {
       songloft.log.error(`[VoiceEngine] Failed to set volume: ${targetVolume}`);

@@ -161,6 +161,8 @@ export async function resolvePlayerStatus(
       position = Math.min(cached.position + elapsed, duration);
     }
 
+    // 用被查询设备的物理进度校准共享切歌定时器。分组下无论查询哪个成员都可校准
+    // （成员播放同一首、进度相近，校准收敛）；已有的近末尾/重拉守卫防止异常重置。
     syncManagerFromDeviceState(manager, localStatus.state, cached.state, cached.position);
 
     // 本地已 stop 时，不让设备残留的播放状态覆盖，避免前端进度条跳动
@@ -298,6 +300,7 @@ export function registerPlaylistHandlers(
       if (!ok) {
         return jsonResponse({ success: false, error: 'failed to start playlist' });
       }
+
 
       return jsonResponse({
         success: true,

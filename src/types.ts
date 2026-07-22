@@ -78,6 +78,21 @@ export interface MinaDevice {
   presence: string;
 }
 
+// ===== 设备分组 =====
+
+/**
+ * 设备分组（存储在 songloft.storage 的 device_groups key）。
+ * 把多台音箱归为一组后，对组内任一设备的播放控制会同步给组内其他成员。
+ * 成员用 DeviceTargetRef 表达，支持跨账号；一个设备最多属于一个组（成员互斥）。
+ */
+export interface DeviceGroup {
+  id: string;                  // 'grp_<ts>_<rand>'
+  name: string;
+  members: DeviceTargetRef[];
+  created_at: string;          // ISO8601
+  updated_at: string;
+}
+
 // ===== 配置 =====
 
 /** 搜歌优先级策略 */

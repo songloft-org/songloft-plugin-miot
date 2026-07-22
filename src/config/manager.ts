@@ -9,6 +9,8 @@ import type {
   SearchProviderRegistration,
   AccountConfig,
   DeviceConfig,
+  DeviceGroup,
+  DeviceTargetRef,
   WebhookConfig,
   VoiceCommand,
   ScheduledTask,
@@ -26,6 +28,7 @@ const STORAGE_KEY_SCHEDULED_TASKS = 'scheduled_tasks';
 const STORAGE_KEY_SCHEDULE_LOGS = 'schedule_logs';
 const STORAGE_KEY_AI_CONFIG = 'ai_config';
 const STORAGE_KEY_SEARCH_PROVIDERS = 'search_provider_registry';
+const STORAGE_KEY_DEVICE_GROUPS = 'device_groups';
 
 /** 搜索源候选注册默认搜索子路径 */
 const DEFAULT_SEARCH_PATH = '/api/search/topone';
@@ -412,5 +415,77 @@ export class ConfigManager {
       logs.shift();
     }
     await this.save(STORAGE_KEY_SCHEDULE_LOGS, logs);
+  }
+
+  // ===== 设备分组 =====
+
+  /** 获取所有设备分组 */
+  async getDeviceGroups(): Promise<DeviceGroup[]> {
+    return this.load<DeviceGroup[]>(STORAGE_KEY_DEVICE_GROUPS, []);
+  }
+
+  /** 保存所有设备分组 */
+  async saveDeviceGroups(groups: DeviceGroup[]): Promise<void> {
+    await this.save(STORAGE_KEY_DEVICE_GROUPS, groups);
+  }
+
+  /**
+   * 从一批组里剔除指定成员（保证一个设备只属于一个组）。
+   * 返回剔除后的新数组（不修改入参元素引用外的结构）。
+   */
+  private stripMembersFromGroups(
+    groups: DeviceGroup[],
+    members: DeviceTargetRef[],
+    exceptGroupId?: string,
+  ): DeviceGroup[] {
+    const claimed = new Set(members.map(m => `${m.account_id}:${m.device_id}`));
+    for (const g of groups) {
+      if (exceptGroupId && g.id === exceptGroupId) continue;
+      g.members = g.members.filter(m => !claimed.has(`${m.account_id}:${m.device_id}`));
+    }
+    return groups;
+  }
+
+  /** 添加设备分组（成员互斥：从其它组剔除本组成员） */
+  async addDeviceGroup(group: DeviceGroup): Promise<void> {
+    const groups = await this.getDeviceGroups();
+    if (groups.some(g => g.id === group.id)) {
+      throw new Error(`Device group already exists: ${group.id}`);
+    }
+    this.stripMembersFromGroups(groups, group.members);
+    groups.push(group);
+    await this.saveDeviceGroups(groups);
+  }
+
+  /** 更新设备分组（按ID匹配并合并字段；改动成员时同样保证互斥） */
+  async updateDeviceGroup(groupId: string, updates: Partial<DeviceGroup>): Promise<void> {
+    const groups = await this.getDeviceGroups();
+    const idx = groups.findIndex(g => g.id === groupId);
+    if (idx === -1) {
+      throw new Error(`Device group not found: ${groupId}`);
+    }
+    groups[idx] = { ...groups[idx], ...updates, id: groupId, updated_at: new Date().toISOString() };
+    if (updates.members) {
+      this.stripMembersFromGroups(groups, groups[idx].members, groupId);
+    }
+    await this.saveDeviceGroups(groups);
+  }
+
+  /** 删除设备分组 */
+  async removeDeviceGroup(groupId: string): Promise<void> {
+    const groups = await this.getDeviceGroups();
+    const filtered = groups.filter(g => g.id !== groupId);
+    if (filtered.length === groups.length) {
+      throw new Error(`Device group not found: ${groupId}`);
+    }
+    await this.saveDeviceGroups(filtered);
+  }
+
+  /** 查找包含指定设备的分组（单组语义，取第一个命中；无则返回 null） */
+  async findDeviceGroup(accountId: string, deviceId: string): Promise<DeviceGroup | null> {
+    const groups = await this.getDeviceGroups();
+    return groups.find(g =>
+      g.members.some(m => m.account_id === accountId && m.device_id === deviceId),
+    ) || null;
   }
 }

@@ -8,7 +8,7 @@ import { ConfigManager } from '../config/manager';
 import { MinaService } from '../service/service';
 import { URLBuilder } from './url_builder';
 import { getHostBaseUrl, callHostAPI } from '../utils/http';
-import type { PlayState, PlayMode, PlayerStatus } from '../types';
+import type { PlayState, PlayMode, PlayerStatus, DeviceTargetRef, DeviceGroup } from '../types';
 
 // ===== 歌曲类型 =====
 
@@ -65,6 +65,11 @@ export class PlaylistManager {
   private randomPlayed: Set<number> = new Set(); // 随机模式已播放索引
   private voiceSuspendedAt: number = 0; // suspendForVoiceInteraction 首次调用时间戳
   private _lastLoadNotFound: boolean = false; // 上次 loadPlaylistSongs 失败是否因歌单不存在(ID 过期)
+  // 输出目标设备集合：独立设备时仅含自身；分组时含组内全部成员。
+  // 一个分组共用一个 PlaylistManager（同一套队列/索引/播放模式/定时器/随机数），
+  // 播放/暂停/停止/切歌等指令统一下发给 targets 里的所有音箱，从根本上保证多房间同步、随机不跑偏。
+  // accountId/deviceId 仍作为「主设备」用于持久化、日志与自动切歌定时器的进度校准参考。
+  private targets: DeviceTargetRef[];
 
   constructor(
     accountId: string,
@@ -74,6 +79,7 @@ export class PlaylistManager {
   ) {
     this.accountId = accountId;
     this.deviceId = deviceId;
+    this.targets = [{ account_id: accountId, device_id: deviceId }];
     this.minaService = minaService;
     this.configManager = configManager;
   }
@@ -185,6 +191,25 @@ export class PlaylistManager {
   }
 
   /**
+   * 对所有输出目标设备并发执行同一设备操作，单个失败仅告警不影响其它成员。
+   * 返回是否「至少一台」成功（用于 play/resume 判定整体是否成功）。
+   */
+  private async forEachTarget(
+    label: string,
+    fn: (t: DeviceTargetRef) => Promise<boolean>,
+  ): Promise<boolean> {
+    const results = await Promise.all(this.targets.map(async (t) => {
+      try {
+        return await fn(t);
+      } catch (e) {
+        songloft.log.warn(`[PlaylistManager] ${label} failed for ${t.account_id}:${t.device_id}: ${String(e)}`);
+        return false;
+      }
+    }));
+    return results.some(r => r);
+  }
+
+  /**
    * 暂停播放（保持状态，可恢复）
    */
   async pause(): Promise<void> {
@@ -193,10 +218,8 @@ export class PlaylistManager {
     this.state = 'paused';
     // 不重置 playStartTimeMs，保持当前播放进度
 
-    // 调用设备暂停
-    if (this.accountId && this.deviceId) {
-      await this.minaService.pausePlay(this.accountId, this.deviceId);
-    }
+    // 暂停所有目标设备（分组时为组内全部音箱）
+    await this.forEachTarget('pause', t => this.minaService.pausePlay(t.account_id, t.device_id));
 
     songloft.log.info('[PlaylistManager] Playback paused');
   }
@@ -210,9 +233,7 @@ export class PlaylistManager {
     this.state = 'stopped';
     this.playStartTimeMs = 0;
 
-    if (this.accountId && this.deviceId) {
-      await this.minaService.stopPlay(this.accountId, this.deviceId);
-    }
+    await this.forEachTarget('stop', t => this.minaService.stopPlay(t.account_id, t.device_id));
 
     songloft.log.info('[PlaylistManager] Playback stopped');
   }
@@ -289,6 +310,21 @@ export class PlaylistManager {
     }
 
     songloft.log.info('[PlaylistManager] Play mode set to ' + mode);
+  }
+
+  /**
+   * 设置输出目标设备集合（分组时为组内全部成员；独立时为自身）。
+   * 由 PlaylistManagerMap 在解析分组后注入/刷新。空集合时回退为主设备自身，避免无目标。
+   */
+  setTargets(targets: DeviceTargetRef[]): void {
+    this.targets = (targets && targets.length > 0)
+      ? targets.slice()
+      : [{ account_id: this.accountId, device_id: this.deviceId }];
+  }
+
+  /** 主设备（分组时为成员列表第一个）：用于持久化与自动切歌定时器的进度校准参考。 */
+  getPrimary(): DeviceTargetRef {
+    return { account_id: this.accountId, device_id: this.deviceId };
   }
 
   /**
@@ -376,7 +412,7 @@ export class PlaylistManager {
 
     this.stopCheckTimer();
 
-    const ok = await this.minaService.resumePlay(this.accountId, this.deviceId);
+    const ok = await this.forEachTarget('resume', t => this.minaService.resumePlay(t.account_id, t.device_id));
     if (!ok) {
       songloft.log.warn('[PlaylistManager] resumePlay failed');
       return false;
@@ -598,15 +634,16 @@ export class PlaylistManager {
       return false;
     }
 
-    songloft.log.info(`[PlaylistManager] Playing song index=${this.currentIndex} title=${song.title} artist=${song.artist} duration=${song.duration}`);
+    songloft.log.info(`[PlaylistManager] Playing song index=${this.currentIndex} title=${song.title} artist=${song.artist} duration=${song.duration} targets=${this.targets.length}`);
 
-    // 调用小爱音箱播放（传结构化歌曲信息供触屏歌词模式匹配曲库）
-    const ok = await this.minaService.playURL(this.accountId, this.deviceId, songURL, {
+    // 下发到所有目标设备（分组时为组内全部音箱；传结构化歌曲信息供触屏歌词模式匹配曲库）。
+    // 至少一台成功即视为成功；个别成员离线/失败不影响整组继续（自动切歌定时器仍以本机时长驱动）。
+    const ok = await this.forEachTarget('playURL', t => this.minaService.playURL(t.account_id, t.device_id, songURL, {
       title: song.title,
       artist: song.artist,
-    });
+    }));
     if (!ok) {
-      songloft.log.error('[PlaylistManager] Failed to play URL on device');
+      songloft.log.error('[PlaylistManager] Failed to play URL on any target device');
       return false;
     }
 
@@ -796,7 +833,15 @@ export class PlaylistManager {
       songloft.log.info('[PlaylistManager] Not playing, skip auto-next');
       return;
     }
+    // 分组共用一个 PlaylistManager：这里的切歌会经 playCurrent 一次性下发给组内所有音箱，
+    // 只有一份队列/随机数/定时器，天然全组同一首，无需组长选举或成员间同步。
+    await this.advanceToNext();
+  }
 
+  /**
+   * 切到下一首并播放（自动续播核心）。playCurrent 会把新歌下发给全部目标设备。
+   */
+  private async advanceToNext(): Promise<void> {
     songloft.log.info(`[PlaylistManager] Song finished, advancing from index=${this.currentIndex}`);
 
     // 通知后端当前歌曲播放完成（触发 JS 插件播放事件广播）
@@ -874,7 +919,11 @@ export class PlaylistManager {
  * key格式: "accountId:deviceId"
  */
 export class PlaylistManagerMap {
+  // key: 分组用 'grp:<groupId>'，独立设备用 '<accountId>:<deviceId>'。一个分组共用一个 manager。
   private managers: Map<string, PlaylistManager> = new Map();
+  // 分组快照（仅含 ≥2 成员的组）：同步可读，避免 get()/getOrCreate 每次读存储、也避免惰性索引过期。
+  // 由 refreshGroups() 在启动与分组增删改时刷新。
+  private groupsSnapshot: DeviceGroup[] = [];
   private minaService: MinaService;
   private configManager: ConfigManager;
 
@@ -884,32 +933,128 @@ export class PlaylistManagerMap {
   }
 
   /**
-   * 获取或创建播放管理器
-   * 若设备配置中存有 playlistId，则自动恢复播放列表（不自动开始播放）
+   * 刷新分组快照（启动时与分组增删改后调用）。除更新快照外，还处理因成员归属变化而失效的 manager：
+   * - 组 manager（key=groupId，无冒号）：组已删除/成员<2 → 清理；主设备仍是成员首位 → 刷新成员列表；
+   *   主设备变化（首位换人/被移出，primary 不可变）→ 清理待重建。
+   * - 独立 manager（key='acct:dev'，含冒号）：其设备现已并入某组 → 清理（交给共享 manager，避免双份定时器）。
+   * 说明：组 manager 的 key 即 groupId（形如 'grp_<ts>_<rand>'，不含冒号），与独立 key 靠是否含冒号区分，
+   *      不会与 account_id 恰为某值时的独立 key 冲突。
+   */
+  async refreshGroups(): Promise<void> {
+    try {
+      const groups = await this.configManager.getDeviceGroups();
+      this.groupsSnapshot = groups.filter(g => g.members && g.members.length >= 2);
+    } catch (e) {
+      songloft.log.warn('[PlaylistManagerMap] refreshGroups failed: ' + String(e));
+      return;
+    }
+    for (const [key, manager] of Array.from(this.managers.entries())) {
+      if (!key.includes(':')) {
+        // 组 manager：key 即 groupId
+        const group = this.groupsSnapshot.find(g => g.id === key);
+        if (!group) {
+          manager.cleanup();
+          this.managers.delete(key);
+          continue;
+        }
+        const p = manager.getPrimary();
+        const head = group.members[0];
+        if (p.account_id === head.account_id && p.device_id === head.device_id) {
+          manager.setTargets(group.members.slice()); // 主设备不变：仅刷新成员，保留播放状态
+        } else {
+          manager.cleanup(); // 主设备变了（primary 不可变）→ 丢弃，下次 getOrCreate 以新首位重建
+          this.managers.delete(key);
+        }
+      } else {
+        // 独立 manager：若其设备现已属某分组，则应由共享 manager 接管
+        const p = manager.getPrimary();
+        if (!this.resolveTargetSync(p.account_id, p.device_id).managerKey.includes(':')) {
+          manager.cleanup();
+          this.managers.delete(key);
+        }
+      }
+    }
+  }
+
+  /**
+   * 同步解析某设备应归属的 manager：在分组（≥2 成员）中则归属该组共享 manager（输出目标为全部成员，
+   * 主设备取成员列表第一个）；否则为独立设备 manager（仅自身）。基于内存快照，无异步、无过期索引。
+   * 组 manager 的 key 直接用 groupId（不含冒号），独立 key 为 'acct:dev'（含冒号），二者天然可区分。
+   */
+  private resolveTargetSync(accountId: string, deviceId: string): {
+    managerKey: string;
+    primary: DeviceTargetRef;
+    targets: DeviceTargetRef[];
+  } {
+    const group = this.groupsSnapshot.find(g =>
+      g.members.some(m => m.account_id === accountId && m.device_id === deviceId),
+    );
+    if (group) {
+      return {
+        managerKey: group.id,
+        primary: group.members[0],
+        targets: group.members.slice(),
+      };
+    }
+    const self = { account_id: accountId, device_id: deviceId };
+    return { managerKey: this.makeKey(accountId, deviceId), primary: self, targets: [self] };
+  }
+
+  /**
+   * 获取或创建播放管理器。
+   * 分组设备解析到该组共享的 manager（输出目标为组内全部音箱）；独立设备解析到自身 manager。
+   * 若设备配置中存有 playlistId，则新建时自动恢复播放列表（不自动开始播放）。
    */
   async getOrCreate(accountId: string, deviceId: string): Promise<PlaylistManager> {
-    const key = this.makeKey(accountId, deviceId);
-    const existing = this.managers.get(key);
+    const { managerKey, primary, targets } = this.resolveTargetSync(accountId, deviceId);
+
+    const existing = this.managers.get(managerKey);
     if (existing) {
+      existing.setTargets(targets); // 刷新成员（成员可能已变更）
       return existing;
     }
 
-    // 创建新的播放管理器
-    const manager = new PlaylistManager(accountId, deviceId, this.minaService, this.configManager);
-    this.managers.set(key, manager);
+    // 组共享 manager 接管成员设备：清理这些设备遗留的独立 manager，避免重复定时器/双份队列
+    if (!managerKey.includes(':')) {
+      for (const t of targets) {
+        const dk = this.makeKey(t.account_id, t.device_id);
+        const stale = this.managers.get(dk);
+        if (stale) {
+          stale.cleanup();
+          this.managers.delete(dk);
+        }
+      }
+    }
 
-    // 尝试从配置中恢复播放列表状态（不自动播放）
-    await this.restoreFromConfig(manager, accountId, deviceId);
+    const manager = new PlaylistManager(primary.account_id, primary.device_id, this.minaService, this.configManager);
+    manager.setTargets(targets);
 
+    // 从主设备配置恢复播放列表状态（不自动播放）
+    await this.restoreFromConfig(manager, primary.account_id, primary.device_id);
+
+    // await 期间可能有并发 getOrCreate 建好了同 key，或 refreshGroups 令归属变化：以最新为准，
+    // 避免返回「孤儿」实例造成双份驱动
+    const concurrent = this.managers.get(managerKey);
+    if (concurrent) {
+      manager.cleanup();
+      concurrent.setTargets(targets);
+      return concurrent;
+    }
+    if (this.resolveTargetSync(accountId, deviceId).managerKey !== managerKey) {
+      // 归属在 await 期间被改（分组增删改）→ 丢弃本实例，按最新归属重建
+      manager.cleanup();
+      return this.getOrCreate(accountId, deviceId);
+    }
+    this.managers.set(managerKey, manager);
     return manager;
   }
 
   /**
-   * 获取指定设备的管理器（不存在返回null）
+   * 获取指定设备的管理器（不存在返回null）。基于分组快照同步解析，分组设备命中共享 manager。
    */
   get(accountId: string, deviceId: string): PlaylistManager | null {
-    const key = this.makeKey(accountId, deviceId);
-    return this.managers.get(key) ?? null;
+    const { managerKey } = this.resolveTargetSync(accountId, deviceId);
+    return this.managers.get(managerKey) ?? null;
   }
 
   /**

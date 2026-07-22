@@ -216,6 +216,49 @@
                 </div>
             </div>
 
+            <!-- 设备分组卡片 -->
+            <div class="card" data-category="device">
+                <div class="card-header">
+                    <span class="material-symbols-outlined">speaker_group</span>
+                    设备分组
+                </div>
+                <div class="card-body">
+                    <div style="font-size:13px;color:var(--md-on-surface-variant);margin-bottom:12px">
+                        <span class="material-symbols-outlined" style="font-size:16px;vertical-align:middle">info</span>
+                        把多台音箱归为一组后，对组内任一音箱的播放、暂停、停止、上一首/下一首、播放模式、音量等操作会自动同步给组内其他成员。一台设备最多属于一个组。
+                    </div>
+                    <button class="btn-filled" id="addGroupBtn" style="width:100%" onclick="window._openGroupEditor()">
+                        <span class="material-symbols-outlined">add</span>
+                        新建分组
+                    </button>
+
+                    <!-- 分组编辑器（新建/编辑共用，默认隐藏） -->
+                    <div id="groupEditor" style="display:none;margin-top:16px;padding:16px;border:1px solid var(--md-outline-variant);border-radius:var(--md-radius-md)">
+                        <input type="hidden" id="groupEditId">
+                        <div class="form-group">
+                            <label class="form-label">分组名称</label>
+                            <input type="text" class="text-field" id="groupName" placeholder="如：客厅+卧室" aria-label="分组名称">
+                        </div>
+                        <div class="form-group" style="margin-top:12px">
+                            <label class="form-label">选择成员（仅列出已启用管理的设备）</label>
+                            <div id="groupDeviceList" style="margin-top:8px"></div>
+                        </div>
+                        <div style="display:flex;gap:8px;margin-top:16px">
+                            <button class="btn-filled" style="flex:1" onclick="window._saveGroup()">
+                                <span class="material-symbols-outlined">save</span>
+                                保存
+                            </button>
+                            <button class="btn-outlined" style="flex:1" onclick="window._closeGroupEditor()">取消</button>
+                        </div>
+                    </div>
+
+                    <!-- 分组列表 -->
+                    <div id="groupList" style="margin-top:16px">
+                        <div class="empty-state small">暂无分组</div>
+                    </div>
+                </div>
+            </div>
+
             <!-- 音频格式卡片 -->
             <div class="card" data-category="playback">
                 <div class="card-header">

@@ -6,6 +6,7 @@ import type { Router, HTTPRequest } from '@songloft/plugin-sdk';
 import { MinaService } from '../service/service';
 import { AccountManager } from '../account/manager';
 import { ConversationMonitor } from '../conversation/monitor';
+import { GroupCoordinator } from '../group/coordinator';
 import { updateDeviceStatusCache, getDeviceStatusCache, getOrFetchDeviceStatus, DEVICE_STATUS_TTL } from './playlist';
 
 /** 解析请求体（兼容 Uint8Array 和 string） */
@@ -37,6 +38,7 @@ export function registerDeviceHandlers(
   minaService: MinaService,
   accountManager: AccountManager,
   conversationMonitor: ConversationMonitor,
+  groupCoordinator: GroupCoordinator,
 ): void {
 
   // GET /mina/devices - 获取设备列表（按账号分组）
@@ -92,6 +94,7 @@ export function registerDeviceHandlers(
         return jsonResponse({ success: false, error: 'failed to set volume' });
       }
       updateDeviceStatusCache(account_id, device_id, { volume: vol, lockVolume: true });
+      await groupCoordinator.fanOutSetVolume(account_id, device_id, vol);
       return jsonResponse({ success: true, data: { message: 'success' } });
     } catch (e: any) {
       return jsonResponse({ success: false, error: e.message || String(e) });
@@ -113,6 +116,7 @@ export function registerDeviceHandlers(
       if (!ok) {
         return jsonResponse({ success: false, error: 'failed to play url' });
       }
+      await groupCoordinator.fanOutPlayURL(account_id, device_id, url);
       return jsonResponse({ success: true, data: { message: 'playing url' } });
     } catch (e: any) {
       return jsonResponse({ success: false, error: e.message || String(e) });

@@ -5,6 +5,7 @@ import { AccountManager } from './account/manager';
 import { AuthService } from './auth/service';
 import { MinaService } from './service/service';
 import { PlaylistManagerMap } from './player/manager';
+import { GroupCoordinator } from './group/coordinator';
 import { Scheduler } from './schedule/scheduler';
 import { TaskExecutor } from './schedule/executor';
 import { ConversationMonitor } from './conversation/monitor';
@@ -26,6 +27,7 @@ import { registerVoiceCommandHandlers } from './handlers/voice_command';
 import { registerIndexingHandlers } from './handlers/indexing';
 import { registerMemoryHandlers } from './handlers/memory';
 import { registerLyricHandlers } from './handlers/lyric';
+import { registerGroupHandlers } from './handlers/group';
 import { registerSearchProviderComm } from './handlers/search_registry';
 import { setHostBaseUrl } from './utils/http';
 import { setPollDebug } from './utils/debug';
@@ -40,6 +42,7 @@ let accountManager: AccountManager;
 let authService: AuthService;
 let minaService: MinaService;
 let playlistManagerMap: PlaylistManagerMap;
+let groupCoordinator: GroupCoordinator;
 let scheduler: Scheduler;
 let conversationMonitor: ConversationMonitor;
 let voiceEngine: VoiceEngine;
@@ -58,6 +61,9 @@ async function onInit(): Promise<void> {
   authService = new AuthService(configManager, accountManager);
   minaService = new MinaService(accountManager, configManager);
   playlistManagerMap = new PlaylistManagerMap(minaService, configManager);
+  groupCoordinator = new GroupCoordinator(playlistManagerMap, minaService, configManager);
+  // 加载分组快照，使 PlaylistManagerMap 能同步把分组设备解析到共享 manager（多房间共用一套播放列表）
+  await playlistManagerMap.refreshGroups();
   memoryService = new MemoryService();
 
   // 注入状态推送依赖（WebSocket 订阅端点 /status/ws 使用）
@@ -76,9 +82,9 @@ async function onInit(): Promise<void> {
   conversationMonitor = new ConversationMonitor(accountManager, configManager);
   // 注入对话推送依赖（WebSocket 订阅端点 /conversation/ws 使用）
   initConversationStream(conversationMonitor);
-  voiceEngine = new VoiceEngine(configManager, accountManager, minaService, playlistManagerMap, indexingManager, new AIAnalyzer(), memoryService);
+  voiceEngine = new VoiceEngine(configManager, accountManager, minaService, playlistManagerMap, indexingManager, new AIAnalyzer(), memoryService, groupCoordinator);
 
-  const executor = new TaskExecutor(configManager, accountManager, minaService, playlistManagerMap, indexingManager, conversationMonitor);
+  const executor = new TaskExecutor(configManager, accountManager, minaService, playlistManagerMap, indexingManager, conversationMonitor, groupCoordinator);
   scheduler = new Scheduler(configManager, executor);
 
   // 如果配置中没有语音口令配置，写入默认配置
@@ -92,7 +98,7 @@ async function onInit(): Promise<void> {
   // 注册所有路由
   registerAccountHandlers(router, accountManager, authService);
   registerAuthHandlers(router, authService, accountManager);
-  registerDeviceHandlers(router, minaService, accountManager, conversationMonitor);
+  registerDeviceHandlers(router, minaService, accountManager, conversationMonitor, groupCoordinator);
   registerPlaylistHandlers(router, playlistManagerMap, minaService, configManager);
   registerConfigHandlers(router, configManager, conversationMonitor, scheduler, voiceEngine, memoryService);
   registerConversationHandlers(router, conversationMonitor, configManager);
@@ -101,6 +107,7 @@ async function onInit(): Promise<void> {
   registerIndexingHandlers(router, indexingManager);
   registerMemoryHandlers(router, memoryService, configManager);
   registerLyricHandlers(router);
+  registerGroupHandlers(router, configManager, playlistManagerMap);
 
   // 注册「搜索源候选」的插件间通信入口（其他插件经 comm 自注册）
   registerSearchProviderComm(configManager);

@@ -8,6 +8,7 @@ import { getHostAPIBaseUrl } from '../utils/http';
 import { URLBuilder } from '../player/url_builder';
 import { ConfigManager } from '../config/manager';
 import { IndexingManager } from '../indexing/manager';
+import { GroupCoordinator } from '../group/coordinator';
 import type { ExternalSearchSource, PlayMode } from '../types';
 import type { PlaylistManager } from '../player/manager';
 
@@ -80,9 +81,11 @@ interface RemoteSongsResponse {
  */
 export class OnlineSearcher {
   private configManager: ConfigManager;
+  private groupCoordinator?: GroupCoordinator;
 
-  constructor(configManager: ConfigManager) {
+  constructor(configManager: ConfigManager, groupCoordinator?: GroupCoordinator) {
     this.configManager = configManager;
+    this.groupCoordinator = groupCoordinator;
   }
 
   /**
@@ -257,6 +260,11 @@ export class OnlineSearcher {
           songloft.log.error('[OnlineSearcher] No-import: failed to push URL to device: ' + directUrl);
           return false;
         }
+        // 分组同步：让组内其他成员播放同一 URL
+        await this.groupCoordinator?.fanOutPlayURL(accountId, deviceId, directUrl, {
+          title: song.title,
+          artist: song.artist,
+        });
         songloft.log.info('[OnlineSearcher] Playing online song (no-import): ' + song.title + ' - ' + song.artist + ' url=' + directUrl);
         return true;
       }
@@ -333,6 +341,12 @@ export class OnlineSearcher {
       songloft.log.error('[OnlineSearcher] Failed to push URL to device: ' + playUrl);
       return false;
     }
+
+    // 分组同步：让组内其他成员播放同一 URL
+    await this.groupCoordinator?.fanOutPlayURL(accountId, deviceId, playUrl, {
+      title: song.title,
+      artist: song.artist,
+    });
 
     // 增量把这首独立远程歌曲加入内存索引，避免为一首歌重建全部歌单缓存。
     if (indexingManager) {

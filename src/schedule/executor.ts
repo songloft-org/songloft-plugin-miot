@@ -10,6 +10,7 @@ import { MinaService } from '../service/service';
 import { PlaylistManagerMap } from '../player/manager';
 import { IndexingManager } from '../indexing/manager';
 import { ConversationMonitor } from '../conversation/monitor';
+import { GroupCoordinator } from '../group/coordinator';
 import type { ScheduledTask, TaskLog, TaskTarget, TaskParams, PlayMode, DeviceConfig } from '../types';
 
 /** 解析后的单个目标设备 */
@@ -30,6 +31,7 @@ export class TaskExecutor {
   private playlistManagerMap: PlaylistManagerMap;
   private indexingManager: IndexingManager;
   private conversationMonitor: ConversationMonitor;
+  private groupCoordinator?: GroupCoordinator;
 
   constructor(
     configManager: ConfigManager,
@@ -38,6 +40,7 @@ export class TaskExecutor {
     playlistManagerMap: PlaylistManagerMap,
     indexingManager: IndexingManager,
     conversationMonitor: ConversationMonitor,
+    groupCoordinator?: GroupCoordinator,
   ) {
     this.configManager = configManager;
     this.accountManager = accountManager;
@@ -45,6 +48,7 @@ export class TaskExecutor {
     this.playlistManagerMap = playlistManagerMap;
     this.indexingManager = indexingManager;
     this.conversationMonitor = conversationMonitor;
+    this.groupCoordinator = groupCoordinator;
   }
 
   /**
@@ -69,9 +73,29 @@ export class TaskExecutor {
     }
 
     const logs: TaskLog[] = [];
+    // 去重：若多个目标设备同属一个组，处理首个目标时 GroupCoordinator 已 fan-out 给
+    // 组内其他成员，后续再把这些成员作为独立目标处理会重复下发，故跳过已被带动的设备。
+    const covered = new Set<string>();
     for (const target of targets) {
+      const key = target.accountId + ':' + target.deviceId;
+      if (covered.has(key)) {
+        songloft.log.info(`[TaskExecutor] 跳过已被同组带动的目标设备 device=${target.deviceId}`);
+        continue;
+      }
       const log = await this.executeOnDevice(task, target);
       logs.push(log);
+      covered.add(key);
+      // 仅当本设备执行成功（fan-out 确实发生过）才把同组其他成员标记为已覆盖；
+      // 若本设备失败（离线/出错），fan-out 未执行，组内其他成员仍需作为独立目标各自尝试，
+      // 否则会因误标记 covered 而被跳过，导致整组静默。
+      if (log.success && this.groupCoordinator) {
+        try {
+          const peers = await this.groupCoordinator.getGroupPeers(target.accountId, target.deviceId);
+          for (const p of peers) covered.add(p.account_id + ':' + p.device_id);
+        } catch (e) {
+          songloft.log.warn(`[TaskExecutor] 读取分组成员失败 device=${target.deviceId}: ${String(e)}`);
+        }
+      }
     }
     return logs;
   }
@@ -397,6 +421,7 @@ export class TaskExecutor {
       throw new Error('设置音量失败');
     }
 
+    await this.groupCoordinator?.fanOutSetVolume(target.accountId, target.deviceId, volume);
     return `设置音量为 ${volume} 成功`;
   }
 
@@ -409,20 +434,9 @@ export class TaskExecutor {
       throw new Error('未指定播放模式');
     }
 
-    // 优先通过现有播放管理器设置
-    const pm = this.playlistManagerMap.get(target.accountId, target.deviceId);
-    if (pm) {
-      await pm.setPlayMode(playMode as PlayMode);
-    } else {
-      // 播放管理器不存在时，直接更新配置
-      try {
-        await this.configManager.updateDevice(target.accountId, target.deviceId, {
-          play_mode: playMode,
-        });
-      } catch (e) {
-        throw new Error(`更新播放模式配置失败: ${e instanceof Error ? e.message : String(e)}`);
-      }
-    }
+    // 用 getOrCreate 解析到（分组则为共享）manager，保证分组下模式落到共享 manager 及其主设备配置。
+    const pm = await this.playlistManagerMap.getOrCreate(target.accountId, target.deviceId);
+    await pm.setPlayMode(playMode as PlayMode);
 
     return `设置播放模式为 ${playMode} 成功`;
   }
