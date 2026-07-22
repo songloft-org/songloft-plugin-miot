@@ -1545,7 +1545,7 @@ function updateConversationStatus(enabled) {
 /**
  * 加载对话监听状态
  */
-function loadConversationStatus() {
+export function loadConversationStatus() {
     apiGet('/conversation/status').then(data => {
         if (data.success && data.data) {
             const status = data.data;

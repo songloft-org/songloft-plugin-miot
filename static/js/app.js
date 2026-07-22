@@ -43,7 +43,7 @@ import {
 } from './playback.js';
 import { connectStatusStream, disconnectStatusStream } from './status-stream.js';
 import { initDialogs } from './modal.js';
-import { autoFillServerHost, saveConfig, loadConfig, initServerHostUI, initPollIntervalUI, initConversationPollDebugUI, initSmartResumeUI, initMaxSongIndexUI, initConversationUI, initVoiceCommandUI, initVoiceMemoryUI, initTimezoneUI, initForceMp3UI, initIndicatorLightUI, initTouchscreenLyricsUI, initExtraMusicApiModelsUI, initAIConfigUI, initExternalSearchUI, initExternalSearchSpecUI, initInterruptBroadcastUI, initDefaultCoverUI } from './config.js';
+import { autoFillServerHost, saveConfig, loadConfig, initServerHostUI, initPollIntervalUI, initConversationPollDebugUI, initSmartResumeUI, initMaxSongIndexUI, initConversationUI, initVoiceCommandUI, initVoiceMemoryUI, initTimezoneUI, initForceMp3UI, initIndicatorLightUI, initTouchscreenLyricsUI, initExtraMusicApiModelsUI, initAIConfigUI, initExternalSearchUI, initExternalSearchSpecUI, initInterruptBroadcastUI, initDefaultCoverUI, loadConversationStatus } from './config.js';
 import { addAccount, addAccountWithToken, deleteAccount, toggleDeviceManagement, loadAccounts, reLoginAccount } from './account.js';
 import { submitCaptcha, openVerifyUrl, submitVerifyCode, startQRCodeLogin } from './auth.js';
 import { Tracely } from './tracely-sdk.js';
@@ -287,6 +287,8 @@ window.addAccount = addAccount;
 window.addAccountWithToken = addAccountWithToken;
 window._deleteAccount = deleteAccount;
 window._toggleDeviceManagement = toggleDeviceManagement;
+// 供设备勾选后刷新「对话监听」设备列表展示（后端已在 /mina/device/managed 内同步 refresh，前端仅需重拉状态）
+window._refreshConversationStatus = loadConversationStatus;
 
 // 登录验证
 window.submitCaptcha = submitCaptcha;

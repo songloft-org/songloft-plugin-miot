@@ -257,6 +257,12 @@ export function toggleDeviceManagement(accountId, deviceId, managed) {
                 if (checkbox) checkbox.checked = !managed;
             } else {
                 showSnackbar(managed ? '已添加到管理列表' : '已从管理列表移除', 'success');
+                // 后端已在 /mina/device/managed 内同步刷新对话监听设备列表（监听列表 == 已勾选设备）。
+                // 监听开启时立即重拉状态，让「对话监听」的设备芯片/台数即时反映本次勾选，无需手动重开监听。
+                const monitorSwitch = document.getElementById('conversationMonitorSwitch');
+                if (monitorSwitch && monitorSwitch.checked && window._refreshConversationStatus) {
+                    window._refreshConversationStatus();
+                }
             }
         })
         .catch(error => {
