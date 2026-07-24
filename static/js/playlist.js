@@ -183,7 +183,8 @@ export function togglePlaylistSelectPanel(trigger) {
     if (searchInput) {
         searchInput.value = '';
         searchInput.dispatchEvent(new Event('input'));
-        setTimeout(() => searchInput.focus(), 100);
+        // 不自动聚焦搜索框：避免打开歌单下拉时调起输入法，导致下拉面板被压缩不便选择
+        // (songloft-org/songloft#320)
     }
 }
 
