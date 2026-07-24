@@ -1392,6 +1392,11 @@ export function initExternalSearchUI() {
         });
     }
 
+    const noImportSwitch = document.getElementById('externalSearchNoImportSwitch');
+    if (noImportSwitch) {
+        noImportSwitch.addEventListener('change', () => saveExternalSearchConfig());
+    }
+
     const playlistSelect = document.getElementById('externalSearchPlaylistSelect');
     if (playlistSelect) playlistSelect.addEventListener('change', () => saveExternalSearchConfig());
 
