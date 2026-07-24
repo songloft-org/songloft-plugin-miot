@@ -1,6 +1,6 @@
 {
   "name": "miot",
-  "version": "2026.7.23",
+  "version": "2026.7.24",
   "description": "通过 MIoT 协议把歌曲投放到智能音箱设备",
   "private": true,
   "scripts": {
