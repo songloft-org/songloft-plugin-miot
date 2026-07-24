@@ -1555,7 +1555,6 @@ html[data-theme="dark"] {
     width: min(400px, calc(100vw - 32px));
     max-height: 50vh;
     overflow-y: auto;
-    padding: 8px 0;
     /* 水平居中 */
     left: 0;
     right: 0;
@@ -3399,6 +3398,11 @@ html.embed .player-bar-cover {
     white-space: nowrap;
 }
 
+.fp-topbar-spacer {
+    width: 40px;
+    flex-shrink: 0;
+}
+
 /* Main area */
 .fp-main {
     flex: 1;
@@ -3559,6 +3563,31 @@ html.embed .player-bar-cover {
     flex-shrink: 0;
 }
 
+.fp-toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 4px 20px 0;
+    flex-shrink: 0;
+}
+
+.fp-favorite-btn {
+    color: rgba(255, 255, 255, 0.7);
+    transition: color 0.2s, transform 0.2s;
+}
+
+.fp-favorite-btn:active {
+    transform: scale(0.85);
+}
+
+.fp-favorite-btn.is-favorited {
+    color: #ff4081;
+}
+
+.fp-toolbar .btn-icon {
+    color: rgba(255, 255, 255, 0.7);
+}
+
 .fp-song-title {
     font-size: 20px;
     font-weight: bold;
@@ -3702,6 +3731,12 @@ html.embed .player-bar-cover {
     }
 
     .fp-progress {
+        max-width: 600px;
+        margin: 0 auto;
+        width: 100%;
+    }
+
+    .fp-toolbar {
         max-width: 600px;
         margin: 0 auto;
         width: 100%;

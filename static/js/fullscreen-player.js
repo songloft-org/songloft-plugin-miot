@@ -11,6 +11,9 @@ import {
     togglePlayPause, previousSong, nextSong, stopPlaylist,
     playModes, togglePlayModePanel, toggleVolumePanel
 } from './playback.js';
+import { showSnackbar } from './utils.js';
+
+const { apiGet, apiPost } = SongloftPlugin;
 
 let isOpen = false;
 let coverObjectUrl = null;
@@ -22,6 +25,9 @@ let resumeScrollTimer = null;
 let lastHighlightIndex = -1;
 let progressRAF = null;
 let currentPage = 0;
+let currentSongId = 0;
+let isFavorited = false;
+let favoriteLoading = false;
 
 const RESUME_DELAY = 3000;
 const LINE_HEIGHT = 48;
@@ -53,6 +59,7 @@ export function initFullscreenPlayer() {
     document.getElementById('fpNextBtn')?.addEventListener('click', nextSong);
     document.getElementById('fpPlayModeBtn')?.addEventListener('click', togglePlayModePanel);
     document.getElementById('fpVolumeBtn')?.addEventListener('click', toggleVolumePanel);
+    document.getElementById('fpFavoriteBtn')?.addEventListener('click', toggleFavorite);
 }
 
 export function openFullscreenPlayer() {
@@ -130,6 +137,17 @@ function onStatusUpdate(status) {
     const artistEl = document.getElementById('fpSongArtist');
     if (titleEl) titleEl.textContent = song?.title || '暂无播放';
     if (artistEl) artistEl.textContent = song?.artist || '-';
+
+    // Favorite status
+    const songId = song?.id || 0;
+    if (songId !== currentSongId) {
+        currentSongId = songId;
+        if (songId > 0) {
+            checkFavoriteStatus(songId);
+        } else {
+            updateFavoriteUI(false);
+        }
+    }
 
     // Play button
     const playIcon = document.getElementById('fpPlayBtn')?.querySelector('.material-symbols-outlined');
@@ -387,4 +405,45 @@ function updateProgressDOM(position, duration) {
     if (thumb) thumb.style.left = percent + '%';
     if (currentTimeEl) currentTimeEl.textContent = formatTime(position);
     if (totalTimeEl) totalTimeEl.textContent = formatTime(duration);
+}
+
+// --- Favorite ---
+
+function checkFavoriteStatus(songId) {
+    apiGet('/player/favorite/status?song_id=' + songId).then(data => {
+        if (data?.success && data.data) {
+            updateFavoriteUI(!!data.data.is_favorited);
+        }
+    }).catch(() => {
+        updateFavoriteUI(false);
+    });
+}
+
+function updateFavoriteUI(favorited) {
+    isFavorited = favorited;
+    const icon = document.getElementById('fpFavoriteIcon');
+    const btn = document.getElementById('fpFavoriteBtn');
+    if (icon) icon.textContent = favorited ? 'favorite' : 'favorite_border';
+    if (btn) {
+        btn.classList.toggle('is-favorited', favorited);
+        btn.title = favorited ? '取消收藏' : '收藏';
+    }
+}
+
+function toggleFavorite() {
+    if (favoriteLoading || !currentSongId) return;
+    favoriteLoading = true;
+    const action = isFavorited ? 'remove' : 'add';
+    apiPost('/player/favorite/toggle', { song_id: currentSongId, action }).then(data => {
+        favoriteLoading = false;
+        if (data?.success) {
+            updateFavoriteUI(!!data.data?.is_favorited);
+            showSnackbar(data.data?.is_favorited ? '已收藏' : '已取消收藏');
+        } else {
+            showSnackbar(data?.error || '操作失败');
+        }
+    }).catch(e => {
+        favoriteLoading = false;
+        showSnackbar('收藏操作失败');
+    });
 }

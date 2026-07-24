@@ -34,7 +34,7 @@ export class URLBuilder {
     id?: number;
     url?: string;
     type?: string;
-  }, options?: { forceMp3?: boolean; radioForceMp3?: boolean }): Promise<string> {
+  }, options?: { forceMp3?: boolean; radioForceMp3?: boolean; normalize?: boolean }): Promise<string> {
     const songUrl = song.url || '';
 
     if (!songUrl) {
@@ -61,6 +61,13 @@ export class URLBuilder {
     // 电台转码只对电台生效：服务端 serveRadio 只认 radio_transcode，其他类型忽略此参数。
     if (options?.radioForceMp3 && song.type === 'radio') {
       url += '&radio_transcode=mp3';
+    }
+    // 音量均衡：服务端 loudnorm 滤镜统一音量，需要转码（未指定 format 时服务端默认 mp3）。
+    if (options?.normalize) {
+      url += '&normalize=1';
+      if (!options?.forceMp3) {
+        url += '&format=mp3';
+      }
     }
 
     if (isLoopbackUrl(url)) {

@@ -18,6 +18,7 @@ import type {
   AIConfig,
 } from '../types';
 import { DEFAULT_MEMORY_MAX_RECORDS, normalizeMemoryMaxRecords } from '../memory/types';
+import { getDefaultVoiceCommands } from '../voicecmd/defaults';
 
 // ===== 存储键常量 =====
 const STORAGE_KEY_CONFIG = 'config';
@@ -49,6 +50,8 @@ function defaultPluginConfig(): PluginConfig {
     scheduled_tasks_enabled: false,
     force_mp3: false,
     radio_force_mp3: false,
+    volume_normalize: false,
+    song_transition_offset: 0,
     external_search_enabled: false,
     external_search_url: '',
     external_search_token: '',
@@ -335,9 +338,13 @@ export class ConfigManager {
 
   // ===== 语音口令 =====
 
-  /** 获取语音口令配置 */
+  /** 获取语音口令配置，存储为空时回退到默认口令 */
   async getVoiceCommands(): Promise<VoiceCommand[]> {
-    return this.load<VoiceCommand[]>(STORAGE_KEY_VOICE_COMMANDS, []);
+    const commands = await this.load<VoiceCommand[]>(STORAGE_KEY_VOICE_COMMANDS, []);
+    if (commands.length === 0) {
+      return getDefaultVoiceCommands();
+    }
+    return commands;
   }
 
   /** 保存语音口令配置 */

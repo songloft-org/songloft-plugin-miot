@@ -708,13 +708,14 @@ export class PlaylistManager {
       return false;
     }
 
-    // 读取是否强制 MP3 / 电台转码
+    // 读取是否强制 MP3 / 电台转码 / 音量均衡
     const config = await this.configManager.getConfig();
     const forceMp3 = !!config.force_mp3;
     const radioForceMp3 = !!config.radio_force_mp3;
+    const normalize = !!config.volume_normalize;
 
     // 构造播放URL
-    const songURL = await URLBuilder.buildSongURL(song, { forceMp3, radioForceMp3 });
+    const songURL = await URLBuilder.buildSongURL(song, { forceMp3, radioForceMp3, normalize });
     if (!songURL) {
       songloft.log.error('[PlaylistManager] Failed to build song URL: ' + song.title);
       return false;
@@ -739,7 +740,9 @@ export class PlaylistManager {
 
     // 如果歌曲时长有效，注册定时器播放下一首
     if (song.duration > 0) {
-      this.startCheckTimer(song.duration);
+      const offset = config.song_transition_offset || 0;
+      const adjustedDuration = Math.max(1, song.duration + offset);
+      this.startCheckTimer(adjustedDuration);
     } else {
       songloft.log.warn('[PlaylistManager] Song duration invalid, no auto-next timer: ' + song.duration);
     }
@@ -771,14 +774,22 @@ export class PlaylistManager {
 
     void (async () => {
       let forceMp3 = false;
+      let volumeNormalize = false;
       try {
         const config = await this.configManager.getConfig();
         forceMp3 = !!config.force_mp3;
+        volumeNormalize = !!config.volume_normalize;
       } catch {
         // 读配置失败按不强制处理，仍预热源格式
       }
       const separator = songUrl.includes('?') ? '&' : '?';
-      const prefetchPath = songUrl + separator + 'prefetch=1' + (forceMp3 ? '&format=mp3' : '');
+      let prefetchPath = songUrl + separator + 'prefetch=1' + (forceMp3 ? '&format=mp3' : '');
+      if (volumeNormalize) {
+        prefetchPath += '&normalize=1';
+        if (!forceMp3) {
+          prefetchPath += '&format=mp3';
+        }
+      }
       try {
         await callHostAPI('GET', prefetchPath, undefined, { timeoutMs: 5000 });
         songloft.log.info(`[PlaylistManager] Prefetch next song index=${nextIdx} title=${title}${forceMp3 ? ' (mp3)' : ''}`);

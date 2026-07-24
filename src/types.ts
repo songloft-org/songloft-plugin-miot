@@ -132,6 +132,8 @@ export interface PluginConfig {
   scheduled_tasks_enabled: boolean;
   force_mp3: boolean;
   radio_force_mp3: boolean; // 电台转码：部分音箱无法解码 AAC/HE-AAC 或不支持 HLS 电台，开启后电台流服务端实时转码为 MP3
+  volume_normalize: boolean; // 音量均衡：启用 EBU R128 loudnorm 滤镜统一歌曲音量（songloft-org/songloft#315）
+  song_transition_offset: number; // 切歌偏移（秒）：负数提前切歌，正数推后切歌（songloft-org/songloft#315）
   external_search_enabled: boolean; // 是否启用外部搜索（全局总开关）
   /** @deprecated 迁移到 external_search_sources[0]，仅读取用于兼容 */
   external_search_url: string;      // 外部搜索 API 地址

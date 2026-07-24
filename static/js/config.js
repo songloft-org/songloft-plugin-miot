@@ -1773,9 +1773,11 @@ window._deleteWebhook = function(id) {
 /** 口令类型显示名称映射 */
 const voiceCommandTypeLabels = {
     'play_playlist': '播放歌单',
+    'play_artist': '播放歌手',
     'play_song': '播放歌曲',
     'set_play_mode': '播放模式',
     'set_volume': '音量控制',
+    'favorite': '收藏歌曲',
     'next': '下一首',
     'previous': '上一首',
     'stop': '停止播放',
@@ -1784,9 +1786,11 @@ const voiceCommandTypeLabels = {
 /** 口令类型图标映射 */
 const voiceCommandTypeIcons = {
     'play_playlist': 'queue_music',
+    'play_artist': 'artist',
     'play_song': 'music_note',
     'set_play_mode': 'repeat',
     'set_volume': 'volume_up',
+    'favorite': 'favorite',
     'next': 'skip_next',
     'previous': 'skip_previous',
     'stop': 'stop',
@@ -1805,6 +1809,12 @@ const volumeParamLabels = {
     'absolute': '绝对音量',
     'up': '增大音量',
     'down': '减小音量',
+};
+
+/** 收藏参数显示名称 */
+const favoriteParamLabels = {
+    'add': '收藏',
+    'remove': '取消收藏',
 };
 
 /** 当前口令配置缓存 */
@@ -2064,6 +2074,8 @@ function renderVoiceCommands(commands) {
             paramLabel = playModeParamLabels[cmd.param] || cmd.param;
         } else if (cmd.type === 'set_volume' && cmd.param) {
             paramLabel = volumeParamLabels[cmd.param] || cmd.param;
+        } else if (cmd.type === 'favorite' && cmd.param) {
+            paramLabel = favoriteParamLabels[cmd.param] || cmd.param;
         }
 
         html += `<div class="voice-cmd-group">`;

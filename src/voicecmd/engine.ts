@@ -14,12 +14,15 @@ import { URLBuilder } from '../player/url_builder';
 import { AIAnalyzer } from './ai_analyzer';
 import { OnlineSearcher } from './online_searcher';
 import { updateDeviceStatusCache } from '../handlers/playlist';
+import { callHostAPI } from '../utils/http';
 import { MemoryService } from '../memory';
 import type { PlaylistManager } from '../player/manager';
 import type { SongLocation, ArtistSongLocation } from '../indexing/manager';
 import type { MemoryRecord } from '../memory';
 import type { OnlineSearchResult } from './online_searcher';
 import type { ConversationMessage, VoiceCommand, PlayMode, AIAnalysisResult, SearchPriority } from '../types';
+import { getDefaultVoiceCommands } from './defaults';
+export { getDefaultVoiceCommands } from './defaults';
 
 // ===== 类型定义 =====
 
@@ -80,9 +83,10 @@ const COMMAND_PRIORITY: Record<string, number> = {
   'play_playlist': 2,
   'set_play_mode': 3,
   'set_volume': 4,
-  'next': 5,
-  'previous': 6,
-  'stop': 7,
+  'favorite': 5,
+  'next': 6,
+  'previous': 7,
+  'stop': 8,
 };
 
 /** 跳字模糊匹配：关键词中间最多允许插入的字符数 */
@@ -97,7 +101,7 @@ const INDEX_READY_WAIT_MS = 5000;
 /** 本地独立歌曲 URL 健康检查超时（ms），利用 TTS 播报窗口期异步验证，不增加用户感知延迟。 */
 const URL_HEALTH_CHECK_TIMEOUT_MS = 3000;
 
-const FIXED_CONTROL_COMMAND_TYPES = new Set(['set_play_mode', 'set_volume', 'next', 'previous', 'stop']);
+const FIXED_CONTROL_COMMAND_TYPES = new Set(['set_play_mode', 'set_volume', 'favorite', 'next', 'previous', 'stop']);
 const SEARCH_COMMAND_TYPES = new Set(['play_song', 'play_playlist', 'play_artist']);
 const BUILTIN_STOP_KEYWORDS = ['暂停播放', '停止播放', '暂停音乐', '停一下', 'pause', 'stop', '暂停'];
 
@@ -147,24 +151,6 @@ function fuzzySubseqMatch(qRunes: string[], kwRunes: string[], maxGap: number): 
  * 获取默认语音口令配置（12 条）
  * 翻译自 Go 源码: plugins/songloft-plugin-xiaomi/config/manager.go GetDefaultVoiceCommands()
  */
-export function getDefaultVoiceCommands(): VoiceCommand[] {
-  return [
-    { type: 'play_playlist', keywords: ['播放歌单', '放歌单', '播放列表'], enabled: true },
-    { type: 'play_artist', keywords: ['播放歌手'], enabled: true },
-    { type: 'play_song', keywords: ['播放歌曲', '放歌曲', '我想听'], enabled: true },
-    { type: 'set_play_mode', keywords: ['随机播放', '随机模式'], param: 'random', enabled: true },
-    { type: 'set_play_mode', keywords: ['单曲循环', '循环播放这首'], param: 'single', enabled: true },
-    { type: 'set_play_mode', keywords: ['列表循环', '循环播放'], param: 'loop', enabled: true },
-    { type: 'set_play_mode', keywords: ['顺序播放'], param: 'order', enabled: true },
-    { type: 'set_volume', keywords: ['设置音量', '音量调到', '音量', '声音', '声音调到'], param: 'absolute', enabled: true },
-    { type: 'set_volume', keywords: ['大声一点', '声音大一点', '音量大一点'], param: 'up', enabled: true },
-    { type: 'set_volume', keywords: ['小声一点', '声音小一点', '音量小一点'], param: 'down', enabled: true },
-    { type: 'next', keywords: ['下一首', '切歌', '换一首', '下一曲'], enabled: true },
-    { type: 'previous', keywords: ['上一首', '上一曲'], enabled: true },
-    { type: 'stop', keywords: ['暂停播放', '停止播放', '暂停音乐', '停一下', 'pause', 'stop', '停止', '别播了', '关掉音乐', '关机', '关闭', '暂停'], enabled: true },
-  ];
-}
-
 // ===== VoiceEngine =====
 
 /**
@@ -788,6 +774,9 @@ export class VoiceEngine {
       case 'stop':
         await this.executeStop(accountId, deviceId);
         break;
+      case 'favorite':
+        await this.executeFavorite(accountId, deviceId, result.command.param || 'add');
+        break;
       default:
         songloft.log.warn(`[VoiceEngine] Unknown command type: ${result.command.type}`);
     }
@@ -863,6 +852,9 @@ export class VoiceEngine {
         break;
       case 'stop':
         await this.executeStop(accountId, deviceId);
+        break;
+      case 'favorite':
+        await this.executeFavorite(accountId, deviceId, result.params?.action || 'add');
         break;
       default:
         songloft.log.warn(`[VoiceEngine] [AI] Unknown action: ${result.action}`);
@@ -1597,6 +1589,44 @@ export class VoiceEngine {
     const pm = await this.playlistManagerMap.getOrCreate(accountId, deviceId);
     await pm.stop();
     songloft.log.info(`[VoiceEngine] Playback stopped`);
+  }
+
+  /**
+   * 执行收藏/取消收藏当前歌曲
+   */
+  private async executeFavorite(accountId: string, deviceId: string, action: string): Promise<void> {
+    const pm = this.playlistManagerMap.get(accountId, deviceId);
+    const song = pm?.getCurrentSong();
+    if (!song) {
+      songloft.log.warn('[VoiceEngine] Favorite: no song playing');
+      await this.minaService.textToSpeech(accountId, deviceId, '当前没有播放歌曲');
+      return;
+    }
+
+    try {
+      // 查找内置收藏歌单（name="收藏", type="normal"）
+      const playlists = await songloft.playlists.list();
+      const favPlaylist = playlists.find(p => p.name === '收藏' && p.type === 'normal');
+      if (!favPlaylist) {
+        songloft.log.warn('[VoiceEngine] Favorite: built-in favorites playlist not found');
+        await this.minaService.textToSpeech(accountId, deviceId, '未找到收藏歌单');
+        return;
+      }
+
+      const songTitle = song.title || '未知歌曲';
+      if (action === 'remove') {
+        await callHostAPI('DELETE', `/api/v1/playlists/${favPlaylist.id}/songs/${song.id}`);
+        songloft.log.info(`[VoiceEngine] Unfavorited: ${songTitle} (id=${song.id})`);
+        await this.minaService.textToSpeech(accountId, deviceId, `已取消收藏${songTitle}`);
+      } else {
+        await callHostAPI('POST', `/api/v1/playlists/${favPlaylist.id}/songs`, { song_ids: [song.id] });
+        songloft.log.info(`[VoiceEngine] Favorited: ${songTitle} (id=${song.id})`);
+        await this.minaService.textToSpeech(accountId, deviceId, `已收藏${songTitle}`);
+      }
+    } catch (e) {
+      songloft.log.error(`[VoiceEngine] Favorite failed: ${String(e)}`);
+      await this.minaService.textToSpeech(accountId, deviceId, '收藏操作失败');
+    }
   }
 
   /**

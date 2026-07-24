@@ -7,6 +7,7 @@ import { PlaylistManagerMap, isTempPlaylistId } from '../player/manager';
 import type { PlaylistManager } from '../player/manager';
 import { MinaService } from '../service/service';
 import { ConfigManager } from '../config/manager';
+import { callHostAPI } from '../utils/http';
 import type { PlayMode, PlayState } from '../types';
 
 /** 解析请求体（兼容 Uint8Array 和 string） */
@@ -532,6 +533,55 @@ export function registerPlaylistHandlers(
 
       const data = await resolvePlayerStatus(playlistManagerMap, minaService, account_id, device_id);
       return jsonResponse({ success: true, data });
+    } catch (e: any) {
+      return jsonResponse({ success: false, error: e.message || String(e) });
+    }
+  });
+
+  // GET /player/favorite/status - 查询歌曲是否已收藏
+  router.get('/player/favorite/status', async (req: HTTPRequest) => {
+    try {
+      const query = parseQuery(req.query);
+      const songId = Number(query.song_id);
+      if (!songId || isNaN(songId)) {
+        return jsonResponse({ success: false, error: 'song_id is required' });
+      }
+      const playlists = await songloft.playlists.list();
+      const favPlaylist = playlists.find(p => p.name === '收藏' && p.type === 'normal');
+      if (!favPlaylist) {
+        return jsonResponse({ success: true, data: { is_favorited: false } });
+      }
+      const songs = await songloft.playlists.getSongs(favPlaylist.id, { limit: 100000 });
+      const isFavorited = songs.some((s: any) => s.id === songId);
+      return jsonResponse({ success: true, data: { is_favorited: isFavorited, playlist_id: favPlaylist.id } });
+    } catch (e: any) {
+      return jsonResponse({ success: false, error: e.message || String(e) });
+    }
+  });
+
+  // POST /player/favorite/toggle - 收藏/取消收藏歌曲
+  router.post('/player/favorite/toggle', async (req: HTTPRequest) => {
+    try {
+      const body = parseBody(req);
+      const songId = Number(body.song_id);
+      const action = body.action; // 'add' | 'remove'
+      if (!songId || isNaN(songId)) {
+        return jsonResponse({ success: false, error: 'song_id is required' });
+      }
+      if (action !== 'add' && action !== 'remove') {
+        return jsonResponse({ success: false, error: 'action must be "add" or "remove"' });
+      }
+      const playlists = await songloft.playlists.list();
+      const favPlaylist = playlists.find(p => p.name === '收藏' && p.type === 'normal');
+      if (!favPlaylist) {
+        return jsonResponse({ success: false, error: '未找到收藏歌单' });
+      }
+      if (action === 'add') {
+        await callHostAPI('POST', `/api/v1/playlists/${favPlaylist.id}/songs`, { song_ids: [songId] });
+      } else {
+        await callHostAPI('DELETE', `/api/v1/playlists/${favPlaylist.id}/songs/${songId}`);
+      }
+      return jsonResponse({ success: true, data: { is_favorited: action === 'add' } });
     } catch (e: any) {
       return jsonResponse({ success: false, error: e.message || String(e) });
     }
