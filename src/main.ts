@@ -87,12 +87,21 @@ async function onInit(): Promise<void> {
   const executor = new TaskExecutor(configManager, accountManager, minaService, playlistManagerMap, indexingManager, conversationMonitor, groupCoordinator);
   scheduler = new Scheduler(configManager, executor);
 
-  // 如果配置中没有语音口令配置，写入默认配置
+  // 如果配置中没有语音口令配置，写入默认配置；已有配置时补充新增的默认口令类型
   const existingCommands = await configManager.getVoiceCommands();
   if (!existingCommands || existingCommands.length === 0) {
     const defaultCommands = getDefaultVoiceCommands();
     await configManager.saveVoiceCommands(defaultCommands);
     songloft.log.info(`[VoiceCmd] Initialized ${defaultCommands.length} default voice commands`);
+  } else {
+    const defaultCommands = getDefaultVoiceCommands();
+    const existingTypes = new Set(existingCommands.map(c => c.type + (c.param || '')));
+    const missing = defaultCommands.filter(c => !existingTypes.has(c.type + (c.param || '')));
+    if (missing.length > 0) {
+      const merged = [...existingCommands, ...missing];
+      await configManager.saveVoiceCommands(merged);
+      songloft.log.info(`[VoiceCmd] Merged ${missing.length} new default voice commands: ${missing.map(c => c.type).join(', ')}`);
+    }
   }
 
   // 注册所有路由
@@ -118,7 +127,11 @@ async function onInit(): Promise<void> {
   });
   // 异步刷新索引，不阻塞插件初始化
   setTimeout(() => {
-    indexingManager.refresh().catch(e => {
+    indexingManager.refresh().then(() => {
+      playlistManagerMap.restoreTempPlaylists(indexingManager).catch(e => {
+        songloft.log.warn('restoreTempPlaylists failed: ' + String(e));
+      });
+    }).catch(e => {
       songloft.log.error('indexingManager.refresh failed: ' + String(e));
     });
   }, 100);

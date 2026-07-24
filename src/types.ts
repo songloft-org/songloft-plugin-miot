@@ -38,6 +38,7 @@ export interface DeviceConfig {
   playlist_id: number;
   current_song_index: number;
   last_selected_at: string;
+  temp_artist?: string;      // 临时歌手歌单的搜索词，重启后用于恢复
 }
 
 // ===== Token信息 =====
@@ -238,7 +239,7 @@ export interface WebhookConfig {
 
 /** 语音口令配置 */
 export interface VoiceCommand {
-  type: string;            // "play_playlist" | "play_song" | "set_play_mode" | "set_volume" | "next" | "previous" | "stop"
+  type: string;            // "play_playlist" | "play_artist" | "play_song" | "set_play_mode" | "set_volume" | "next" | "previous" | "stop"
   keywords: string[];
   param?: string;          // 附加参数（播放模式值、音量方向等）
   enabled: boolean;
@@ -312,6 +313,7 @@ export interface PlayerStatus {
   state: PlayState;
   play_mode: PlayMode;
   playlist_id: number;
+  playlist_name?: string;
   current_index: number;
   current_song?: { id: number; title: string; artist: string; cover_url?: string; lyric_url?: string };
   position: number;

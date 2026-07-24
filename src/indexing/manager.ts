@@ -21,6 +21,14 @@ export interface IndexedSong {
   albumPinyin: string;
 }
 
+/** 按歌手搜索的歌曲位置信息 */
+export interface ArtistSongLocation {
+  songId: number;
+  playlistId: number;
+  songTitle: string;
+  artist: string;
+}
+
 /** 歌曲在歌单中的位置信息（用于语音口令播放歌曲） */
 export interface SongLocation {
   songId?: number;
@@ -832,6 +840,38 @@ export class IndexingManager {
       songloft.log.info(`[IndexingManager] findSongByName done (${elapsedMs}ms) → no match (bestDirectScore=${bestDirectScore.toFixed(1)})`);
     }
     return bestDirectLoc;
+  }
+
+  /**
+   * 按歌手名称模糊匹配，返回所有歌单中该歌手的歌曲位置列表。
+   * 跨歌单去重（同一首歌只返回一次），用于"播放歌手XX的歌"语音口令。
+   */
+  findSongsByArtist(artistName: string): ArtistSongLocation[] {
+    if (!artistName || !artistName.trim()) return [];
+
+    const queryLower = normalizeForMatch(artistName);
+    if (!queryLower) return [];
+
+    const results: ArtistSongLocation[] = [];
+    const seen = new Set<number>();
+
+    for (const [plId, songs] of this.playlistSongsCache) {
+      for (const song of songs) {
+        if (seen.has(song.id)) continue;
+        const score = fuzzyScoreLower(queryLower, song.artistLower);
+        if (score >= 50) {
+          results.push({
+            songId: song.id,
+            playlistId: plId,
+            songTitle: song.title,
+            artist: song.artist,
+          });
+          seen.add(song.id);
+        }
+      }
+    }
+
+    return results;
   }
 
   /**

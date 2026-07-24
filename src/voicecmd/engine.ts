@@ -16,7 +16,7 @@ import { OnlineSearcher } from './online_searcher';
 import { updateDeviceStatusCache } from '../handlers/playlist';
 import { MemoryService } from '../memory';
 import type { PlaylistManager } from '../player/manager';
-import type { SongLocation } from '../indexing/manager';
+import type { SongLocation, ArtistSongLocation } from '../indexing/manager';
 import type { MemoryRecord } from '../memory';
 import type { OnlineSearchResult } from './online_searcher';
 import type { ConversationMessage, VoiceCommand, PlayMode, AIAnalysisResult, SearchPriority } from '../types';
@@ -75,6 +75,7 @@ export interface CommandTestResult {
 
 /** 口令类型优先级（数字越小优先级越高） */
 const COMMAND_PRIORITY: Record<string, number> = {
+  'play_artist': 1,
   'play_song': 1,
   'play_playlist': 2,
   'set_play_mode': 3,
@@ -97,7 +98,7 @@ const INDEX_READY_WAIT_MS = 5000;
 const URL_HEALTH_CHECK_TIMEOUT_MS = 3000;
 
 const FIXED_CONTROL_COMMAND_TYPES = new Set(['set_play_mode', 'set_volume', 'next', 'previous', 'stop']);
-const SEARCH_COMMAND_TYPES = new Set(['play_song', 'play_playlist']);
+const SEARCH_COMMAND_TYPES = new Set(['play_song', 'play_playlist', 'play_artist']);
 const BUILTIN_STOP_KEYWORDS = ['暂停播放', '停止播放', '暂停音乐', '停一下', 'pause', 'stop', '暂停'];
 
 /**
@@ -149,6 +150,7 @@ function fuzzySubseqMatch(qRunes: string[], kwRunes: string[], maxGap: number): 
 export function getDefaultVoiceCommands(): VoiceCommand[] {
   return [
     { type: 'play_playlist', keywords: ['播放歌单', '放歌单', '播放列表'], enabled: true },
+    { type: 'play_artist', keywords: ['播放歌手'], enabled: true },
     { type: 'play_song', keywords: ['播放歌曲', '放歌曲', '我想听'], enabled: true },
     { type: 'set_play_mode', keywords: ['随机播放', '随机模式'], param: 'random', enabled: true },
     { type: 'set_play_mode', keywords: ['单曲循环', '循环播放这首'], param: 'single', enabled: true },
@@ -276,7 +278,7 @@ export class VoiceEngine {
 
       // 执行口令
       const playedSong = await this.executeCommand(result, accountId, msg.device_id);
-      if (memoryEnabled && result.command.type === 'play_song' && playedSong) {
+      if (memoryEnabled && (result.command.type === 'play_song' || result.command.type === 'play_artist') && playedSong) {
         this.queueMemorySuccess(query, playedSong);
       }
       return;
@@ -294,7 +296,7 @@ export class VoiceEngine {
         if (aiResult.confidence !== 'low' && aiResult.action !== 'unknown') {
           songloft.log.info(`[VoiceEngine] [AI] → Executing fallback (high confidence, action=${aiResult.action})`);
           const playedSong = await this.executeAIResult(aiResult, accountId, msg.device_id);
-          if (memoryEnabled && aiResult.action === 'play_song' && playedSong) {
+          if (memoryEnabled && (aiResult.action === 'play_song' || aiResult.action === 'play_artist') && playedSong) {
             this.queueMemorySuccess(query, playedSong);
           }
           return;
@@ -589,6 +591,20 @@ export class VoiceEngine {
       }
       return { kind: 'song', found: false, detail: `本地索引未命中「${term}」，将尝试独立歌曲/外部搜索` };
     }
+    if (type === 'play_artist') {
+      const cleanArtist = this.stripArtistSuffix(argument || '');
+      if (!cleanArtist) {
+        return { kind: 'song', found: false, detail: '（无歌手名）' };
+      }
+      if (!(await this.indexingManager.waitForReady(INDEX_READY_WAIT_MS))) {
+        return { kind: 'song', found: false, detail: '索引未就绪，无法预览搜索结果' };
+      }
+      const locs = this.indexingManager.findSongsByArtist(cleanArtist);
+      if (locs.length > 0) {
+        return { kind: 'song', found: true, detail: `歌手「${cleanArtist}」共 ${locs.length} 首歌曲（随机播放）` };
+      }
+      return { kind: 'song', found: false, detail: `未找到歌手「${cleanArtist}」的歌曲` };
+    }
     if (type === 'play_playlist') {
       if (!(argument || '').trim()) {
         return { kind: 'playlist', found: false, detail: '（无歌单名，将使用默认歌单/恢复播放）' };
@@ -616,6 +632,9 @@ export class VoiceEngine {
         return this.previewSearch('play_song', name, artist);
       }
       return this.previewSearch('play_song', name || artist);
+    }
+    if (aiResult.action === 'play_artist') {
+      return this.previewSearch('play_artist', aiResult.params?.artist || '');
     }
     if (aiResult.action === 'play_playlist') {
       return this.previewSearch('play_playlist', aiResult.params?.playlist || '');
@@ -751,6 +770,9 @@ export class VoiceEngine {
       case 'play_song':
         playedSong = await this.executePlaySong(result.argument, accountId, deviceId);
         break;
+      case 'play_artist':
+        playedSong = await this.executePlayArtist(result.argument, accountId, deviceId);
+        break;
       case 'set_play_mode':
         await this.executeSetPlayMode(accountId, deviceId, result.command.param || result.argument);
         break;
@@ -798,6 +820,15 @@ export class VoiceEngine {
         } else {
           playedSong = await this.executePlaySong(name || artist, accountId, deviceId);
         }
+        break;
+      }
+      case 'play_artist': {
+        const artist = result.params.artist || result.params.name || '';
+        if (!artist) {
+          songloft.log.warn('[VoiceEngine] [AI] play_artist: no artist name');
+          return null;
+        }
+        playedSong = await this.executePlayArtist(artist, accountId, deviceId);
         break;
       }
       case 'play_playlist': {
@@ -1034,6 +1065,93 @@ export class VoiceEngine {
     songloft.log.warn(`[VoiceEngine] Song not found or failed to play: ${songName}`);
     await this.minaService.textToSpeech(accountId, deviceId, `未找到歌曲：${songName}`);
     return null;
+  }
+
+  private stripArtistSuffix(argument: string): string {
+    return argument
+      .replace(/的?(歌曲|歌儿|歌|音乐|曲子|曲|所有歌|全部歌)\s*$/u, '')
+      .trim();
+  }
+
+  private async executePlayArtist(artistName: string, accountId: string, deviceId: string): Promise<PlayedSong | null> {
+    this.cancelPendingResume();
+    const pm = await this.playlistManagerMap.getOrCreate(accountId, deviceId);
+
+    const cleanArtist = this.stripArtistSuffix(artistName);
+    if (!cleanArtist) {
+      songloft.log.warn('[VoiceEngine] play_artist: empty artist name after cleanup');
+      return null;
+    }
+
+    pm.prepareForNewPlayback();
+
+    try {
+      await this.minaService.stopPlay(accountId, deviceId);
+    } catch (e) {
+      songloft.log.warn('[VoiceEngine] Failed to interrupt broadcast: ' + String(e));
+    }
+
+    if (!(await this.indexingManager.waitForReady(INDEX_READY_WAIT_MS))) {
+      songloft.log.warn('[VoiceEngine] Index not ready for play_artist');
+      await this.minaService.textToSpeech(accountId, deviceId, `索引未就绪，无法播放`);
+      return null;
+    }
+
+    const artistLocs = this.indexingManager.findSongsByArtist(cleanArtist);
+    if (artistLocs.length === 0) {
+      songloft.log.warn(`[VoiceEngine] No songs found for artist: ${cleanArtist}`);
+      await this.minaService.textToSpeech(accountId, deviceId, `未找到歌手${cleanArtist}的歌曲`);
+      return null;
+    }
+
+    songloft.log.info(`[VoiceEngine] play_artist: found ${artistLocs.length} songs for "${cleanArtist}"`);
+
+    const byPlaylist = new Map<number, Set<number>>();
+    for (const loc of artistLocs) {
+      let ids = byPlaylist.get(loc.playlistId);
+      if (!ids) {
+        ids = new Set();
+        byPlaylist.set(loc.playlistId, ids);
+      }
+      ids.add(loc.songId);
+    }
+
+    const fullSongs: any[] = [];
+    const seenIds = new Set<number>();
+    for (const [plId, songIds] of byPlaylist) {
+      try {
+        const plSongs = await songloft.playlists.getSongs(plId, { limit: 100000 });
+        if (!plSongs || !Array.isArray(plSongs)) continue;
+        for (const s of plSongs) {
+          if (songIds.has(s.id) && !seenIds.has(s.id)) {
+            seenIds.add(s.id);
+            fullSongs.push(s);
+          }
+        }
+      } catch (e) {
+        songloft.log.warn(`[VoiceEngine] play_artist: failed to load playlist ${plId}: ${String(e)}`);
+      }
+    }
+
+    if (fullSongs.length === 0) {
+      songloft.log.warn(`[VoiceEngine] play_artist: no playable songs found for "${cleanArtist}"`);
+      await this.minaService.textToSpeech(accountId, deviceId, `加载歌手${cleanArtist}的歌曲失败`);
+      return null;
+    }
+
+    const startIndex = Math.floor(Math.random() * fullSongs.length);
+    const ok = await pm.playWithSongs(fullSongs as any, startIndex, 'random', '歌手: ' + cleanArtist, cleanArtist);
+    if (!ok) {
+      songloft.log.error(`[VoiceEngine] play_artist failed for "${cleanArtist}"`);
+      return null;
+    }
+
+    songloft.log.info(`[VoiceEngine] play_artist success: "${cleanArtist}" ${fullSongs.length} songs, start=${startIndex}`);
+    const currentSong = pm.getCurrentSong();
+    return {
+      songName: currentSong?.title || cleanArtist,
+      artist: currentSong?.artist || cleanArtist,
+    };
   }
 
   private normalizeSearchPriority(priority: unknown): SearchPriority {

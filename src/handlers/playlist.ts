@@ -3,7 +3,7 @@
 
 import { jsonResponse, parseQuery } from '@songloft/plugin-sdk';
 import type { Router, HTTPRequest } from '@songloft/plugin-sdk';
-import { PlaylistManagerMap } from '../player/manager';
+import { PlaylistManagerMap, isTempPlaylistId } from '../player/manager';
 import type { PlaylistManager } from '../player/manager';
 import { MinaService } from '../service/service';
 import { ConfigManager } from '../config/manager';
@@ -249,7 +249,12 @@ export function registerPlaylistHandlers(
         return jsonResponse({ success: true, data: [], message: '服务器地址为本地回环地址（localhost/127.0.0.1），MIoT 智能音箱无法访问。请在「设置」中修改为局域网 IP 地址。' });
       }
       const playlists = await songloft.playlists.list();
-      return jsonResponse({ success: true, data: playlists });
+      const tempPlaylists = playlistManagerMap.getTempPlaylists();
+      const allPlaylists = [
+        ...(playlists || []),
+        ...tempPlaylists.map(tp => ({ id: tp.id, name: tp.name, song_count: tp.songCount })),
+      ];
+      return jsonResponse({ success: true, data: allPlaylists });
     } catch (e: any) {
       return jsonResponse({ success: false, error: e.message || String(e) });
     }
@@ -261,6 +266,13 @@ export function registerPlaylistHandlers(
       const playlistId = Number(params.id);
       if (!playlistId || isNaN(playlistId)) {
         return jsonResponse({ success: false, error: 'invalid playlist id' });
+      }
+      if (isTempPlaylistId(playlistId)) {
+        const manager = playlistManagerMap.findByPlaylistId(playlistId);
+        if (!manager) {
+          return jsonResponse({ success: true, data: [] });
+        }
+        return jsonResponse({ success: true, data: manager.getSongs() });
       }
       const songs = await songloft.playlists.getSongs(playlistId, { limit: 100000 });
       return jsonResponse({ success: true, data: songs });
@@ -395,9 +407,21 @@ export function registerPlaylistHandlers(
       }
 
       // 处于 stopped 状态或 resumePlayback 失败，重新播放
-      const ok = await manager.play(status.playlist_id, status.current_index, status.play_mode as PlayMode);
-      if (!ok) {
-        return jsonResponse({ success: false, error: 'failed to resume playback' });
+      if (isTempPlaylistId(status.playlist_id)) {
+        // 临时歌单：内存中歌曲列表仍在，直接重放
+        const songs = manager.getSongs();
+        if (!songs || songs.length === 0) {
+          return jsonResponse({ success: false, error: 'temp playlist expired, please re-issue voice command' });
+        }
+        const ok = await manager.playWithSongs(songs as any, status.current_index, status.play_mode as PlayMode, status.playlist_name);
+        if (!ok) {
+          return jsonResponse({ success: false, error: 'failed to resume temp playlist' });
+        }
+      } else {
+        const ok = await manager.play(status.playlist_id, status.current_index, status.play_mode as PlayMode);
+        if (!ok) {
+          return jsonResponse({ success: false, error: 'failed to resume playback' });
+        }
       }
 
       updateDeviceStatusCache(account_id, device_id, { state: 'playing', position: 0 });

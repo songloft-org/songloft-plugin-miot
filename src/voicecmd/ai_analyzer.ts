@@ -10,6 +10,7 @@ const AI_SYSTEM_PROMPT = `从指令中提取出操作和音乐信息，返回JSO
 
 行为和参数（只允许使用以下参数，不要自定义新字段）：
 - play_song: name(歌曲名), artist(歌手名)
+- play_artist: artist(歌手名)
 - play_playlist: playlist(歌单名)
 - set_play_mode: mode=order|random|single|loop(播放模式)
 - next/previous/stop/unknown
@@ -21,10 +22,14 @@ const AI_SYSTEM_PROMPT = `从指令中提取出操作和音乐信息，返回JSO
 4. "来一首"等同于"播放"，划入play_song
 5. 明确high模糊low其余medium
 6. rawText去语气词、口癖词
+7. "播放XX的歌/歌曲/音乐"或"来几首XX"中，name为泛称（歌/歌曲/音乐/曲/曲子）或无name时→action=play_artist,artist=XX。name为具体歌名时仍为play_song
 
 示例：
 周杰伦的晴天→{"action":"play_song","params":{"name":"晴天","artist":"周杰伦"},"confidence":"high","rawText":"周杰伦 晴天"}
 邓紫棋翻唱周杰伦的龙卷风→{"action":"play_song","params":{"name":"龙卷风","artist":"邓紫棋"},"confidence":"high","rawText":"龙卷风 邓紫棋"}
+播放周杰伦的歌→{"action":"play_artist","params":{"artist":"周杰伦"},"confidence":"high","rawText":"周杰伦"}
+我想听林俊杰的歌曲→{"action":"play_artist","params":{"artist":"林俊杰"},"confidence":"high","rawText":"林俊杰"}
+来几首邓紫棋→{"action":"play_artist","params":{"artist":"邓紫棋"},"confidence":"high","rawText":"邓紫棋"}
 随机播放→{"action":"set_play_mode","params":{"mode":"random"},"confidence":"high","rawText":"随机播放"}`;
 
 /**
