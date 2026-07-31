@@ -4,3 +4,4 @@ dist/
 .DS_Store
 .mimusic-dev.json
 .songloft-dev.json
+.idea

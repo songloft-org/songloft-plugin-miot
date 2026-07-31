@@ -112,7 +112,7 @@ async function onInit(): Promise<void> {
   registerConfigHandlers(router, configManager, conversationMonitor, scheduler, voiceEngine, memoryService);
   registerConversationHandlers(router, conversationMonitor, configManager);
   registerScheduleHandlers(router, scheduler, configManager);
-  registerVoiceCommandHandlers(router, configManager, voiceEngine);
+  registerVoiceCommandHandlers(router, configManager, accountManager, voiceEngine);
   registerIndexingHandlers(router, indexingManager);
   registerMemoryHandlers(router, memoryService, configManager);
   registerLyricHandlers(router);
