@@ -423,18 +423,9 @@ export function registerConfigHandlers(
       icon?: string;
     }
 
-    // 内置候选：旧版提供方 / 启动顺序竞态 / miot 尚未收到注册时兜底
-    const knownProviders: ProviderCandidate[] = [
-      { entryPath: 'ytdlp', name: 'yt-dlp', searchPath: '/api/search/topone' },
-      { entryPath: 'bili', name: '哔哩音乐', searchPath: '/api/search/topone' },
-      { entryPath: 'subsonic', name: 'Subsonic', searchPath: '/api/search/topone' },
-    ];
-
-    // 按 entryPath 合并去重：先内置，再用注册表覆盖（注册表优先）
+    // 候选来源：其他插件经 comm 动态注册的搜索提供方（仅真实安装的才展示）
     const byEntryPath = new Map<string, ProviderCandidate>();
-    for (const p of knownProviders) {
-      byEntryPath.set(p.entryPath, p);
-    }
+
     try {
       const registered = await configManager.getSearchProviders();
       for (const r of registered) {
@@ -462,17 +453,20 @@ export function registerConfigHandlers(
       songloft.log.warn('[config] Failed to fetch plugin list: ' + String(e));
     }
 
-    const providers = Array.from(byEntryPath.values()).map(p => {
-      const found = installedPlugins.find(ip => ip.entry_path === p.entryPath);
-      return {
-        id: p.entryPath,
-        name: p.name,
-        url: `/api/v1/jsplugin/${p.entryPath}${p.searchPath}`,
-        installed: !!found,
-        active: found?.status === 'active',
-        ...(p.icon ? { icon: p.icon } : {}),
-      };
-    });
+    // 只返回真实安装（且已启用）的搜索提供方，过滤未安装的内置兜底项
+    const providers = Array.from(byEntryPath.values())
+      .map((p) => {
+        const found = installedPlugins.find((ip) => ip.entry_path === p.entryPath);
+        return {
+          id: p.entryPath,
+          name: p.name,
+          url: `/api/v1/jsplugin/${p.entryPath}${p.searchPath}`,
+          installed: !!found,
+          active: found?.status === 'active',
+          ...(p.icon ? { icon: p.icon } : {}),
+        };
+      })
+      .filter((p) => p.installed && p.active);
 
     return jsonResponse({ providers });
   });
