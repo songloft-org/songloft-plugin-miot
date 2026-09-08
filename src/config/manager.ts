@@ -167,8 +167,22 @@ export class ConfigManager {
     const merged = { ...defaultPluginConfig(), ...stored };
     merged.voice_memory_enabled = stored.voice_memory_enabled !== false;
     merged.voice_memory_max_records = normalizeMemoryMaxRecords(stored.voice_memory_max_records);
-    // 惰性迁移：把旧单值外部搜索源归一化为源列表（不写盘，每次读计算）
+    // 旧单值外部搜索源迁移：sources 为空时合成为 legacy 源
     merged.external_search_sources = this.normalizeSearchSources(merged);
+    // 旧单值字段（external_search_url/token，已 @deprecated）一次性别名迁移落盘：
+    // 只要存储里还残留旧字段就清空并写回，否则配置页删除「已迁移的搜索源」后，
+    // 下一次 getConfig 又会从残留旧字段重新合成出该源——表现为删了还冒出来、
+    // 只剩一个源时「删不掉必须保留一个」。合成源写入数组后成为真实条目，可正常删除。
+    if ((merged.external_search_url || '').trim()) {
+      const next: Partial<PluginConfig> = {
+        ...stored,
+        external_search_url: '',
+        external_search_token: '',
+        external_search_sources: merged.external_search_sources,
+      };
+      await this.save(STORAGE_KEY_CONFIG, next);
+      this.configCache = Promise.resolve(next);
+    }
     return merged;
   }
 
