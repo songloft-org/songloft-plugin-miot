@@ -144,12 +144,46 @@ function providerKey(provider: { id?: string; entry_path?: string; entryPath?: s
   return String(provider.id || provider.entry_path || provider.entryPath || provider.name);
 }
 
-function fillSourceFromProvider(providerId: string): void {
+const showManualAdd = ref(false);
+
+/**
+ * 快速选择已安装搜索源：选择即添加/启用，直达可用，无需再手动填表单点添加。
+ * 幂等——按 URL 匹配已配置源：已存在则确保启用，不存在则新增一条启用状态的源。
+ */
+async function applyProvider(providerId: string): Promise<void> {
+  if (!providerId) return;
   const provider = state.searchProviders.find((item) => providerKey(item) === providerId);
   if (!provider) return;
-  selectedProviderId.value = providerId;
-  newSourceName.value = provider.name;
-  newSourceUrl.value = provider.url || provider.search_path || provider.searchPath || '/api/search/topone';
+  const url = (provider.url || '/api/search/topone').trim();
+  const displayName = provider.name || url;
+  const existing = state.config.external_search_sources.find((s) => (s.url || '').trim() === url);
+  try {
+    if (existing) {
+      if (!existing.enabled) {
+        const sources = state.config.external_search_sources.map((s) =>
+          s.id === existing.id ? { ...s, enabled: true } : s,
+        );
+        if (sourceDrafts[existing.id]) sourceDrafts[existing.id].enabled = true;
+        await saveConfig({ external_search_sources: sources });
+        notify(`已启用搜索源「${existing.name || displayName}」`, 'success');
+      } else {
+        notify(`搜索源「${existing.name || displayName}」已在配置中`, 'success');
+      }
+    } else {
+      const source: SearchSource = {
+        id: `src_${Date.now()}`,
+        name: displayName,
+        url,
+        token: '',
+        enabled: true,
+      };
+      const sources = [...state.config.external_search_sources, source];
+      sourceDrafts[source.id] = { ...source };
+      await saveConfig({ external_search_sources: sources });
+      notify(`已添加搜索源「${displayName}」`, 'success');
+    }
+  } catch { /* saveConfig presents the error */ }
+  selectedProviderId.value = '';
 }
 
 const selectableSearchProviders = computed(() => state.searchProviders);
@@ -166,7 +200,7 @@ syncSourceDrafts();
 onMounted(async () => {
   await Promise.all([loadVoiceData(), loadSearchProviders()]);
   syncSourceDrafts();
-  if (selectableSearchProviders.value.length) fillSourceFromProvider(providerKey(selectableSearchProviders.value[0]));
+
   if (state.config.conversation_monitor_enabled) connectConversation();
 });
 onUnmounted(() => {
@@ -453,7 +487,10 @@ async function testAI(): Promise<void> {
 }
 
 async function addSource(): Promise<void> {
-  if (!newSourceUrl.value.trim()) return;
+  if (!newSourceUrl.value.trim()) {
+    notify('请填写接口 URL', 'warning');
+    return;
+  }
   const source: SearchSource = {
     id: `src_${Date.now()}`,
     name: newSourceName.value.trim() || newSourceUrl.value.trim(),
@@ -467,12 +504,16 @@ async function addSource(): Promise<void> {
   newSourceUrl.value = '';
   newSourceToken.value = '';
   await saveConfig({ external_search_sources: sources });
+  showManualAdd.value = false;
+  notify(`已添加搜索源「${source.name}」`, 'success');
 }
 
 async function removeSource(id: string): Promise<void> {
+  const removed = state.config.external_search_sources.find((source) => source.id === id);
   const sources = state.config.external_search_sources.filter((source) => source.id !== id);
   delete sourceDrafts[id];
   await saveConfig({ external_search_sources: sources });
+  if (removed) notify(`已移除搜索源「${removed.name || removed.url}」`, 'success');
 }
 
 async function saveSources(): Promise<void> {
@@ -513,6 +554,9 @@ async function refreshSearchProviders(): Promise<void> {
   if (selectedProviderId.value && !selectableSearchProviders.value.some((provider) => providerKey(provider) === selectedProviderId.value)) {
     selectedProviderId.value = '';
   }
+  notify(state.searchProviders.length
+    ? `已刷新，发现 ${state.searchProviders.length} 个已安装搜索源`
+    : '已刷新，暂未发现已安装搜索源', 'success');
 }
 
 function memoryAliases(entity: MemoryEntity): Array<{ id?: string; query?: string; alias?: string }> {
@@ -671,19 +715,18 @@ async function deleteMemoryRecord(id?: string): Promise<void> {
         <div class="field">
           <label class="field-label">快速选择</label>
           <SlSelect
-            v-model="selectedProviderId"
+            :model-value="selectedProviderId"
             :options="searchProviderOptions"
             allow-empty
-            placeholder="选择已安装搜索源"
+            placeholder="选择后立即添加/启用"
             aria-label="选择已安装搜索源"
-            @update:model-value="fillSourceFromProvider($event)"
+            @update:model-value="applyProvider"
           />
         </div>
         <div class="field setting-field-control">
           <label class="field-label">操作</label>
           <div class="field-actions field-actions-tight">
             <SlButton variant="outlined" label="刷新" icon="refresh" @click="refreshSearchProviders" />
-            <SlButton variant="outlined" label="填入" icon="download" :disabled="!selectedProviderId" @click="fillSourceFromProvider(selectedProviderId)" />
           </div>
         </div>
       </div>
@@ -698,7 +741,12 @@ async function deleteMemoryRecord(id?: string): Promise<void> {
         <SettingRow title="启用此源"><SlSwitch v-model="sourceDrafts[source.id].enabled" /></SettingRow>
         <div class="field-actions"><SlButton variant="text" label="移除" icon="delete" @click="removeSource(source.id)" /></div>
       </div>
-      <div class="sub-panel sub-panel-inset"><div class="field-grid"><div class="field"><SlInput v-model="newSourceName" placeholder="新源名称" /></div><div class="field"><SlInput v-model="newSourceUrl" placeholder="接口 URL" /></div></div><SlInput v-model="newSourceToken" type="password" placeholder="Token（可选）" /><div class="field-actions"><SlButton variant="outlined" label="添加搜索源" icon="add" @click="addSource" /><SlButton variant="filled" label="保存全部" icon="save" @click="saveSources" /></div></div>
+      <div v-if="!state.config.external_search_sources.length" class="empty-state">暂无已配置源，从上方「快速选择」添加，或手动添加</div>
+      <div class="field-actions">
+        <SlButton variant="outlined" label="手动添加搜索源" icon="add" @click="showManualAdd = !showManualAdd" />
+        <SlButton variant="filled" label="保存全部" icon="save" @click="saveSources" />
+      </div>
+      <div v-if="showManualAdd" class="sub-panel sub-panel-inset"><div class="field-grid"><div class="field"><SlInput v-model="newSourceName" placeholder="新源名称" /></div><div class="field"><SlInput v-model="newSourceUrl" placeholder="接口 URL" /></div></div><SlInput v-model="newSourceToken" type="password" placeholder="Token（可选）" /><div class="field-actions"><SlButton variant="outlined" label="添加" icon="add" @click="addSource" /><SlButton variant="text" label="取消" @click="showManualAdd = false" /></div></div>
       <div class="field"><label class="field-label">接口测试</label><div class="inline-fields"><SlInput v-model="sourceTestQuery" placeholder="输入测试关键字" @submit="testSource" /><SlButton variant="outlined" label="测试" @click="testSource" /></div><pre v-if="sourceTestResult" class="result-pre">{{ sourceTestResult }}</pre></div>
     </div>
   </SectionCard>
