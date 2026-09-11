@@ -115,6 +115,9 @@ export const state = reactive({
   memoryUnclassified: [] as Array<Record<string, unknown>>,
   memoryAmbiguous: [] as Array<Record<string, unknown>>,
   searchProviders: [] as SearchProvider[],
+  aiModels: [] as Array<{ id: string; ownedBy?: string }>,
+  aiModelLoading: false,
+  aiModelError: '' as string,
   snackbar: null as SnackbarState | null,
   confirm: {
     open: false,
@@ -806,6 +809,24 @@ export async function clearMemory(): Promise<void> {
 export async function loadSearchProviders(): Promise<void> {
   const result = await get<SearchProvider[] | { providers?: SearchProvider[] }>('/search-providers').catch(() => []);
   state.searchProviders = Array.isArray(result) ? result : result.providers || [];
+}
+
+/** 从 AI provider 拉取模型列表（同时预检 API 连通性） */
+export async function loadAiModels(): Promise<void> {
+  state.aiModelLoading = true;
+  state.aiModelError = '';
+  try {
+    const resp = await get<{ models: Array<{ id: string; ownedBy?: string }>; modelCount: number }>(
+      '/voice-commands/models',
+    );
+    state.aiModels = resp?.models || [];
+  } catch (error) {
+    state.aiModels = [];
+    state.aiModelError = messageOf(error);
+    throw error;
+  } finally {
+    state.aiModelLoading = false;
+  }
 }
 
 export async function refreshAll(): Promise<void> {

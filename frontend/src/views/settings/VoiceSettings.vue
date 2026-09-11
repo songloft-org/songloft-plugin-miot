@@ -17,6 +17,7 @@ import {
   loadMemory,
   loadSearchProviders,
   loadVoiceData,
+  loadAiModels,
   messageOf,
   notify,
   playlistLabel,
@@ -131,6 +132,9 @@ const memoryExpanded = ref(false);
 const memoryLoaded = ref(false);
 const memoryLoading = ref(false);
 const expandedMemory = ref<string | null>(null);
+const aiModelsList = ref<{ id: string; ownedBy?: string }[]>([]);
+const aiModelLoading = ref(false);
+const aiModelError = ref('');
 let conversationSocket: WebSocket | null = null;
 let conversationPoll: ReturnType<typeof setInterval> | null = null;
 
@@ -200,7 +204,10 @@ syncSourceDrafts();
 onMounted(async () => {
   await Promise.all([loadVoiceData(), loadSearchProviders()]);
   syncSourceDrafts();
-
+  // 如果已有 API 配置，预拉取模型列表（同时充当预检）
+  if (state.config.ai_config.api_url && state.config.ai_config.api_key) {
+    void refreshAiModels();
+  }
   if (state.config.conversation_monitor_enabled) connectConversation();
 });
 onUnmounted(() => {
@@ -486,6 +493,34 @@ async function testAI(): Promise<void> {
   }
 }
 
+/** 拉取可用模型列表（同时预检 API 连通性） */
+async function refreshAiModels(): Promise<void> {
+  aiModelLoading.value = true;
+  aiModelError.value = '';
+  aiModelsList.value = [];
+  try {
+    await loadAiModels();
+    aiModelsList.value = Array.isArray(state.aiModels) ? state.aiModels : [];
+    notify(`已获取 ${aiModelsList.value.length} 个可用模型`, 'success');
+  } catch (error) {
+    aiModelError.value = messageOf(error);
+    aiModelsList.value = [];
+    notify(aiModelError.value, 'error');
+  } finally {
+    aiModelLoading.value = false;
+  }
+}
+
+// --- end of model fetching ---
+
+const aiModelOptions = computed<SelectOption[]>(() =>
+  aiModelsList.value.map((m) => ({
+    value: m.id,
+    label: m.ownedBy ? `${m.id} (${m.ownedBy})` : m.id,
+    searchText: m.id,
+  })),
+);
+
 async function addSource(): Promise<void> {
   if (!newSourceUrl.value.trim()) {
     notify('请填写接口 URL', 'warning');
@@ -564,7 +599,7 @@ function memoryAliases(entity: MemoryEntity): Array<{ id?: string; query?: strin
 }
 
 async function deleteMemoryEntity(key: string, title: string): Promise<void> {
-  if (!(await confirmAction('删除语音记忆', `确定删除“${title}”的全部记忆吗？`, '删除', true))) return;
+  if (!(await confirmAction('删除语音记忆', `确定删除"${title}"的全部记忆吗？`, '删除', true))) return;
   try {
     await del(`/memory/entity?canonicalKey=${encodeURIComponent(key)}`);
     await ensureMemoryLoaded(true);
@@ -633,7 +668,7 @@ async function deleteMemoryRecord(id?: string): Promise<void> {
     <SettingRow title="启用语音口令" :subtitle="state.config.conversation_monitor_enabled ? '将对话监听结果交给播放器执行' : '需要先开启对话监听'">
       <SlSwitch :model-value="state.config.voice_command_enabled" :disabled="!state.config.conversation_monitor_enabled" @update:model-value="setVoiceEnabled" />
     </SettingRow>
-    <div v-if="!state.config.conversation_monitor_enabled" class="dependency-hint"><SlIcon name="warning" :size="18" /><span>需要先开启“对话监听”才能使用语音口令。</span></div>
+    <div v-if="!state.config.conversation_monitor_enabled" class="dependency-hint"><SlIcon name="warning" :size="18" /><span>需要先开启"对话监听"才能使用语音口令。</span></div>
     <div v-if="state.config.voice_command_enabled" class="dependency-hint"><SlIcon name="info" :size="18" /><span>口令触发后，音箱会先播完自身的语音回复，再由插件打断并开始播放，中间会有短暂延迟。</span></div>
     <div class="form-body">
       <button type="button" class="advanced-toggle" @click="voiceCommandsExpanded = !voiceCommandsExpanded">
@@ -705,7 +740,7 @@ async function deleteMemoryRecord(id?: string): Promise<void> {
 
   <SectionCard title="外部搜索" icon="search" description="本地曲库未命中时，按优先级调用已启用的搜索源。">
     <SettingRow title="启用外部搜索" :subtitle="state.config.voice_command_enabled ? '搜索源需要返回 topone 格式结果' : '需要先开启语音口令'"><SlSwitch :model-value="state.config.external_search_enabled" :disabled="!state.config.voice_command_enabled" @update:model-value="setExternalSearchEnabled" /></SettingRow>
-    <div v-if="!state.config.voice_command_enabled" class="dependency-hint"><SlIcon name="warning" :size="18" /><span>需要先开启“语音口令”才能使用外部搜索。</span></div>
+    <div v-if="!state.config.voice_command_enabled" class="dependency-hint"><SlIcon name="warning" :size="18" /><span>需要先开启"语音口令"才能使用外部搜索。</span></div>
     <div class="form-body">
       <div class="field"><label class="field-label">搜索优先级</label><SlSelect :model-value="state.config.search_priority" :options="searchPriorityOptions" aria-label="搜索优先级" @update:model-value="saveConfig({ search_priority: $event as 'parallel' | 'local_first' | 'external_first' })" /></div>
       <div class="field-grid"><div class="field"><label class="field-label">超时（秒）</label><SlInput :model-value="externalSearchTimeout" type="number" aria-label="外部搜索超时" @update:model-value="externalSearchTimeout = $event" @change="saveConfig({ external_search_timeout: Math.max(3, Math.min(60, Number(externalSearchTimeout) || 6)) })" /></div><div class="field setting-field-control"><label class="field-label">不入库直接播放</label><SlSwitch :model-value="state.config.external_search_no_import" @update:model-value="setSwitch('external_search_no_import', $event)" /></div></div>
@@ -753,11 +788,30 @@ async function deleteMemoryRecord(id?: string): Promise<void> {
 
   <SectionCard title="AI 口令分析" icon="auto_awesome" description="可选的 OpenAI 兼容接口，用于解析复杂自然语言口令。">
     <SettingRow title="启用 AI 分析" :subtitle="state.config.voice_command_enabled ? '规则和记忆未命中时再调用 AI' : '需要先开启语音口令'"><SlSwitch :model-value="!!state.config.ai_config.enabled" :disabled="!state.config.voice_command_enabled" @update:model-value="setAIEnabled" /></SettingRow>
-    <div v-if="!state.config.voice_command_enabled" class="dependency-hint"><SlIcon name="warning" :size="18" /><span>需要先开启“语音口令”才能使用 AI 分析。</span></div>
+    <div v-if="!state.config.voice_command_enabled" class="dependency-hint"><SlIcon name="warning" :size="18" /><span>需要先开启"语音口令"才能使用 AI 分析。</span></div>
     <div class="form-body">
       <div class="field"><label class="field-label">API 地址</label><SlInput :model-value="state.config.ai_config.api_url || ''" placeholder="https://api.example.com/v1" @update:model-value="state.config.ai_config.api_url = $event" @change="saveConfig({ ai_config: state.config.ai_config })" /></div>
       <div class="field"><label class="field-label">API Key</label><SlInput :model-value="state.config.ai_config.api_key || ''" type="password" placeholder="sk-..." @update:model-value="state.config.ai_config.api_key = $event" @change="saveConfig({ ai_config: state.config.ai_config })" /></div>
-      <div class="field-grid"><div class="field"><label class="field-label">模型</label><SlInput :model-value="state.config.ai_config.model || ''" placeholder="qwen-flash" @update:model-value="state.config.ai_config.model = $event" @change="saveConfig({ ai_config: state.config.ai_config })" /></div><div class="field"><label class="field-label">超时（秒）</label><SlInput :model-value="String(state.config.ai_config.timeout || 6)" type="number" @update:model-value="state.config.ai_config.timeout = Math.max(1, Math.min(30, Number($event) || 6))" @change="saveConfig({ ai_config: state.config.ai_config })" /></div></div>
+      <div class="field-grid">
+        <div class="field">
+          <label class="field-label">模型</label>
+          <div style="display:flex;gap:8px;align-items:flex-start;">
+            <SlSelect
+              :model-value="state.config.ai_config.model || ''"
+              :options="aiModelOptions"
+              placeholder="点击刷新获取可用模型"
+              aria-label="选择 AI 模型"
+              searchable
+              search-placeholder="搜索模型名称"
+              @update:model-value="(v) => { state.config.ai_config.model = v; void saveConfig({ ai_config: state.config.ai_config }); }"
+            />
+            <SlButton variant="outlined" label="刷新" icon="refresh" :disabled="aiModelLoading || !state.config.ai_config.api_url || !state.config.ai_config.api_key" @click="refreshAiModels" title="调用 /v1/models 预检 API 并获取模型列表" />
+          </div>
+        </div>
+        <div class="field"><label class="field-label">超时（秒）</label><SlInput :model-value="String(state.config.ai_config.timeout || 6)" type="number" @update:model-value="state.config.ai_config.timeout = Math.max(1, Math.min(30, Number($event) || 6))" @change="saveConfig({ ai_config: state.config.ai_config })" /></div>
+      </div>
+      <div v-if="aiModelError" class="field-help" style="color:#ef5350;">{{ aiModelError }}</div>
+      <div v-if="aiModelLoading && aiModelsList.length === 0" class="field-help">正在连接 API 获取模型列表...</div>
       <div class="command-test-panel command-test-panel-inset"><strong>AI 分析测试</strong><div class="inline-fields"><SlInput v-model="aiTestQuery" placeholder="输入自然语言口令" @submit="testAI" /><SlButton variant="outlined" label="测试分析" icon="science" :disabled="aiTestBusy" @click="testAI" /></div><pre v-if="aiTestResult" class="result-pre">{{ aiTestResult }}</pre></div>
     </div>
   </SectionCard>

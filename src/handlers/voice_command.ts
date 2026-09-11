@@ -84,9 +84,16 @@ async function resolveTargetDevice(
   throw new Error('device_id is required when multiple managed devices are available');
 }
 
+interface ModelInfo {
+  id: string;
+  object?: string;
+  owned_by?: string;
+}
+
 /**
  * 注册语音口令相关路由
  * GET  /voice-commands → 获取语音口令配置
+ * GET  /voice-commands/models → 获取可用模型列表（同时校验 API 连通性）
  * POST /voice-commands → 设置语音口令配置
  * POST /voice-commands/ai-test → 测试 AI 口令分析
  * POST /voice-commands/test → 模拟语音口令（完整匹配+执行）并返回诊断
@@ -110,6 +117,75 @@ export function registerVoiceCommandHandlers(
       });
     } catch (e: any) {
       return jsonResponse({ success: false, error: e.message || String(e) });
+    }
+  });
+
+  // GET /voice-commands/models - 获取可用模型列表（同时校验 API 连通性）
+  router.get('/voice-commands/models', async (req: HTTPRequest) => {
+    try {
+      const aiConfig = await configManager.getAIConfig();
+      if (!aiConfig.api_url || !aiConfig.api_key) {
+        return jsonResponse({ success: false, error: 'AI 配置不完整，请先填写 API 地址和密钥' });
+      }
+
+      const modelsUrl = `${aiConfig.api_url}/v1/models`;
+      songloft.log.info(`[VoiceCommands] Fetching models from ${modelsUrl}`);
+
+      const timeoutPromise = new Promise<never>((_, reject) => {
+        setTimeout(() => reject(new Error('模型列表获取超时')), (aiConfig.timeout || 6) * 1000);
+      });
+
+      const fetchPromise = fetch(modelsUrl, {
+        method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${aiConfig.api_key}`,
+          'Content-Type': 'application/json',
+        },
+      });
+
+      const resp = await Promise.race([fetchPromise, timeoutPromise]);
+
+      // QuickJS 无 Response 类，duck-type 检查关键属性
+      if (!resp || typeof resp.ok !== 'boolean' || typeof resp.status !== 'number') {
+        throw new Error('无效的响应对象');
+      }
+
+      if (!resp.ok) {
+        const body = await resp.text().catch(() => '');
+        throw new Error(`模型列表请求失败 (${resp.status}): ${body.slice(0, 200)}`);
+      }
+
+      const data: { object: string; data?: Array<{ id: string; object?: string; owned_by?: string }> } = await resp.json();
+
+      if (!Array.isArray(data.data)) {
+        throw new Error('响应格式错误：缺少 data 数组');
+      }
+
+      const models = data.data.map((m: ModelInfo) => ({
+        id: m.id,
+        ownedBy: m.owned_by || '',
+      }));
+
+      return jsonResponse({
+        success: true,
+        data: { models, modelCount: models.length },
+      });
+    } catch (e: any) {
+      const msg = e.message || String(e);
+      // 把底层网络错误包装成通俗提示
+      if (msg.includes('dial tcp') || msg.includes('lookup') || msg.includes('ENOTFOUND')) {
+        return jsonResponse({ success: false, error: '无法连接 API，请检查 API 地址是否正确' });
+      }
+      if (msg.includes('timed out') || msg.includes('timeout')) {
+        return jsonResponse({ success: false, error: '请求超时，请检查网络或加大超时时间' });
+      }
+      if (msg.includes('401') || msg.includes('403') || msg.includes('unauthorized') || msg.includes('forbidden')) {
+        return jsonResponse({ success: false, error: 'API Key 不正确或无权限' });
+      }
+      if (msg.includes('404') || msg.includes('not found')) {
+        return jsonResponse({ success: false, error: '接口不正确或未找到 /v1/models 端点' });
+      }
+      return jsonResponse({ success: false, error: '获取模型列表失败：' + msg.slice(0, 200) });
     }
   });
 
