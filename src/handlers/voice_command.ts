@@ -8,6 +8,7 @@ import { ConfigManager } from '../config/manager';
 import type { ConversationMessage, DeviceConfig } from '../types';
 import { AIAnalyzer } from '../voicecmd/ai_analyzer';
 import { VoiceEngine } from '../voicecmd/engine';
+import { aiModelsUrl, maskUrl } from '../utils/ai_url';
 
 /** 解析请求体（兼容 Uint8Array 和 string） */
 function parseBody(req: HTTPRequest): any {
@@ -122,14 +123,19 @@ export function registerVoiceCommandHandlers(
 
   // GET /voice-commands/models - 获取可用模型列表（同时校验 API 连通性）
   router.get('/voice-commands/models', async (req: HTTPRequest) => {
+    // modelsUrl 在 try 外声明：catch 里要把「实际请求地址」放进错误提示，
+    // 若声明在 try 内，catch 引用会抛 ReferenceError，把真实原因整个吞掉。
+    let modelsUrl = '';
     try {
       const aiConfig = await configManager.getAIConfig();
       if (!aiConfig.api_url || !aiConfig.api_key) {
         return jsonResponse({ success: false, error: 'AI 配置不完整，请先填写 API 地址和密钥' });
       }
 
-      const modelsUrl = `${aiConfig.api_url}/v1/models`;
-      songloft.log.info(`[VoiceCommands] Fetching models from ${modelsUrl}`);
+      // 统一经 normalizeAiBaseUrl 归一：用户填 https://host 或 https://host/v1
+      // 都得到「含 /v1 的 base」，避免拼出 .../v1/v1/models 这种重复前缀
+      modelsUrl = aiModelsUrl(aiConfig.api_url);
+      songloft.log.info(`[VoiceCommands] Fetching models from ${maskUrl(modelsUrl)}`);
 
       const timeoutPromise = new Promise<never>((_, reject) => {
         setTimeout(() => reject(new Error('模型列表获取超时')), (aiConfig.timeout || 6) * 1000);
@@ -183,7 +189,12 @@ export function registerVoiceCommandHandlers(
         return jsonResponse({ success: false, error: 'API Key 不正确或无权限' });
       }
       if (msg.includes('404') || msg.includes('not found')) {
-        return jsonResponse({ success: false, error: '接口不正确或未找到 /v1/models 端点' });
+        // 带上实际请求地址（脱敏），便于判断是「地址填错/前缀重复」还是「服务不提供该端点」
+        const hint = modelsUrl ? `（实际请求：${maskUrl(modelsUrl)}）` : '';
+        return jsonResponse({
+          success: false,
+          error: `未找到模型列表端点${hint}：请确认 API 地址是否正确、该服务是否提供 /v1/models；若不支持该端点，可直接在「模型」处手动填写模型名`,
+        });
       }
       return jsonResponse({ success: false, error: '获取模型列表失败：' + msg.slice(0, 200) });
     }

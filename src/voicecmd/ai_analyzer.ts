@@ -4,6 +4,7 @@
 /// <reference types="@songloft/plugin-sdk" />
 
 import type { AIConfig, AIAnalysisResult } from '../types';
+import { aiChatCompletionsUrl, maskUrl } from '../utils/ai_url';
 
 /** AI System Prompt */
 const AI_SYSTEM_PROMPT = `从指令中提取出操作和音乐信息，返回JSON：{"action":"...","params":{...},"confidence":"high|medium|low","rawText":"有效文本"}
@@ -90,7 +91,9 @@ export class AIAnalyzer {
    * 调用 LLM API
    */
   private async callAI(query: string, config: AIConfig): Promise<AIAnalysisResult> {
-    songloft.log.info(`[AIAnalyzer] Calling ${config.api_url} model=${config.model} timeout=${config.timeout}s`);
+    // 与模型列表端点共用同一套 /v1 归一化规则，避免两处对 api_url 的假设不一致
+    const endpoint = aiChatCompletionsUrl(config.api_url);
+    songloft.log.info(`[AIAnalyzer] Calling ${maskUrl(endpoint)} model=${config.model} timeout=${config.timeout}s`);
 
     const messages = [
       { role: 'system', content: AI_SYSTEM_PROMPT },
@@ -106,7 +109,7 @@ export class AIAnalyzer {
       extra_body: { reasoning_split: true },
     };
 
-    const fetchPromise = fetch(`${config.api_url}/chat/completions`, {
+    const fetchPromise = fetch(endpoint, {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${config.api_key}`,

@@ -807,6 +807,18 @@ async function deleteMemoryRecord(id?: string): Promise<void> {
             />
             <SlButton variant="outlined" label="刷新" icon="refresh" :disabled="aiModelLoading || !state.config.ai_config.api_url || !state.config.ai_config.api_key" @click="refreshAiModels" title="调用 /v1/models 预检 API 并获取模型列表" />
           </div>
+          <!-- 手动填写兜底：部分 OpenAI 兼容服务不提供 /v1/models，或列表拉取失败时下拉为空，
+               此时必须允许直接输入模型名，否则模型完全无法配置 -->
+          <div style="margin-top:8px;">
+            <SlInput
+              :model-value="state.config.ai_config.model || ''"
+              placeholder="手动填写模型名，如 qwen-plus"
+              aria-label="手动填写 AI 模型名"
+              @update:model-value="state.config.ai_config.model = $event"
+              @change="saveConfig({ ai_config: state.config.ai_config })"
+            />
+          </div>
+          <div class="field-help">若接口不支持 /v1/models 或获取失败，可直接在此填写模型名。</div>
         </div>
         <div class="field"><label class="field-label">超时（秒）</label><SlInput :model-value="String(state.config.ai_config.timeout || 6)" type="number" @update:model-value="state.config.ai_config.timeout = Math.max(1, Math.min(30, Number($event) || 6))" @change="saveConfig({ ai_config: state.config.ai_config })" /></div>
       </div>
