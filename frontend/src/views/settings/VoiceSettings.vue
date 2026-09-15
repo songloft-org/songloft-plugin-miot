@@ -136,6 +136,9 @@ const expandedMemory = ref<string | null>(null);
 const aiModelsList = ref<{ id: string; ownedBy?: string }[]>([]);
 const aiModelLoading = ref(false);
 const aiModelError = ref('');
+// 连接状态与延迟：idle=未配置/未检测，loading=检测中，ok=已连接，error=失败
+const aiConnState = ref<'idle' | 'loading' | 'ok' | 'error'>('idle');
+const aiConnLatency = ref<number | null>(null);
 let conversationSocket: WebSocket | null = null;
 let conversationPoll: ReturnType<typeof setInterval> | null = null;
 
@@ -231,16 +234,11 @@ onMounted(async () => {
   syncSourceDrafts();
   // 静默预拉模型列表填充下拉：仅联网填充，不弹通知（提示交给用户主动点「刷新」）
   if (state.config.ai_config.api_url && state.config.ai_config.api_key) {
-    aiModelLoading.value = true;
-    void loadAiModels()
-      .then(() => {
-        aiModelsList.value = Array.isArray(state.aiModels) ? state.aiModels : [];
-        // 同步自定义模式：当前模型名不在列表里（且非空）→ 视为手填自定义
-        const cur = state.config.ai_config.model || '';
-        modelCustomActive.value = !!cur && !aiModelsList.value.some((m) => m.id === cur);
-      })
-      .catch(() => { aiModelsList.value = []; })
-      .finally(() => { aiModelLoading.value = false; });
+    void refreshAiModels(true).then(() => {
+      // 同步自定义模式：当前模型名不在列表里（且非空）→ 视为手填自定义
+      const cur = state.config.ai_config.model || '';
+      modelCustomActive.value = !!cur && !aiModelsList.value.some((m) => m.id === cur);
+    });
   }
   if (state.config.conversation_monitor_enabled) connectConversation();
   // 反查当前 api_url 命中的预设：命中则高亮该预设（隐藏地址框），无匹配则归为「自定义」（显示地址框）
@@ -531,23 +529,52 @@ async function testAI(): Promise<void> {
   }
 }
 
-/** 拉取可用模型列表（同时预检 API 连通性） */
-async function refreshAiModels(): Promise<void> {
+/**
+ * 拉取可用模型列表，同时测量连通性与延迟（配置页「连接状态/延迟」的数据源）。
+ * @param silent true=静默预检（进页面自动执行，不弹通知）；false=用户主动点刷新（弹通知）
+ */
+async function refreshAiModels(silent = false): Promise<void> {
+  if (!state.config.ai_config.api_url || !state.config.ai_config.api_key) {
+    aiConnState.value = 'idle';
+    return;
+  }
   aiModelLoading.value = true;
   aiModelError.value = '';
   aiModelsList.value = [];
+  aiConnState.value = 'loading';
+  const startedAt = Date.now();
   try {
     await loadAiModels();
     aiModelsList.value = Array.isArray(state.aiModels) ? state.aiModels : [];
-    notify(`已获取 ${aiModelsList.value.length} 个可用模型`, 'success');
+    aiConnLatency.value = Date.now() - startedAt;
+    aiConnState.value = 'ok';
+    if (!silent) notify(`已获取 ${aiModelsList.value.length} 个可用模型，延迟 ${aiConnLatency.value} ms`, 'success');
   } catch (error) {
     aiModelError.value = messageOf(error);
     aiModelsList.value = [];
-    notify(aiModelError.value, 'error');
+    aiConnLatency.value = null;
+    aiConnState.value = 'error';
+    if (!silent) notify(aiModelError.value, 'error');
   } finally {
     aiModelLoading.value = false;
   }
 }
+
+const aiConnChipClass = computed(() => {
+  if (aiConnState.value === 'ok') return 'chip-success';
+  if (aiConnState.value === 'error') return 'chip-warning';
+  return '';
+});
+
+const aiConnText = computed(() => {
+  const configured = !!state.config.ai_config.api_url && !!state.config.ai_config.api_key;
+  switch (aiConnState.value) {
+    case 'loading': return '连接检测中…';
+    case 'ok': return `已连接 · ${aiConnLatency.value} ms`;
+    case 'error': return `连接失败：${aiModelError.value}`;
+    default: return configured ? '未检测' : '未配置';
+  }
+});
 
 // --- end of model fetching ---
 
@@ -866,7 +893,7 @@ async function deleteMemoryRecord(id?: string): Promise<void> {
       </div>
       <div v-if="selectedAiPreset === 'custom'" class="field"><label class="field-label">API 地址</label><SlInput :model-value="state.config.ai_config.api_url || ''" placeholder="https://api.example.com/v1" @update:model-value="state.config.ai_config.api_url = $event" @change="saveConfig({ ai_config: state.config.ai_config })" /></div>
       <div class="field"><label class="field-label">API Key</label><SlInput :model-value="state.config.ai_config.api_key || ''" type="password" placeholder="sk-..." @update:model-value="state.config.ai_config.api_key = $event" @change="saveConfig({ ai_config: state.config.ai_config })" /></div>
-      <a v-if="selectedAiPresetObj" class="preset-key-link" :href="selectedAiPresetObj.websiteUrl" target="_blank" rel="noopener">前往 {{ selectedAiPresetObj.name }} 获取 API Key ↗</a>
+      <a v-if="selectedAiPresetObj" class="preset-key-link" :href="selectedAiPresetObj.apiKeyUrl" target="_blank" rel="noopener" :title="`官网：${selectedAiPresetObj.websiteUrl}`">前往 {{ selectedAiPresetObj.name }} 获取 API Key ↗</a>
       <div class="field-grid">
         <div class="field">
           <label class="field-label">模型</label>
@@ -880,7 +907,7 @@ async function deleteMemoryRecord(id?: string): Promise<void> {
               search-placeholder="搜索模型名称"
               @update:model-value="onModelSelect"
             />
-            <SlButton variant="outlined" label="刷新" icon="refresh" :disabled="aiModelLoading || !state.config.ai_config.api_url || !state.config.ai_config.api_key" @click="refreshAiModels" title="调用 /v1/models 预检 API 并获取模型列表" />
+            <SlButton variant="outlined" label="刷新" icon="refresh" :disabled="aiModelLoading || !state.config.ai_config.api_url || !state.config.ai_config.api_key" @click="() => refreshAiModels()" title="调用 /models 预检 API、获取模型列表并测量延迟" />
           </div>
           <!-- 自定义模型名：仅在下拉选「自定义模型名…」或当前模型不在列表时展开（部分服务不支持 /v1/models 或列表缺目标模型） -->
           <template v-if="modelCustomActive">
@@ -898,8 +925,10 @@ async function deleteMemoryRecord(id?: string): Promise<void> {
         </div>
         <div class="field"><label class="field-label">超时（秒）</label><SlInput :model-value="String(state.config.ai_config.timeout || 6)" type="number" @update:model-value="state.config.ai_config.timeout = Math.max(1, Math.min(30, Number($event) || 6))" @change="saveConfig({ ai_config: state.config.ai_config })" /></div>
       </div>
+      <div class="status-chips">
+        <span class="chip" :class="aiConnChipClass">{{ aiConnText }}</span>
+      </div>
       <div v-if="aiModelError" class="field-help" style="color:#ef5350;">{{ aiModelError }}</div>
-      <div v-if="aiModelLoading && aiModelsList.length === 0" class="field-help">正在连接 API 获取模型列表...</div>
       <div class="command-test-panel command-test-panel-inset"><strong>AI 分析测试</strong><div class="inline-fields"><SlInput v-model="aiTestQuery" placeholder="输入自然语言口令" @submit="testAI" /><SlButton variant="outlined" label="测试分析" icon="science" :disabled="aiTestBusy" @click="testAI" /></div><pre v-if="aiTestResult" class="result-pre">{{ aiTestResult }}</pre></div>
     </div>
   </SectionCard>
