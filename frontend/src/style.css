@@ -374,6 +374,8 @@ html.webf-engine .settings-content { height: 100%; overflow-y: auto; }
 .field { min-width: 0; margin-bottom: 16px; }
 .field-label { display: block; margin-bottom: 6px; color: var(--md-on-surface-variant); font-size: 12px; font-weight: 500; }
 .field-help { margin-top: 6px; color: var(--md-on-surface-variant); font-size: 12px; overflow-wrap: anywhere; }
+.preset-key-link { display: inline-block; margin-top: 6px; font-size: 12px; color: var(--md-primary, #4f7cff); text-decoration: none; cursor: pointer; }
+.preset-key-link:hover { text-decoration: underline; }
 .field-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; margin-top: 16px; }
 /* 用 flex 而不是 grid：这个容器在 APP（WebF）里会「算出布局但不绘制」——页内探针
    getBoundingClientRect 返回正常的 309x42，屏幕上整行却不存在，uiautomator 里也没有

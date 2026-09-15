@@ -106,8 +106,12 @@ export class AIAnalyzer {
       temperature: 1.0,
       max_tokens: 300,
       response_format: { type: 'json_object' },
-      extra_body: { reasoning_split: true },
     };
+    // reasoning_split 仅硅基流动（SiliconFlow）原生支持，用于分离推理链使 content 直接是干净 JSON；
+    // 其它 OpenAI 兼容接口对未知字段或忽略或严格 400，故按 api_url 条件附加，避免误伤。
+    if (/siliconflow/i.test(config.api_url || '')) {
+      body.extra_body = { reasoning_split: true };
+    }
 
     const fetchPromise = fetch(endpoint, {
       method: 'POST',
