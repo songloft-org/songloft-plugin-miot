@@ -1,7 +1,5 @@
 <script setup lang="ts">
 import { computed, onUnmounted, ref, useAttrs } from 'vue';
-import { isWebFRuntime, useNativeSlider } from '../runtime';
-import { bindNativeAttrs } from './nativeProps';
 
 defineOptions({ inheritAttrs: false });
 
@@ -19,24 +17,10 @@ const props = withDefaults(
 );
 const emit = defineEmits<{ 'update:modelValue': [number]; change: [number] }>();
 const attrs = useAttrs();
-const native = ref<HTMLElement | null>(null);
 const track = ref<HTMLElement | null>(null);
-// 必须走 attribute（不是 property）：`songloft_slider.dart` 只读 getAttribute。
-// 详见 nativeProps.ts 的 bindNativeAttrs 注释。
-bindNativeAttrs(native, () => ({
-  value: props.modelValue,
-  min: props.min,
-  max: props.max,
-  step: props.step,
-  disabled: !!props.disabled,
-  orientation: props.orientation,
-}));
-
-const useTouchFallback = computed(() => isWebFRuntime && !useNativeSlider);
 
 function valueFrom(event: Event): number {
-  const detail = (event as CustomEvent).detail;
-  return Number((event as InputEvent).data ?? detail ?? (event.target as HTMLInputElement).value);
+  return Number((event.target as HTMLInputElement).value);
 }
 
 function positionFromEvent(clientX: number, clientY: number): number {
@@ -121,44 +105,7 @@ const fillPercent = computed(() => {
 
 <template>
   <div v-bind="attrs" class="sl-slider-wrap">
-    <songloft-slider
-      v-if="useNativeSlider"
-      ref="native"
-      class="sl-slider-native"
-      @input="emit('update:modelValue', valueFrom($event))"
-      @change="emit('change', valueFrom($event))"
-    />
-    <div
-      v-else-if="useTouchFallback"
-      ref="track"
-      class="sl-slider-touch"
-      :class="[`sl-slider-touch-${orientation}`]"
-      role="slider"
-      :aria-label="ariaLabel"
-      :aria-valuemin="min"
-      :aria-valuemax="max"
-      :aria-valuenow="modelValue"
-      @touchstart.passive="onTouchStart"
-      @touchmove="onTouchMove"
-      @touchend="onTouchEnd"
-      @touchcancel="onTouchEnd"
-      @mousedown="onMouseDown"
-    >
-      <div class="sl-slider-touch-track">
-        <div
-          class="sl-slider-touch-fill"
-          :style="orientation === 'vertical' ? { height: fillPercent + '%' } : { width: fillPercent + '%' }"
-        ></div>
-      </div>
-      <div
-        class="sl-slider-touch-thumb"
-        :style="orientation === 'vertical'
-          ? { bottom: fillPercent + '%' }
-          : { left: fillPercent + '%' }"
-      ></div>
-    </div>
     <input
-      v-else
       class="sl-slider"
       type="range"
       :value="modelValue"

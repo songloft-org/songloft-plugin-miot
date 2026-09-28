@@ -43,7 +43,7 @@ watch(open, (value) => {
 });
 
 /** 用 JS 计算弹层 fixed 坐标。脱离 .player-popup-anchor 的堆叠上下文，
- *  避免 WebF 下遮罩（z-index:231）压住弹层（z-index:232）导致点不到。 */
+ *  避免遮罩（z-index:231）压住弹层（z-index:232）导致点不到。 */
 function positionPopup(): void {
   const el = anchor.value;
   if (!el) return;

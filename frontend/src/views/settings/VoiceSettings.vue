@@ -603,7 +603,7 @@ const aiModelSelectValue = computed(() =>
 /**
  * 模型下拉选择处理。
  * 注意：必须放在 script 方法里调用（模板内联表达式会把 ref 自动解包成原始值，
- * 直接写 `modelCustomActive.value = ...` 会触发 WebF 的 readonly 赋值报错）。
+ * 直接在模板里给 ref 的 .value 赋值是无效写法）。
  */
 function onModelSelect(v: string): void {
   if (v === AI_MODEL_CUSTOM) {
@@ -865,9 +865,8 @@ async function deleteMemoryRecord(id?: string): Promise<void> {
       <h3 class="card-title section-subtitle">已配置源</h3>
       <div v-for="source in state.config.external_search_sources" :key="source.id" class="sub-panel sub-panel-inset">
         <!-- 各包一层 .field 是为了拿到与其它表单行一致的 16px 行距：.field-grid 的
-             row-gap 是 0，裸 input 会挤在一起。这一行在 APP 里整体不显示的根因是
-             WebF 不绘制 grid 容器，已在 style.css 把 .field-grid 改成 flex
-             （songloft-org/songloft-plugin-miot#79）。 -->
+             row-gap 是 0，裸 input 会挤在一起。.field-grid 用 flex 而非 grid 的
+             原因见 style.css（songloft-org/songloft-plugin-miot#79）。 -->
         <div class="field-grid"><div class="field"><SlInput v-model="sourceDrafts[source.id].name" placeholder="显示名称" /></div><div class="field"><SlInput v-model="sourceDrafts[source.id].url" placeholder="接口地址" /></div></div>
         <SlInput v-model="sourceDrafts[source.id].token" type="password" placeholder="Bearer Token（可选）" />
         <SettingRow title="启用此源"><SlSwitch v-model="sourceDrafts[source.id].enabled" /></SettingRow>
@@ -904,7 +903,7 @@ async function deleteMemoryRecord(id?: string): Promise<void> {
         <div class="field">
           <label class="field-label">模型</label>
           <!-- 复用 .inline-fields 而不是手写 display:flex：见 style.css .model-row 注释，
-               WebF 下子项没有显式 flex 尺寸就不会收缩，下拉会把「刷新」挤出本列。 -->
+               子项没有显式 flex 尺寸就不会收缩，下拉会把「刷新」挤出本列。 -->
           <div class="inline-fields model-row">
             <SlSelect
               :model-value="aiModelSelectValue"
@@ -919,8 +918,7 @@ async function deleteMemoryRecord(id?: string): Promise<void> {
           </div>
           <!-- 自定义模型名：仅在下拉选「自定义模型名…」或当前模型不在列表时展开（部分服务不支持 /v1/models 或列表缺目标模型） -->
           <template v-if="modelCustomActive">
-            <!-- 不套 auto 宽的裸 div：Flutter 系输入框是 RenderWidget，包一层会被 WebF
-                 量到视口宽（SlButton.vue 顶部注释同源），间距用自身 margin-top。 -->
+            <!-- 不套 auto 宽的裸 div（会按放松约束量到视口宽），间距用自身 margin-top。 -->
             <SlInput
               class="model-custom-input"
               :model-value="state.config.ai_config.model || ''"

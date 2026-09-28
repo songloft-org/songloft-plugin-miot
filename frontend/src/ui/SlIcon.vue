@@ -1,10 +1,9 @@
 <script setup lang="ts">
 import { computed } from 'vue';
-import { iconFontEpoch, iconFontReady } from './iconFont';
 
 const props = defineProps<{ name: string; size?: number; playerIcon?: boolean }>();
 
-// 播放器图标：沿用自带 `material-icons-player.otf`，码点与 webf 实测可渲染一致，
+// 播放器图标：沿用自带 `material-icons-player.otf`，
 // 收藏 favorite/favorite_border 为两个不同码点，无需依赖 FILL 变量轴即可区分填充/描边。
 const playerIconCodePoints: Record<string, number> = {
   alarm: 0xf553,
@@ -34,8 +33,6 @@ const playerIconCodePoints: Record<string, number> = {
 };
 
 // 通用 UI 图标：子集自官方 Material Symbols Outlined，按码点渲染。
-// webf 不支持 Material Symbols 的 ligature，非播放器图标以前会渲染成字面文本
-// （如 "speaker_group"），故改为自带字体 + 码点表，彻底不依赖 ligature。
 const uiIconCodePoints: Record<string, number> = {
   add: 0xe145,
   alarm: 0xe855,
@@ -53,7 +50,7 @@ const uiIconCodePoints: Record<string, number> = {
   construction: 0xea3c,
   database: 0xf20e,
   delete: 0xe92e,
-  delete_sweep: 0xe16c,
+  delete_sweep: 0xe16b,
   dns: 0xe875,
   download: 0xf090,
   edit: 0xf097,
@@ -119,21 +116,15 @@ const glyph = computed(() =>
 );
 const fontClass = computed(() => (props.playerIcon ? 'sl-icon-material-player' : 'sl-icon-ui'));
 
-// 字体未就绪时用 visibility 藏起来而不是清空文本：盒子照常占位，切换时不跳版，
-// 也不会先闪一帧 fallback 字形（方块 / emoji）。就绪判定见 `iconFont.ts`。
 const style = computed(() => {
   const value: Record<string, string> = {};
   if (props.size) value.fontSize = `${props.size}px`;
-  if (!iconFontReady.value) value.visibility = 'hidden';
   return value;
 });
 </script>
 
 <template>
-  <!-- `:key` 绑 iconFontEpoch：字体到货后整个元素重建，新文本节点才会重新排版
-       拿到真字形。WebF 只重排「第一个请求者」，别的图标不重建就永久停在 fallback。 -->
   <span
-    :key="iconFontEpoch"
     class="material-symbols-outlined sl-icon"
     :class="fontClass"
     aria-hidden="true"

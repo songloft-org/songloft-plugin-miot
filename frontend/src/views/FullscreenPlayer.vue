@@ -38,10 +38,8 @@ const activeLyric = computed(() => {
 // 桌面与移动 stage **同时**在 DOM 里（只靠媒体查询 `display:none` 切换），所以这里
 // 刻意开两份、并用不同的 `w=`：
 //   ① 尺寸本来就不同（桌面 frame 360px、移动 72vw/max 320px），各取 2x 更合理；
-//   ② 更要紧的是别让两个 `<img>` 落到同一个 URL 上 —— WebF 的 `_loadNormalImage`
-//      会 `evict(BoxFitImageKey(url, ImageConfiguration.empty), includeLive: true)`
-//      紧接着又用同一个 key 去 resolve，同 URL 的两个 img 会互相把对方（连同已解码的
-//      `ui.Image`）毙掉，表现是空白且**不发 error 事件**（#86 的可疑主因之一）。
+//   ② 更要紧的是别让两个 `<img>` 落到同一个 URL 上 —— 同 URL 的两个 img 共享
+//      同一份缓存键，一方的失败/驱逐会连带毙掉另一方，排查也难（#86 的教训）。
 const { src: cover, epoch: coverEpoch, onError: onCoverError, onLoad: onCoverLoad } = useSongCover(() => state.player.current_song, 768);
 const { src: coverMobile, epoch: coverMobileEpoch, onError: onCoverMobileError, onLoad: onCoverMobileLoad } = useSongCover(() => state.player.current_song, 640);
 

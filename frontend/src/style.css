@@ -1,8 +1,3 @@
-/* 禁止使用 CSS min() / max()：WebF 只实现了 calc() 与 clamp()（css/values/calc.dart），
-   min()/max() 会被解析成 CSSLengthValue.unknown，而 unknown 的 isAuto 是 false、
-   computedValue 是 0 —— 于是 `width: min(200px,100%)` 等价于 `width: 0`，不是回退 auto，
-   替换元素的固有尺寸兜底也走不到。表现是元素在 APP 里直接消失，浏览器里却完全正常。
-   一律改写成 width + max-width 这类对偶属性。参考 songloft-org/songloft-plugin-miot#80。 */
 :root {
   --miot-content-width: 1200px;
   --miot-detail-width: 800px;
@@ -19,8 +14,7 @@
   src: url('./assets/fonts/material-icons-player.otf') format('opentype');
 }
 
-/* 通用 UI 图标：子集自官方 Material Symbols Outlined，按码点渲染，
-   不依赖 webf 不支持的 ligature，避免非播放器图标显示成字面文本。 */
+/* 通用 UI 图标：子集自官方 Material Symbols Outlined，按码点渲染。 */
 @font-face {
   font-family: 'Miot UI Icons';
   font-style: normal;
@@ -44,8 +38,6 @@ button { cursor: pointer; }
 button:disabled, input:disabled, select:disabled { cursor: default; opacity: .55; }
 h1, h2, h3, p { margin: 0; }
 
-html.webf-engine .miot-app,
-html.webf-engine .miot-app * { transform-origin: 0 0; }
 
 .material-symbols-outlined {
   font-family: 'Material Symbols Outlined';
@@ -118,28 +110,14 @@ html.webf-engine .miot-app * { transform-origin: 0 0; }
 /* 不给 z-index：wrap 不创建层叠上下文，子元素 fixed 面板和遮罩直接参与根层叠上下文，
    z-index 300/200 能可靠地盖住播放条(80)和歌曲列表(songloft-org/songloft#432)。 */
 .sl-select-wrap { position: relative; width: 100%; }
-/* WebF 首帧缺陷：`.field-grid` 单元格是 flex item（flex: 1 1 calc(50% - 8px)），它里面的
-   .sl-select-wrap 靠 `width: 100%` 撑满，这条百分比链在首次布局解析不出来 —— 下拉塌成
-   固有宽 ~40px，占位文案被 .sl-button-label 的 overflow:hidden 裁光、chevron 挤到框外；
-   点开一次下拉（挂载面板节点触发重排）才恢复（mac 客户端实测）。
-   块级 `width: auto` 走 fill-available 主路径，不做百分比解析，视觉完全等价 —— 纯块流里的
-   下拉（如设备设置的「服务器地址」）本来就是这么正常工作的。
-   flex 场景（.inline-fields / .model-row）不受影响：那里 flex-basis 是显式 200px，width 不
-   参与基线测量。只写在 html.webf-engine 作用域，浏览器不碰。
-   对照组：同格的 flutter-cupertino-input 也是 width:100% 却正常 —— 它走 RenderWidget 的
-   约束钳制，不吃 CSS 百分比解析，所以坏的只有 HTML 流内元素。 */
-html.webf-engine .sl-select-wrap { width: auto; }
 .sl-select-wrap .sl-select-trigger { display: block; width: 100%; height: 40px; padding: 0 12px; border: 1px solid var(--md-outline); border-radius: var(--md-radius-sm); background: var(--md-surface); color: var(--md-on-surface); }
 .sl-select-wrap .sl-select-trigger:hover { border-color: var(--md-outline); background: var(--md-surface-container-high); box-shadow: none; }
 .sl-select-wrap .sl-select-trigger:focus-visible { outline: 0; }
 .sl-select-trigger .sl-button-content { display: flex; width: 100%; height: 100%; align-items: center; justify-content: space-between; gap: 8px; }
 .sl-select-trigger .sl-button-label { min-width: 0; flex: 1; overflow: hidden; color: var(--md-on-surface); font-weight: 400; text-align: left; text-overflow: ellipsis; }
 .sl-select-trigger .sl-icon { flex-shrink: 0; color: var(--md-on-surface-variant); }
-/* 面板本体绝不能自己是滚动容器：WebF 给 fixed 元素做滚动补偿时，会把「自己的
-   scrollTop」也算进去（rendering/box_model.dart:1807，getTotalScrollOffset 从
-   this.scrollTop 起算，再逐级累加祖先），于是在面板里滚 N px，面板就整体往下画
-   N px —— 表现是「一滚就跑到下面去了」（songloft-org/songloft#397）。
-   滚动交给内层 .sl-select-panel-scroll，外层只管定位和外观。 */
+/* 面板本体不自己做滚动容器（songloft-org/songloft#397）：滚动交给内层
+   .sl-select-panel-scroll，外层只管定位和外观。 */
 .sl-select-panel { position: absolute; z-index: 70; top: calc(100% + 4px); left: 0; box-sizing: border-box; overflow: hidden; border: 1px solid var(--md-outline-variant); border-radius: var(--md-radius-sm); background: var(--md-surface-container); box-shadow: var(--md-shadow-2); }
 .sl-select-panel-scroll { box-sizing: border-box; max-height: 318px; overflow-y: auto; padding: 4px 0; }
 .sl-select-panel-fixed { position: fixed; z-index: 300; top: auto; left: auto; }
@@ -147,12 +125,10 @@ html.webf-engine .sl-select-wrap { width: auto; }
    SEARCH_ROW_H 必须一致——面板总高和内层 maxHeight 都按它让位。 */
 .sl-select-panel-search { display: flex; box-sizing: border-box; height: 48px; align-items: center; gap: 8px; padding: 0 12px; border-bottom: 1px solid var(--md-outline-variant); background: var(--md-surface-container); color: var(--md-on-surface-variant); }
 .sl-select-panel-search .sl-icon { flex-shrink: 0; }
-.sl-select-panel-search .sl-input, .sl-select-panel-search .sl-input-native { min-width: 0; flex: 1; height: 100%; outline: 0; }
-/* 装饰只给 HTML 分支：原生 cupertino 输入框带了就会双份绘制，见下方 .sl-input 注释。 */
+.sl-select-panel-search .sl-input { min-width: 0; flex: 1; height: 100%; outline: 0; }
 .sl-select-panel-search .sl-input { padding: 0; border: 0; background: transparent; color: var(--md-on-surface); }
 .sl-select-empty { padding: 16px 12px; color: var(--md-on-surface-variant); font-size: 13px; text-align: center; }
-/* 透明全屏遮罩：webf 不会对「点空白处」派发 document pointerdown，
-   纯靠 document 监听收不起下拉。挂一个 fixed 遮罩兜住所有面板外的点击，
+/* 透明全屏遮罩：挂一个 fixed 遮罩兜住所有面板外的点击，
    点击它即关闭（点面板本身由面板的 z-index 更高命中、走选中逻辑）。 */
 .sl-select-backdrop { position: fixed; inset: 0; z-index: 200; background: transparent; }
 .sl-select-option { min-height: 40px; padding: 10px 12px; color: var(--md-on-surface); font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -171,24 +147,9 @@ html.webf-engine .sl-select-wrap { width: auto; }
 .sl-button-icon { width: 40px; padding: 0; border-radius: 50%; }
 .sl-button:hover:not(:disabled) { box-shadow: var(--md-shadow-1); }
 .sl-button-text:hover:not(:disabled) { background: var(--md-primary-container); }
-/* ⚠️ HTML 分支（`.sl-input`）与原生 Cupertino 分支（`.sl-input-native`
-   = `<flutter-cupertino-input>`）**必须分开写，绝不能合并选择器**。
-
-   handoff.md 第 12 条：`CupertinoTextField` 把 CSS 的 `renderStyle.decoration` 当成自己的
-   decoration（`input.dart:301`），而 WebF 自己的 render box 又把同一份画一遍 —— 外框画在
-   border box、widget 那份画在 content box（被 `padding` 内缩），两份错位，就是 APP 里输入框
-   左侧那顶「圆角帽」和叠在一起的双层圆角（`30e51e0` 修好原生控件探测后才暴露：此前
-   `useNativeUI` 恒 false，APP 里一直渲染的是 HTML `<input>`）。
-
-   所以原生分支**只给尺寸**（width / height / flex），背景、边框、圆角、内边距一律不写 ——
-   一条都不写时 `renderStyle.decoration` 返回 null（`css/box.dart:46`），widget 回落到自带的
-   systemGrey6 + 8px 圆角并跟随系统明暗。**写 `border: 0` 这种「清零」也算写了装饰**，同样
-   会翻倍（旧的 `.sl-input-native { border: 0 }` 就是因此修了一半）。另：`font-size` /
-   `color` 对它同样无效 —— widget 不读 renderStyle 的文本样式。 */
-.sl-input, .sl-input-native { width: 100%; height: 42px; outline: 0; }
-.sl-input { padding: 0 12px; border: 1px solid var(--md-outline); border-radius: var(--md-radius-sm); background: var(--md-surface); color: var(--md-on-surface); }
+.sl-input { width: 100%; height: 42px; padding: 0 12px; border: 1px solid var(--md-outline); border-radius: var(--md-radius-sm); background: var(--md-surface); color: var(--md-on-surface); outline: 0; }
 .sl-input:focus { border-color: var(--md-primary); box-shadow: 0 0 0 1px var(--md-primary); }
-.sl-input:focus-visible, .sl-input-native:focus-visible { outline: 0; }
+.sl-input:focus-visible { outline: 0; }
 .sl-checkbox { width: 20px; height: 20px; accent-color: var(--md-primary); }
 .switch { position: relative; display: inline-block; width: 52px; height: 32px; cursor: pointer; flex-shrink: 0; }
 .switch input { width: 0; height: 0; opacity: 0; }
@@ -197,27 +158,12 @@ html.webf-engine .sl-select-wrap { width: auto; }
 .switch-thumb { display: none; }
 .switch input:checked ~ .switch-track { border-color: var(--md-primary); background: var(--md-primary); }
 .switch input:checked ~ .switch-track::after { background: var(--md-on-primary); transform: translateX(20px); }
-.sl-slider, .sl-slider-native { width: 100%; }
-.sl-slider-native { height: 100%; }
+.sl-slider { width: 100%; accent-color: var(--md-primary); }
 .sl-slider-wrap { width: 100%; display: flex; align-items: stretch; justify-content: center; }
-.sl-slider { accent-color: var(--md-primary); }
-.sl-slider-touch { position: relative; touch-action: none; }
-.sl-slider-touch-horizontal { width: 100%; height: 28px; display: flex; align-items: center; }
-.sl-slider-touch-vertical { width: 28px; height: 100%; display: flex; align-items: flex-end; justify-content: center; }
-.sl-slider-touch-track { border-radius: 2px; background: var(--md-surface-container-highest); }
-.sl-slider-touch-horizontal .sl-slider-touch-track { width: 100%; height: 4px; }
-.sl-slider-touch-vertical .sl-slider-touch-track { width: 4px; height: 100%; position: relative; }
-.sl-slider-touch-fill { background: var(--md-primary); border-radius: 2px; }
-.sl-slider-touch-horizontal .sl-slider-touch-fill { height: 100%; }
-.sl-slider-touch-vertical .sl-slider-touch-fill { width: 100%; position: absolute; bottom: 0; left: 0; right: 0; }
-.sl-slider-touch-thumb { position: absolute; width: 14px; height: 14px; border-radius: 50%; background: var(--md-primary); pointer-events: none; }
-.sl-slider-touch-horizontal .sl-slider-touch-thumb { top: 50%; transform: translate(-50%, -50%); }
-.sl-slider-touch-vertical .sl-slider-touch-thumb { left: 50%; transform: translate(-50%, 50%); }
 .sl-list-view { display: block; width: 100%; height: var(--miot-list-height); }
-.sl-list-view:not(.sl-list-view-html) { overflow: hidden; }
-.sl-list-view-html { overflow-y: auto; border-top: 1px solid var(--md-outline-variant); }
+.sl-list-view { overflow-y: auto; border-top: 1px solid var(--md-outline-variant); }
 
-/* 自定义可拖动滚动条：覆盖在 SlListView 右侧。WebF 原生滚动条命中区太窄，长歌单里几百首
+/* 自定义可拖动滚动条：覆盖在 SlListView 右侧。原生滚动条命中区太窄，长歌单里几百首
    歌很难快速跳位（songloft-org/songloft#469）。命中区 32px 但只画一根 4px 轨道 + 6px 拇指，
    保持视觉极简。移动端 1.5s 后淡出，桌面常驻。 */
 .miot-scrollbar-shell { position: relative; }
@@ -274,7 +220,7 @@ html.webf-engine .sl-select-wrap { width: auto; }
 }
 
 .search-bar { display: flex; align-items: center; gap: 8px; height: 48px; margin-bottom: 12px; padding: 0 12px; border: 1px solid var(--md-outline-variant); border-radius: var(--md-radius-full); background: var(--md-surface-container-low); color: var(--md-on-surface-variant); }
-.search-bar input, .search-bar .sl-input-native { min-width: 0; flex: 1; outline: 0; }
+.search-bar input { min-width: 0; flex: 1; outline: 0; }
 /* 同上：装饰只给 HTML 分支，别把 background/border 沾到原生 cupertino 输入框上。 */
 .search-bar input, .search-bar .sl-input { border: 0; background: transparent; color: var(--md-on-surface); }
 .song-list-empty { min-height: 220px; display: flex; align-items: center; justify-content: center; color: var(--md-on-surface-variant); text-align: center; }
@@ -345,20 +291,6 @@ html.webf-engine .sl-select-wrap { width: auto; }
 .player-mini-progress-active { height: 100%; background: var(--md-primary); }
 .player-popup-anchor { position: relative; display: inline-flex; align-items: center; justify-content: center; }
 .player-popup-dismiss { position: fixed; z-index: 231; inset: 0; background: transparent; }
-/* WebF 下遮罩必须与弹层挂在**同一个**定位父级里，否则它会盖住整个弹层。
-   WebF 按包含块决定 widget 挂载位置：`position: fixed` 一律挂到 <html>（视口），
-   `position: absolute` 留在最近的定位祖先里。于是这两层的 z-index 不在同一个父级
-   里比较 —— 遮罩的 231 直接参与 <html> 层排序，而弹层的 232 只在
-   `.player-popup-anchor` 内部有效，它整棵子树的高度由祖先决定
-   （`.fullscreen-playback` fixed z-index 220 / `.player-bar-shell` fixed 80），
-   两者都 < 231。结果：透明遮罩压在弹层之上，弹层里**一切都点不到**。
-   实测（Android WebF）点音量弹层里的静音按钮不会静音、只把弹层关掉，音量滑块同理
-   收不到任何指针事件。浏览器按规范是依 DOM 树归属堆叠上下文的，弹层本就在上面，
-   所以这条只在 WebF 下改：遮罩改成 absolute（与弹层同父），四边各外扩一个视口保证
-   仍能覆盖全屏接住「点外面关闭」。`.page-view` 是 overflow: hidden，外扩不会撑出滚动条。
-   备选方案是把弹层也改成 `position: fixed` + JS 视口坐标（`.player-mode-popup` 与
-   `SlSelect` 就是这么做的），代价是每个弹层都要自己算坐标。 */
-html.webf-engine .player-popup-dismiss { position: absolute; inset: auto; top: -100vh; right: -100vw; bottom: -100vh; left: -100vw; }
 .player-mode-popup, .player-volume-popup { position: absolute; z-index: 232; bottom: calc(100% + 8px); left: 50%; background: var(--md-surface); border: 1px solid var(--md-outline-variant); border-radius: 12px; box-shadow: var(--md-shadow-3); }
 .player-mode-popup { position: fixed; width: 160px; padding: 8px 0; transform: none; }
 .player-mode-option { width: 100%; height: 48px; min-height: 48px; display: flex; align-items: center; gap: 12px; padding: 8px 16px; border: 0; background: transparent; color: var(--md-on-surface); font-size: 14px; text-align: left; }
@@ -372,24 +304,7 @@ html.webf-engine .player-popup-dismiss { position: absolute; inset: auto; top: -
 .player-volume-slider-shell { width: 44px; min-height: 104px; flex: 1; display: flex; align-items: center; justify-content: center; overflow: visible; }
 .player-volume-slider { width: 112px; flex: 0 0 112px; transform: rotate(-90deg); }
 .player-sleep-popup { position: fixed; z-index: 232; width: 280px; max-width: calc(100vw - 32px); max-height: calc(100vh - 96px); overflow-y: auto; background: var(--md-surface); border: 1px solid var(--md-outline-variant); border-radius: 12px; box-shadow: var(--md-shadow-3); }
-/* 弹层位置由 JS popupStyle 控制（position: fixed），CSS 不再设 left/top/bottom/transform。
-   WebF 下改用 fixed 脱离 .player-popup-anchor 的堆叠上下文，避免遮罩压住弹层导致点不到。 */
-html.webf-engine .player-volume-popup { left: calc(50% - 32px); transform: none; }
-html.webf-engine .player-volume-slider { width: 28px; height: 112px; transform: none; }
-/* 原生滑块自己读 renderStyle 决定画布尺寸，而**旧版宿主**（≤ 2.11.5）读的是 CSS
-   **声明值**而不是解析后的像素：`width: 100%` 在那儿存的是 `1.0`，滑块会塌成
-   1×1 —— 既看不见、也点不到（可命中区域只剩左上角一个像素）。宿主已修
-   （`songloft_slider.dart` 的 `_resolveSide` 改读 `computedValue`），但插件要在旧
-   宿主上也能用，所以这里保留显式 px：px 的声明值本身就是像素，新旧宿主都走对。 */
-html.webf-engine .player-volume-slider .sl-slider-native { width: 28px; height: 112px; }
-
 /* PlayerBar 工具区：弹层位置由 JS 通过 el.closest('.player-bar-tools') 自动检测并右对齐。 */
-html.webf-engine .fullscreen-player { height: 100vh; background: var(--md-surface, #FEF7FF); }
-html.webf-engine .fullscreen-playback { background: var(--md-surface, #FEF7FF); }
-html.webf-engine .settings-page { height: 100vh; min-height: 0; }
-html.webf-engine .settings-scroll-body { height: calc(100vh - 56px); min-height: 0; overflow: hidden; }
-html.webf-engine .settings-nav { height: 100%; overflow-y: auto; }
-html.webf-engine .settings-content { height: 100%; overflow-y: auto; }
 .sleep-timer-status { min-height: 48px; display: flex; align-items: center; gap: 8px; padding: 8px 8px 8px 16px; color: var(--md-primary); font-size: 14px; font-weight: 500; }
 .sleep-timer-status > span:not(.sl-icon) { min-width: 0; flex: 1; }
 .sleep-timer-status > button { min-height: 32px; padding: 0 10px; border: 0; background: transparent; color: var(--md-error); font-size: 13px; }
@@ -405,7 +320,7 @@ html.webf-engine .settings-content { height: 100%; overflow-y: auto; }
    这一处没有单独在设备上复现过 —— 睡眠定时弹层要求已选中真实音箱，测试环境进不去。 */
 .sleep-timer-custom { display: flex; align-items: center; gap: 8px; margin-top: 10px; }
 .sleep-timer-custom > .grid-cell { flex: 1 1 auto; }
-.sleep-timer-custom .sl-input, .sleep-timer-custom .sl-input-native { width: 100%; min-width: 0; }
+.sleep-timer-custom .sl-input { width: 100%; min-width: 0; }
 .sleep-timer-custom .sl-button { min-height: 40px; }
 .sleep-timer-error { display: block; margin-top: 6px; color: var(--md-error); font-size: 12px; }
 .player-full-progress { width: 100%; display: grid; grid-template-columns: 45px minmax(0, 1fr) 45px; align-items: center; gap: 8px; }
@@ -467,12 +382,8 @@ html.webf-engine .settings-content { height: 100%; overflow-y: auto; }
 .preset-key-link { display: inline-block; margin-top: 6px; font-size: 12px; color: var(--md-primary, #4f7cff); text-decoration: none; cursor: pointer; }
 .preset-key-link:hover { text-decoration: underline; }
 .field-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; margin-top: 16px; }
-/* 用 flex 而不是 grid：这个容器在 APP（WebF）里会「算出布局但不绘制」——页内探针
-   getBoundingClientRect 返回正常的 309x42，屏幕上整行却不存在，uiautomator 里也没有
-   对应节点（songloft-org/songloft-plugin-miot#79）。注意本文件其余 grid 容器
-   （.day-grid / .player-full-progress / .fullscreen-desktop-stage）是正常绘制的，
-   精确触发条件没定死，但同页的 flex 容器（.inline-fields / .field-actions）从来没出过
-   这个问题，所以两列表单行统一走 flex，不要退回 grid。
+/* 用 flex 而不是 grid（songloft-org/songloft-plugin-miot#79 历史结论）：
+   两列表单行统一走 flex，不要退回 grid。
    与 grid 的唯一行为差异：只剩一个子项时（另一个被 v-if 去掉）会 grow 到整行宽，
    grid 时代是留半列空白。 */
 .field-grid { display: flex; flex-wrap: wrap; gap: 0 16px; }
@@ -482,20 +393,16 @@ html.webf-engine .settings-content { height: 100%; overflow-y: auto; }
 .grid-cell { min-width: 0; }
 .inline-fields { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-width: 0; }
 /* AI「模型」行（下拉 + 刷新按钮）。
-   必须复用 .inline-fields 而不手写 `display:flex;gap`：
-   WebF 下 flex 子项若没有**显式 flex 尺寸**就不会收缩 —— 下拉的 .sl-select-wrap 自带
-   width:100%，浏览器按 flex-shrink 压缩它给按钮让位，WebF 却把它当固有宽度，于是按钮
-   被挤出本列、叠画到右列「超时（秒）」上（mac 客户端实测；机理与 handoff.md 第 21 条
-   的 base size 缺陷同源）。下面两条与 .inline-fields 的子项规则同值，重复声明是把
+   必须复用 .inline-fields 的子项规则：flex 子项没有显式 flex 尺寸就不会收缩，
+   下拉的 .sl-select-wrap 自带 width:100%，不给 flex-basis 会把按钮挤出本列。
+   下面两条与 .inline-fields 的子项规则同值，重复声明是把
    「这行必须绕着 .inline-fields 走」这条约束显式写在这里，别退回裸 inline-flex。 */
 .model-row > .sl-select-wrap { min-width: 0; flex: 1 1 200px; }
 .model-row > .sl-button { flex: 0 0 auto; }
-/* 自定义模型输入框不要套 auto 宽的裸 div：flutter-cupertino-input 是 RenderWidget，
-   包一层会被 WebF 按放松约束量到视口宽（SlButton.vue 顶部注释同源）而铺满整行。
+/* 自定义模型输入框不要套 auto 宽的裸 div（会按放松约束量到视口宽而铺满整行）。
    直接挂在 .field 下（与同列的「超时」输入框结构一致），间距用自身 margin-top。 */
 .model-custom-input { width: 100%; margin-top: 8px; }
 .inline-fields > .sl-input,
-.inline-fields > .sl-input-native,
 .inline-fields > .sl-select,
 .inline-fields > .sl-select-wrap { min-width: 0; flex: 1 1 200px; }
 .inline-fields > .sl-button { flex: 0 0 auto; }
@@ -554,7 +461,7 @@ html.webf-engine .settings-content { height: 100%; overflow-y: auto; }
 .command-keyword > button { width: 24px; height: 24px; flex: 0 0 24px; display: inline-flex; align-items: center; justify-content: center; padding: 0; border: 0; border-radius: 50%; background: transparent; color: inherit; }
 .command-keyword > button:hover { background: rgba(0, 0, 0, .08); }
 .command-add-row { display: flex; align-items: center; gap: 6px; min-width: 0; }
-.command-add-row > .sl-input, .command-add-row > .sl-input-native { min-width: 0; flex: 1; }
+.command-add-row > .sl-input { min-width: 0; flex: 1; }
 .command-add-row > .sl-button { flex: 0 0 40px; }
 .command-test-panel { margin: 4px 20px 20px; padding: 14px; border-radius: var(--md-radius-md); background: var(--md-surface-container-high); }
 .command-test-panel-inset { margin-right: 0; margin-left: 0; }
@@ -697,10 +604,9 @@ html.webf-engine .settings-content { height: 100%; overflow-y: auto; }
   .settings-mobile-menu .settings-nav-title { font-size: 16px; line-height: 24px; }
   .settings-content, .miot-section, .miot-card { width: 100%; max-width: 100%; }
   .inline-fields > .sl-input,
-  .inline-fields > .sl-input-native,
   .inline-fields > .sl-select,
   .inline-fields > .sl-select-wrap { flex-basis: 180px; }
-  .webhook-fields > .sl-input, .webhook-fields > .sl-input-native { flex-basis: 100%; }
+  .webhook-fields > .sl-input { flex-basis: 100%; }
   .field-actions { justify-content: flex-start; }
   .voice-command-header { gap: 6px; }
   .command-param { max-width: 38%; }

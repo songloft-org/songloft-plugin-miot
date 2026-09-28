@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onUnmounted, ref, watch } from 'vue';
 
-// 手写可拖动滚动条：WebF 的原生滚动条命中区太窄，长歌单里几百首歌很难快速跳位。
+// 手写可拖动滚动条：原生滚动条命中区太窄，长歌单里几百首歌很难快速跳位。
 // 依赖 MainPage 的定高虚拟列表：totalContentHeight = totalItems × rowHeight，
 // 拇指位置与真实 scrollTop 一一对应，拖动时按 fraction 反算目标 scrollTop 交给
 // MainPage 挪窗口 + setScrollTop。

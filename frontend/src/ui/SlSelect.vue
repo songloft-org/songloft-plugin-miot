@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue';
 import type { SelectOption } from '../types';
-import { isWebFRuntime } from '../runtime';
 import SlButton from './SlButton.vue';
 import SlIcon from './SlIcon.vue';
 import SlInput from './SlInput.vue';
@@ -17,7 +16,7 @@ const props = withDefaults(
     disabled?: boolean;
     /**
      * 面板顶部显示搜索框，按关键词过滤选项（songloft-org/songloft#410）。
-     * 只对 WebF 自绘面板生效；非 WebF 走原生 `<select>`，浏览器自带键入跳转。
+     * 走自绘面板；非 searchable 走原生 `<select>`，浏览器自带键入跳转。
      */
     searchable?: boolean;
     /** 搜索框占位文案。`ariaLabel` 是「选择歌单」这种动宾短语，拼进去会变「搜索选择歌单」。 */
@@ -89,8 +88,7 @@ function scrollNearestBy(el: HTMLElement, delta: number): number {
   return 0;
 }
 
-// 面板用 position: fixed + JS 坐标，逃逸滚动容器裁切。WebF 里 fixed 确实锚定视口、
-// getBoundingClientRect 也确实返回视口坐标，两者自洽，所以这套算法在 WebF 下成立。
+// 面板用 position: fixed + JS 坐标，逃逸滚动容器裁切。
 //
 // allowScroll 只在「刚打开」时为 true：APP 里插件视口只有 ~520 逻辑 px 高（宿主
 // appbar + 底部导航吃掉其余），表单靠下的下拉一定满足 spaceBelow < 320，旧逻辑会
@@ -171,7 +169,7 @@ function select(value: string) {
   emit('update:modelValue', value);
 }
 
-// 点外部 / Esc 关闭：此前 webf 自定义下拉没有这些处理，打开后点别处面板一直不消失。
+// 点外部 / Esc 关闭：自绘下拉需要这些处理，打开后点别处面板才会消失。
 function onPointerDown(event: PointerEvent) {
   if (!opened.value) return;
   const target = event.target as Node | null;
@@ -224,17 +222,15 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <!-- searchable 的下拉在浏览器里也要走自绘面板：原生 `<select>` 塞不进搜索框，
-       只有浏览器自带的「键入跳到首字母匹配项」，那是跳转而不是过滤，对中文歌单名
-       基本不工作。而旧版原生前端用的是自定义弹层、在浏览器里**是有**搜索框的，
-       只修 WebF 分支等于把 songloft-org/songloft#410 的回归留了一半在 Web 端。
-       代价：这几个下拉在浏览器里失去原生方向键选择与手机浏览器的系统选择器。
+  <!-- searchable 的下拉走自绘面板：原生 `<select>` 塞不进搜索框，只有浏览器自带的
+       「键入跳到首字母匹配项」，那是跳转而不是过滤，对中文歌单名基本不工作。
+       代价：这几个下拉失去原生方向键选择与手机浏览器的系统选择器。
 
        条件用 `searchable` 而不是 `showSearch`：后者会让同一个下拉在选项数跨过 5 时
-       在原生 select 与自绘面板之间来回换渲染分支、外观跳变。用 `searchable` 则两端
-       规则完全对称 —— 选项少时同样是自绘面板、同样没有搜索行。 -->
+       在原生 select 与自绘面板之间来回换渲染分支、外观跳变。用 `searchable` 则规则
+       完全对称 —— 选项少时同样是自绘面板、同样没有搜索行。 -->
   <div
-    v-if="isWebFRuntime || searchable"
+    v-if="searchable"
     ref="wrapper"
     class="sl-select-wrap"
     :class="{ 'sl-select-wrap-open': opened }"

@@ -40,7 +40,7 @@ let mounted = false;
 //
 // 为什么必须虚拟化（songloft-org/songloft-plugin-miot#96）：以前整份歌单一次性渲染，
 // 1900 首歌就是 1900 个 SongRow 组件、1900 个封面防抖定时器、1900 个排队的封面请求。
-// 原生 `webf-list-view` 的懒构建只省下 Flutter 侧的绘制，这些开销全在 JS 侧照付，
+// 列表容器的懒构建只省下绘制，组件实例与定时器这些开销全在 JS 侧照付，
 // 于是「点定位卡好久 → 封面全空白 → 拖动很卡」：3 个并发封面槽被约 1900 个屏外行占满，
 // 可见行永远排不上队。
 //
@@ -79,10 +79,9 @@ const tailSpacerHeight = computed(() => Math.max(0, (totalSongs.value - windowEn
 /**
  * 窗口位置的轮询兜底。
  *
- * 主路径是 `@scroll`，实测在真实 WebF 上是可靠的（`div.sl-list-view-html` 分支）。留这一路
- * 是因为失败代价不对称：事件万一不来，窗口就永不推进、往下滚全是空白，比不虚拟化更糟；
- * 而轮询的代价只是每 120ms 读一次 `scrollTop` 加几步算术。WebF 的 `_dispatchScrollEvent`
- * 只在挂了监听器时才派发，不同客户端版本上的行为不必然一致，所以不赌它。
+ * 主路径是 `@scroll`。留这一路轮询兜底是因为失败代价不对称：事件万一不来，窗口就
+ * 永不推进、往下滚全是空白，比不虚拟化更糟；而轮询的代价只是每 120ms 读一次
+ * `scrollTop` 加几步算术。不同宿主环境上的事件派发行为不必然一致，所以不赌它。
  */
 const WINDOW_POLL_MS = 120;
 let windowPollTimer: ReturnType<typeof setInterval> | null = null;
@@ -105,8 +104,8 @@ function startWindowPoll(): void {
  *
  * 三级取值：真实渲染出来的行 > CSS 变量 > 默认 64。
  * 以真实行优先是因为整套换算的误差会被行号放大——行高差 1px，滚到第 1900 行就偏出约
- * 2000px（三十屏）。而前两级都可能拿不到：WebF 对自定义属性的 getComputedStyle 不保证
- * 有返回值，列表还没渲染时也量不到行。拿不到就退回上一级，绝不会写入 0。
+ * 2000px（三十屏）。而前两级都可能拿不到：getComputedStyle 对自定义属性不保证有
+ * 返回值，列表还没渲染时也量不到行。拿不到就退回上一级，绝不会写入 0。
  */
 function calibrateRowHeight(): void {
   const row = document.querySelector<HTMLElement>('.song-row');
@@ -163,9 +162,9 @@ function resetSongWindow(): void {
 /**
  * 拖动/点按自定义滚动条时的落点。fraction 是 [0, 1] 的目标滚动位置比例。
  *
- * 与 scrollToIndex 的路子一致：先按目标位置推进窗口再写 scrollTop，否则 WebF 的
- * ListView.builder 会因目标区域尚未布局把 maxScrollExtent 钳掉，写入被截断。这里
- * 还额外设置 locateGuardUntilMs，防止 120ms 轮询把窗口拽回旧位置。
+ * 与 scrollToIndex 的路子一致：先按目标位置推进窗口再写 scrollTop，否则目标区域
+ * 尚未布局时滚动范围未撑开、写入会被截断。这里还额外设置 locateGuardUntilMs，
+ * 防止 120ms 轮询把窗口拽回旧位置。
  */
 function seekToFraction(fraction: number): void {
   if (!mounted) return;
@@ -205,7 +204,7 @@ function measureListHeight(attempt = 0): void {
     const height = Math.max(128, Math.round(listBottom - listTop));
     list.style.height = `${height}px`;
     // 窗口大小按可视区行数算，所以量到高度后要同步给虚拟列表。
-    // 行也已经布局完了，顺便校准行高（这条重试阶梯本来就是等 WebF 布局的）。
+    // 行也已经布局完了，顺便校准行高（这条重试阶梯本来就是等首次布局的）。
     listHeight.value = height;
     calibrateRowHeight();
     return;
@@ -253,11 +252,11 @@ function notifyLocal(error: unknown) { console.warn('[miot] play failed', messag
  * 滚到指定行并居中。
  *
  * 行是定高的，所以目标位置就是 `index × 行高`，不再需要旧写法那套
- * 「等新行布局完 → 量 getBoundingClientRect → 相对位移」——那套在 WebF 上要跟异步布局
- * 赛跑，量到零尺寸就把 scrollTop 冲成 0（表现为"定位跳回第一屏"）。
+ * 「等新行布局完 → 量 getBoundingClientRect → 相对位移」——那套要跟异步布局赛跑，
+ * 量到零尺寸就把 scrollTop 冲成 0（表现为"定位跳回第一屏"）。
  *
- * 仍要重试，但重试的判据变成「写进去的 scrollTop 生效了没有」：WebF 的滚动范围要等
- * Flutter 侧布局完占位条才成立，在那之前写入会被钳掉。
+ * 仍要重试，但重试的判据变成「写进去的 scrollTop 生效了没有」：滚动范围要等
+ * 布局完占位条才成立，在那之前写入会被钳掉。
  */
 function scrollToIndex(index: number, attempt = 0): void {
   if (!mounted) return;

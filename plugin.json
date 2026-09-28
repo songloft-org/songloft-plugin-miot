@@ -10,7 +10,7 @@
   "entryPath": "miot",
   "main": "main.js",
   "minHostVersion": "2.9.5",
-  "renderEngine": "webf",
+  "renderEngine": "webview",
   "permissions": [
     "storage",
     "songs.read",

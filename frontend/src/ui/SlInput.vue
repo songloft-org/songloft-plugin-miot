@@ -1,7 +1,5 @@
 <script setup lang="ts">
-import { ref } from 'vue';
-import { useNativeUI } from '../runtime';
-import { bindNativeProps } from './nativeProps';
+import { withDefaults } from 'vue';
 
 const props = withDefaults(
   defineProps<{
@@ -20,32 +18,11 @@ const emit = defineEmits<{
   change: [];
   submit: [];
 }>();
-const native = ref<HTMLElement | null>(null);
-bindNativeProps(native, () => ({
-  val: props.modelValue,
-  disabled: !!props.disabled,
-  clearable: !!props.clearable,
-}));
-
-function onNativeInput(event: Event) {
-  emit('update:modelValue', String((event as CustomEvent).detail ?? ''));
-}
 </script>
 
 <template>
-  <flutter-cupertino-input
-    v-if="useNativeUI"
-    :key="inputKey"
-    ref="native"
-    class="sl-input-native"
-    :type="type"
-    :placeholder="placeholder"
-    @input="onNativeInput"
-    @blur="emit('change')"
-    @submit="emit('submit')"
-  />
   <input
-    v-else
+    :key="inputKey"
     class="sl-input"
     :type="type"
     :value="modelValue"

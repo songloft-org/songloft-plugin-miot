@@ -17,9 +17,6 @@ const appBar = read('views/AppBar.vue');
 const publicIcon = fs.readFileSync(path.join(frontendRoot, 'public/icon.svg'), 'utf8');
 const switchComponent = read('ui/SlSwitch.vue');
 const sliderComponent = read('ui/SlSlider.vue');
-const iconFont = read('ui/iconFont.ts');
-const nativeProps = read('ui/nativeProps.ts');
-const mainEntry = read('main.ts');
 const viteConfig = fs.readFileSync(path.join(frontendRoot, 'vite.config.ts'), 'utf8');
 const selectComponent = read('ui/SlSelect.vue');
 const slListView = read('ui/SlListView.vue');
@@ -49,7 +46,7 @@ const app = fs.readFileSync(path.join(frontendRoot, '../static/js/app.js'), 'utf
 const html = fs.readFileSync(path.join(frontendRoot, '../static/index.html'), 'utf8');
 const manifest = JSON.parse(fs.readFileSync(path.join(frontendRoot, '../plugin.json'), 'utf8'));
 
-assert.equal(manifest.renderEngine, 'webf');
+assert.equal(manifest.renderEngine, 'webview');
 assert.match(html, /static\/js\/app\.js/);
 assert.match(html, /static\/css\/style\.css/);
 assert.match(api, /apiGet\(path\)/);
@@ -57,16 +54,15 @@ assert.match(api, /postEnvelope/);
 assert.match(store, /status\/ws/);
 assert.match(store, /startStatusPolling/);
 // 状态 WebSocket 的断线回收（songloft-org/songloft-plugin-miot#96 第 4 条）：
-// close 必须带关闭码，否则 webf 0.24.27 的 websocket.dart:145 `client.closeCode!`
-// 在弱网断线时抛错，JS 侧 onclose 永不触发、状态流静默停更；
-// onerror 必须自己走完恢复，WebF 的连接失败只发 error 不发 close。
+// close 必须带关闭码，否则部分实现会在派发 close 时抛错、onclose 永不触发；
+// onerror 必须自己走完恢复，不能指望 close 事件兜底。
 assert.match(store, /const STATUS_CLOSE_CODE = 1000/);
 assert.match(store, /socket\.close\(STATUS_CLOSE_CODE, STATUS_CLOSE_REASON\)/);
 assert.doesNotMatch(store, /\.close\(\)/);
 assert.match(store, /statusSocket\.onerror = \(\) => abandonStatusSocket\(gen, true\)/);
 assert.match(store, /STATUS_OPEN_TIMEOUT_MS/);
-// readyState 常量只能读实例：WebF 的 WebSocket polyfill 在构造函数里把四个常量挂到
-// 实例上，类上没有静态同名成员，`WebSocket.OPEN` / `WebSocket.CLOSED` 恒为 undefined。
+// readyState 常量只能读实例：部分宿主的 WebSocket 实现把常量挂在实例上，
+// 类上没有静态同名成员，`WebSocket.OPEN` / `WebSocket.CLOSED` 可能是 undefined。
 assert.doesNotMatch(store, /=== WebSocket\.(OPEN|CLOSED)/);
 assert.match(store, /statusSocket\.readyState === statusSocket\.OPEN/);
 assert.match(store, /external_search_sources/);
@@ -75,9 +71,7 @@ assert.match(store, /await selectCurrentPlaylistOnEntry\(\)/);
 assert.match(store, /pendingConfigPatch/);
 assert.match(store, /while \(pendingConfigPatch\)/);
 assert.doesNotMatch(switchComponent, /flutter-cupertino-switch/);
-// SlButton 不得恢复 cupertino 分支：WebF flex-wrap 容器里 auto 宽度的
-// RenderWidget 基线被测成视口宽 → 按钮超出屏幕、每个独占一行
-// （songloft-org/songloft#440，机理见主仓 docs/webf/handoff.md 第 21 条）。
+// SlButton 不得恢复原生控件分支：单一 HTML 实现（songloft-org/songloft#440）。
 assert.doesNotMatch(slButton, /flutter-cupertino-button/);
 assert.match(selectComponent, /getBoundingClientRect\(\)/);
 assert.match(selectComponent, /sl-select-option-on/);
@@ -93,8 +87,7 @@ assert.match(selectComponent, /function scrollNearestBy/);
 assert.match(selectComponent, /positionPanel\(allowScroll = false\)/);
 assert.match(selectComponent, /nextTick\(\(\) => positionPanel\(true\)\)/);
 assert.match(selectComponent, /if \(!opened\.value \|\| repositioning\) return;/);
-// fixed 的面板本体不能自己滚动：WebF 会把它自己的 scrollTop 计入 fixed 的绘制补偿
-// （box_model.dart:1807），一滚面板就整体下移（songloft-org/songloft#397）。
+// fixed 的面板本体不能自己滚动：一滚面板就整体下移（songloft-org/songloft#397）。
 // 滚动必须落在内层，且 window 上的 capture scroll 监听要忽略面板内部的滚动。
 assert.doesNotMatch(style, /\.sl-select-panel \{[^}]*overflow(-y)?: (auto|scroll)/);
 assert.match(style, /\.sl-select-panel \{[^}]*overflow: hidden/);
@@ -103,15 +96,13 @@ assert.match(selectComponent, /class="sl-select-panel-scroll"/);
 assert.match(selectComponent, /scrollStyle\.value = \{ maxHeight: `\$\{Math\.round\(height\) - PANEL_BORDER - searchH\}px` \}/);
 assert.doesNotMatch(selectComponent, /maxHeight: `\$\{Math\.round\(height\)\}px`/);
 assert.match(selectComponent, /if \(target && panel\.value\?\.contains\(target\)\) return;/);
-// 歌单搜索（songloft-org/songloft#410）：WebF 重构时把旧版带搜索框的歌单弹层换成了
+// 歌单搜索（songloft-org/songloft#410）：重构时把旧版带搜索框的歌单弹层换成了
 // 通用 SlSelect，过滤功能整个丢了。搜索行在滚动容器外，所以面板总高与内层 maxHeight
 // 都必须给它让位；SEARCH_ROW_H 与 CSS 的 height 要对齐，否则面板会算矮一行。
 assert.match(selectComponent, /searchable\?: boolean/);
-// searchable 的下拉在浏览器里也要走自绘面板：原生 <select> 塞不进搜索框，只修 WebF
-// 分支会把回归留一半在 Web 端（旧版原生前端在浏览器里是有搜索框的）。
+// searchable 的下拉走自绘面板：原生 <select> 塞不进搜索框。
 // 条件必须是 searchable 而非 showSearch，否则选项数跨过阈值时渲染分支会来回跳。
-assert.match(selectComponent, /v-if="isWebFRuntime \|\| searchable"/);
-assert.doesNotMatch(selectComponent, /v-if="isWebFRuntime"/);
+assert.match(selectComponent, /v-if="searchable"/);
 assert.match(selectComponent, /const SEARCH_MIN_OPTIONS = 5/);
 assert.match(selectComponent, /props\.searchable && props\.options\.length > SEARCH_MIN_OPTIONS/);
 assert.match(selectComponent, /const SEARCH_ROW_H = 48/);
@@ -152,8 +143,6 @@ assert.match(mainPage, /@click="openDevicePicker"/);
 // wrap 不再创建层叠上下文，面板 z-index 300 直接在根层叠上下文生效（songloft-org/songloft#432）
 assert.doesNotMatch(style, /\.sl-select-wrap\b[^{]*\{[^}]*z-index/);
 assert.match(style, /\.miot-main-appbar[\s\S]*position: fixed/);
-assert.match(style, /html\.webf-engine \.miot-app \* \{ transform-origin: 0 0; \}/);
-assert.match(style, /html\.webf-engine \.player-volume-slider[^}]*transform: none/);
 assert.match(style, /\.settings-scroll-body[^}]*height: calc\(100dvh - 56px\)[^}]*overflow: hidden/);
 assert.match(style, /\.switch-track::after[^}]*transition: transform/);
 assert.match(style, /\.switch input:checked ~ \.switch-track::after[^}]*translateX\(20px\)/);
@@ -171,8 +160,7 @@ assert.match(runtime, /devicePickerOpen/);
 assert.match(runtime, /if \(state\.confirm\.open\) \{[\s\S]*resolveConfirm\(false\)/);
 assert.match(runtime, /navigation\.devicePickerOpen = false/);
 assert.match(rootApp, /v-if="navigation\.page === 'settings'"/);
-// 刻意不套 KeepAlive：WebF 重新挂载缓存子树时不重排，第二次打开播放器整块不可见
-// （songloft-org/songloft-plugin-miot#81）。
+// 刻意不套 KeepAlive（songloft-org/songloft-plugin-miot#81 历史结论）。
 assert.match(rootApp, /<FullscreenPlayer v-if="navigation\.page === 'player'" \/>/);
 assert.doesNotMatch(rootApp, /<KeepAlive>/);
 assert.doesNotMatch(rootApp, /FullscreenPlayer v-show/);
@@ -191,13 +179,13 @@ assert.match(mainPage, /window\.addEventListener\('resize', remeasureList\)/);
 assert.match(mainPage, /miot-page-with-player/);
 assert.match(style, /--miot-list-height: clamp\(240px, calc\(100vh - 254px\), 720px\)/);
 assert.match(style, /\.sl-list-view\s*\{[^}]*height: var\(--miot-list-height\)/);
-assert.match(slListView, /class="sl-list-view sl-list-view-html"/);
+assert.match(slListView, /class="sl-list-view"/);
 assert.doesNotMatch(mainPage, /:height="'var\(--miot-list-height\)'"/);
 
 // #96 回归测试：歌曲列表必须是定高双向虚拟列表。
 // 以前整份歌单一次性渲染，1900 首就是 1900 个 SongRow + 1900 个封面请求排在 3 个并发槽后面，
-// 表现为“点定位卡好久、封面全空白、拖动很卡”。原生 webf-list-view 的懒构建只省 Flutter 侧绘制，
-// 这些开销全在 JS 侧照付，所以必须在 JS 侧就只渲染窗口内的行。
+// 表现为“点定位卡好久、封面全空白、拖动很卡”。开销全在 JS 侧，
+// 所以必须在 JS 侧就只渲染窗口内的行。
 assert.match(mainPage, /renderedSongs = computed\(\(\) => visibleSongs\.value\.slice\(windowStart\.value, windowEnd\.value\)\)/);
 assert.match(mainPage, /leadSpacerHeight = computed\(\(\) => windowStart\.value \* rowHeight\.value\)/);
 assert.match(mainPage, /tailSpacerHeight = computed\(\(\) => Math\.max\(0, \(totalSongs\.value - windowEnd\.value\) \* rowHeight\.value\)\)/);
@@ -209,13 +197,11 @@ assert.match(mainPage, /class="song-list-spacer" :style="\{ height: `\$\{tailSpa
 // 占位条按“行号 × 行高”算，所以行高必须是精确值，不能只给 min-height。
 assert.match(style, /\.song-row \{[^}]*height: var\(--miot-row-height\)/);
 assert.doesNotMatch(style, /\.song-row \{[^}]*min-height: var\(--miot-row-height\)/);
-// 原生列表也要绑 @scroll：WebF 只在挂了监听器时才派发 DOM scroll，不绑窗口就永不推进。
-assert.match(slListView, /<webf-list-view[\s\S]*?@scroll="emit\('scroll', \$event\)"/);
-// #444 回归测试：歌单列表绝不能走原生 webf-list-view 分支。ListView.builder 不随 Vue 对
-// childNodes 的动态 patch（滑动窗口行 + 高度变化的占位条）重新渲染，滚过初始窗口后列表区
-// 持续空白（Android 14 WebF 0.24.27 真机、2000 首歌单实测；div 分支同手势脚本 A/B 零空白）。
-assert.match(runtime, /export const useNativeList = false/);
-assert.doesNotMatch(runtime, /useNativeList = nativeMemberProbe/);
+// 列表必须绑 @scroll：不绑窗口就永不推进。
+assert.match(slListView, /<div[\s\S]*?@scroll="emit\('scroll', \$event\)"/);
+// #444 回归测试：歌单列表是 div 滚动容器（overflow 滚动的 scrollHeight 是子元素
+// 真实高度之和，行为确定）。
+assert.doesNotMatch(slListView, /webf-list-view/);
 // #448 回归测试：窗口盖不住可视区时必须无条件跟上，不能被 WINDOW_STEP_ROWS 滞后阈值挡住。
 // desired 被 max(0, …) 削去上缓冲，顶部前 12 行里窗口起点就等于首个可见行；快滑下去再快滑回顶时，
 // 回滑途中的采样会把 rawWindowStart 停在 1..3，回到 scrollTop=0 那次漂移只有 1..3 行被跳过，
@@ -225,13 +211,13 @@ assert.match(mainPage, /if \(uncovered \|\| Math\.abs\(desired - rawWindowStart\
 // 事件不来的客户端上还要有轮询兜底，否则往下滚全是空白，比不虚拟化更糟。
 assert.match(mainPage, /windowPollTimer = setInterval/);
 assert.match(mainPage, /clearInterval\(windowPollTimer\)/);
-// #374 回归测试：定位当前播放歌曲前必须校验 WebF 是否已完成布局（否则 scrollTop 会被算成 0，
+// #374 回归测试：定位当前播放歌曲前必须校验布局已完成（否则 scrollTop 会被算成 0，
 // 表现为“定位功能始终回第一屏”），不允许在拿到零尺寸测量值时直接应用 scrollTop。
 // 现在改成定高换算，判据也从“行的尺寸”变成“可视区高度 + 写入后 scrollTop 是否真落到位”。
 assert.match(mainPage, /const viewport = list\.clientHeight\(\);\s*\n\s*if \(viewport <= 0\) \{/);
 assert.match(mainPage, /locateTimer = setTimeout\(\(\) => scrollToIndex\(index, attempt \+ 1\)/);
 assert.match(mainPage, /if \(Math\.abs\(list\.scrollTop\(\) - target\) > rowHeight\.value\) scrollToIndex\(index, attempt \+ 1\)/);
-// 封面并发槽必须有兜底归还：WebF 存在 load/error 都不发的情况，漏满 3 个槽后列表封面永久空白。
+// 封面并发槽必须有兜底归还：load/error 都不发时，漏满 3 个槽后列表封面永久空白。
 assert.match(songRow, /COVER_SLOT_WATCHDOG_MS/);
 assert.match(songRow, /coverWatchdog = setTimeout/);
 assert.match(slListView, /defineEmits<\{ scroll/);
@@ -248,16 +234,15 @@ assert.match(fullscreenPlayer, /@error="onCoverError"/);
 
 // #86 回归测试（第 1 条「切标签回来封面永久丢失」）。
 // 上一次修的方式是「监听 visibilitychange 把 coverFailed 置回 false」，两处都不成立：
-//   ① WebF 只在 App 级前后台切换时派发 visibilitychange，Tab 切换在 JS 侧完全不可见，
-//      所以那个 handler 是死代码（现已由客户端的 setPageVisible 补上真通知）；
-//   ② 光清标记不够 —— WebF 可能画着一个已 dispose 的 ui.Image（空白且**不发 error**），
-//      src 不变就不会重新解码。必须换掉 URL 才能触发 set src → 新 provider → 重新解码。
+//   ① 宿主在 Tab 切换时不一定派发 visibilitychange（现已由客户端的 setPageVisible 补上真通知）；
+//   ② 光清标记不够 —— 缓存可能持有已失效的解码结果（空白且**不发 error**），
+//      src 不变就不会重新加载。必须换掉 URL 才能触发重新解码。
 assert.match(covers, /export function useSongCover/);
 // 换 URL 的 nonce：这是与上一版修复的本质区别，不能退回成只清标记。
 assert.match(covers, /appendQuery\(url, '_r', String\(nonce\.value\)\)/);
 assert.match(covers, /nonce\.value \+= 1/);
-// 失败标记不能是粘滞闩锁：WebF 的 _onImageError 重试成功也照样派发 error，
-// 一次瞬时失败不该让这首歌整个会话都没封面。重试次数要有上限，真 404 不能无限重试。
+// 失败标记不能是粘滞闩锁：一次瞬时失败不该让这首歌整个会话都没封面。
+// 重试次数要有上限，真 404 不能无限重试。
 assert.match(covers, /MAX_COVER_RETRIES = \d+/);
 assert.match(covers, /retries >= MAX_COVER_RETRIES/);
 // 加载成功要把重试预算还回去：插件 Tab 靠 Offstage 保活，同一个组件实例可能活几小时，
@@ -271,28 +256,24 @@ assert.match(fullscreenPlayer, /@load="onCoverMobileLoad"/);
 assert.match(covers, /if \(retries >= MAX_COVER_RETRIES\) \{[\s\S]{0,400}?clearRetryTimer\(\);\s*failed\.value = true;/);
 assert.match(covers, /addEventListener\('visibilitychange'/);
 assert.match(covers, /removeEventListener\('visibilitychange'/);
-// 全屏页桌面/移动两个 stage 同时在 DOM 里，必须用不同的 w=：同 URL 的两个 <img> 会
-// 因 WebF 的 evict(..., includeLive: true) 互相把对方已解码的图毙掉。
+// 全屏页桌面/移动两个 stage 同时在 DOM 里，必须用不同的 w=：同 URL 的两个 <img>
+// 共享同一份缓存，会互相把对方已解码的图毙掉。
 assert.match(fullscreenPlayer, /useSongCover\(\(\) => state\.player\.current_song, 640\)/);
 
 // #96 第 3 次复发的回归测试：换 URL 还不够，必须换掉 <img> 元素本身。
-// 判据是用户实测的「封面丢失后**切歌也不出图**」—— 换歌本来就会走 WebF 完整的
-// set src → _cachedImageInfo = null → 重新加载，连它都救不回来，说明坏的不是 URL /
-// 缓存键，而是 ImageState 断链：_handleImageFrame 拿到帧后只能靠 state!.requestStateUpdate()
-// 重绘，_imageState 里没有 mounted 的 state 时两个分支都不成立、连 _hasPendingImageUpdate
-// 兜底都不置位 → 照常解码、照常发 load，但永远不重绘（空白且不发 error）。
-// 只有让 Vue 卸掉旧 <img> 重建，才能重走「首次打开全屏播放器」那条已知可用的挂载路径。
+// 判据是用户实测的「封面丢失后**切歌也不出图**」—— 换歌本来就会换 src 重新加载，
+// 连它都救不回来，说明坏的是元素的绘制链路本身。
+// 只有让 Vue 卸掉旧 <img> 重建，才能重走全新的挂载路径。
 assert.match(covers, /epoch: Ref<number>/);
 assert.match(covers, /epoch\.value \+= 1/);
 assert.match(playerBar, /<img [^>]*:key="coverEpoch"/);
 assert.match(fullscreenPlayer, /<img [^>]*:key="coverEpoch"/);
 assert.match(fullscreenPlayer, /<img [^>]*:key="coverMobileEpoch"/);
 // epoch 必须单调递增：换歌时 nonce 归 0 是对的（URL 本来就变了），但 key 一旦回退，
-// Vue 就有机会复用到那个绘制链路已经断掉的旧元素。
+// Vue 就有机会复用到坏掉的旧元素。
 assert.doesNotMatch(covers, /epoch\.value = 0/);
-// load / error 一个都不来时的看门狗：WebF 的 _updateImageData 任务链（Debounce →
-// addPostFrameCallback → registerCallbackOnceForFlutterAttached）卡死时页面侧没有任何
-// 可观测事件，onError 的重试路径永远不会被触发，必须自己补一次。
+// load / error 一个都不来时的看门狗：加载链路整体卡死时页面侧没有任何可观测事件，
+// onError 的重试路径永远不会被触发，必须自己补一次。
 assert.match(covers, /COVER_VISIBILITY_WATCHDOG_MS/);
 assert.match(covers, /armWatchdog\(\);/);
 // 每个可见期只补一次，别把「这张图真的是 404」变成无限重建。
@@ -317,13 +298,9 @@ const envTypes = fs.readFileSync(path.join(frontendRoot, 'env.d.ts'), 'utf8');
 assert.doesNotMatch(envTypes, /^\s*invokeHost\?\(/m);
 assert.match(envTypes, /favorite\?: \{/);
 
-// #86 第 4 条（「搜索框的 x 在框外」）**刻意没有对应断言**：用 WebF 探针在 370px 与
-// 1280px 两个宽度下量过真实产物 CSS，原生输入框直接做 flex item 时 `flex: 1` 是生效的
-// （输入框恰好占满剩余空间，两个按钮的右边界都落在 padding 内，overflow_px=0），
-// 这条 bug 复现不出来。反而「包一层 div 承担 flex」会让 WebF 把输入框的 `width: 100%`
-// 按包装层的**声明宽度**而非 flex 后的实际宽度解析，输入框反而变窄——所以不要那么改。
-// 复现步骤见 songloft-org/songloft-plugin-miot#86。
-assert.match(style, /\.search-bar input, \.search-bar \.sl-input-native\s*\{[^}]*flex: 1/);
+// 搜索框直接做 flex item，`flex: 1` 生效（songloft-org/songloft-plugin-miot#86 结论），
+// 不要包一层 div 承担 flex。
+assert.match(style, /\.search-bar input\s*\{[^}]*flex: 1/);
 assert.match(voiceSettings, /class="command-keywords"/);
 assert.match(voiceSettings, /addKeyword\(command, index\)/);
 assert.match(voiceSettings, /removeKeyword\(command, index, keywordIndex\)/);
@@ -394,21 +371,13 @@ assert.match(sleepTimerPopup, /choose\('songs', 5\)/);
 assert.match(style, /\.player-sleep-popup[^}]*width: 280px[^}]*max-width: calc\(100vw - 32px\)/);
 // PlayerBar 工具区弹层右对齐，防止右侧溢出视口（#388）。
 // 这件事已从 CSS override 迁到 positionPopup() 里算 fixed 坐标（弹层要脱离
-// .player-popup-anchor 的堆叠上下文，否则 WebF 下遮罩会压住弹层），所以断言落在
+// .player-popup-anchor 的堆叠上下文，否则遮罩会压住弹层），所以断言落在
 // 那段钳制逻辑上：工具区按 right 对齐，其余居中，两者都不许越过 edgeInset。
 assert.match(sleepTimerPopup, /const isBarTools = el\.closest\('\.player-bar-tools'\) !== null/);
 assert.match(sleepTimerPopup, /isBarTools\s*\n?\s*\? Math\.max\(edgeInset, rect\.right - maxWidth\)/);
 assert.match(sleepTimerPopup, /window\.innerWidth - maxWidth - edgeInset/);
-// WebF 下遮罩必须与弹层同一个挂载父级，否则透明遮罩会压住整个弹层、弹层内一切都点不到。
-// WebF 按包含块挂载 widget：fixed 挂到 <html>，absolute 留在最近的定位祖先里，于是
-// 遮罩的 z-index 231 在 <html> 层排序，而弹层的 232 只在 .player-popup-anchor 内有效，
-// 其子树高度由祖先（.fullscreen-playback 220 / .player-bar-shell 80）决定，双双输给 231。
-// 实测（Android WebF）点音量弹层里的静音按钮不会静音、只把弹层关掉。
+// 遮罩必须与弹层的 z-index 不冲突（songloft-org/songloft-plugin-miot 历史结论）。
 assert.match(style, /\.player-popup-dismiss \{ position: fixed; z-index: 231; inset: 0;/);
-assert.match(
-  style,
-  /html\.webf-engine \.player-popup-dismiss \{ position: absolute; inset: auto; top: -100vh; right: -100vw; bottom: -100vh; left: -100vw; \}/,
-);
 assert.match(sleepTimerPopup, /navigation\.playerPopup = props\.popupId;\s*emit\('refresh'\)/);
 assert.match(style, /\.fullscreen-stage\s*\{\s*flex: 1 1 0%/);
 assert.match(style, /\.fullscreen-mobile-slide \.fullscreen-cover-frame[^}]*height: 72vw[^}]*max-height: 320px/);
@@ -438,35 +407,13 @@ assert.match(style, /\.fullscreen-mobile-pager\s*\{[^}]*scroll-behavior: auto/);
 assert.match(modePopup, /player-mode-popup/);
 assert.match(volumePopup, /player-volume-popup/);
 assert.match(volumePopup, /orientation="vertical"/);
-assert.match(sliderComponent, /orientation: props\.orientation/);
+assert.match(sliderComponent, /type="range"/);
 
-// WebF 字体迟到竞态（songloft-org/songloft-plugin-miot#81）：
-// 图标必须能在字体到货后重建，原生滑块必须走 attribute 而不是 property。
-assert.match(iconFont, /export const iconFontReady/);
-assert.match(iconFont, /export const iconFontEpoch/);
-assert.match(iconFont, /getBoundingClientRect\(\)\.width/);
-assert.match(iconFont, /String\.fromCodePoint\(0xe88e\)/);
-assert.match(iconFont, /String\.fromCodePoint\(0xe25b\)/);
-assert.match(slIcon, /:key="iconFontEpoch"/);
-assert.match(slIcon, /iconFontReady\.value/);
-// 图标字体探针必须在 mount 之前装：它要抢到 WebF 字体懒加载的「第一个请求者」位置。
-// 只断言「在 createApp 之前」，不断言紧邻——中间已经多了一个
-// installListCoverVisibilityRecovery()，日后还会有别的 install*。
-assert.match(mainEntry, /installIconFontWatch\(\);[\s\S]*createApp\(App\)/);
-assert.doesNotMatch(mainEntry, /createApp\(App\)[\s\S]*installIconFontWatch\(\)/);
-assert.match(nativeProps, /export function bindNativeAttrs/);
-assert.match(nativeProps, /removeAttribute\(key\)/);
-assert.match(sliderComponent, /bindNativeAttrs\(native/);
-assert.doesNotMatch(sliderComponent, /bindNativeProps/);
-// PlayerProgress 也驱动 <songloft-slider>，同样只能走 attribute，否则 min/max
-// 恒为 0/100，拖动进度条 seek 到的位置是错的。
-assert.match(progress, /bindNativeAttrs\(nativeSlider/);
-assert.doesNotMatch(progress, /bindNativeProps/);
-// 原生滑块的 input 事件把新值放在 InputEvent.data 里（不是 CustomEvent.detail），
-// valueFrom 必须优先读 event.data，否则 UIEvent.detail（恒为 0）会被 ?? 当作有效值。
-assert.match(sliderComponent, /\(event as InputEvent\)\.data/);
-assert.match(progress, /\(event as InputEvent\)\.data/);
-assert.match(style, /html\.webf-engine \.player-volume-slider \.sl-slider-native[^}]*width: 28px[^}]*height: 112px/);
+// 图标字体内联进 CSS（songloft-org/songloft-plugin-miot#81），vite.config 的
+// assetsInlineLimit 负责这件事。
+// 滑块统一走原生 <input type="range">，读 event.target.value。
+assert.match(sliderComponent, /type="range"/);
+assert.match(progress, /type="range"/);
 assert.match(viteConfig, /assetsInlineLimit: 16 \* 1024/);
 assert.match(volumePopup, /function clampVolume\(value: number\)/);
 assert.match(volumePopup, /ref\(clampVolume\(props\.modelValue\)\)/);
@@ -493,9 +440,9 @@ assert.match(playlistHandler, /status\.state === 'stopped'/);
 assert.match(app, /MIoT/);
 assert.ok(app.length > 50000, '生产 bundle 过小，可能没有包含 Vue 页面');
 
-// WebF 只实现了 calc() / clamp()；CSS min() / max() 会被解析成 unknown 并当成 0，
-// 元素在 APP 里直接消失而浏览器完全正常。整份样式表不允许出现这两个函数。
-// minmax() 是 grid 轨道语法、由 grid.dart 解析，不受影响，要排除掉。
+// 刻意不用 CSS min() / max()（历史约束，songloft-org/songloft-plugin-miot#80）：
+// 一律改写成 width + max-width 这类对偶属性。
+// minmax() 是 grid 轨道语法，不受影响，要排除掉。
 const cssMathFunctions =
   style.replace(/\/\*[\s\S]*?\*\//g, '').match(/(?<![-\w])(?<!min)(?:min|max)\(/g) || [];
 assert.deepEqual(cssMathFunctions, [], `style.css 里不允许用 CSS min()/max()：${cssMathFunctions}`);
@@ -503,9 +450,7 @@ assert.match(style, /\.qr-box img[^}]*width: 100%; max-width: 200px/);
 assert.match(style, /\.toast \{[^}]*max-width: 520px/);
 assert.match(style, /\.toast-host[^}]*padding: 0 16px/);
 
-// WebF 会把这两个表单容器「算出布局但不绘制」：探针里 getBoundingClientRect 返回
-// 正常的 309x42，屏幕上和 uiautomator 里却整行都不存在
-//（songloft-org/songloft-plugin-miot#79）。同页的 flex 容器一直正常，故必须用 flex。
+// 这两个表单容器必须用 flex 而非 grid（songloft-org/songloft-plugin-miot#79 历史结论）。
 assert.match(style, /\.field-grid \{ display: flex; flex-wrap: wrap; gap: 0 16px; \}/);
 assert.match(style, /\.field-grid > \* \{ flex: 1 1 calc\(50% - 8px\); min-width: 0; \}/);
 assert.match(style, /\.field-grid > \* \{ flex-basis: 100%; \}/);
@@ -515,7 +460,7 @@ assert.ok(
   !gridClasses.includes('field-grid') && !gridClasses.includes('sleep-timer-custom'),
   `表单两列容器不能退回 display:grid：${gridClasses}`,
 );
-// 余下的 grid 容器（纯 button/section 子项）仍受「直接子项不能是 Sl* 控件」约束
+// 余下的 grid 容器（纯 button/section 子项）仍受「直接子项不能是 Sl* 控件」约束（历史结论）
 gridClasses.push('field-grid', 'sleep-timer-custom');
 const vueSources = fs
   .readdirSync(path.join(sourceRoot, 'views'), { recursive: true })
@@ -529,7 +474,7 @@ for (const [name, source] of vueSources) {
     assert.equal(
       offenders,
       null,
-      `views/${name}：.${gridClass} 的直接子项不能是原生控件，要包一层 div：${offenders}`,
+      `views/${name}：.${gridClass} 的直接子项不能是 Sl* 控件，要包一层 div：${offenders}`,
     );
   }
 }

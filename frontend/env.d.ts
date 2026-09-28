@@ -7,7 +7,6 @@ declare module '*.vue' {
 }
 
 interface Window {
-  webf?: unknown;
   flutter_inappwebview?: unknown;
   // ⚠️ 这份声明必须与主程序 `internal/jsplugin/assets/common.js` 末尾那个
   // `window.SongloftPlugin = { … }` 字面量对齐——**它才是公开成员的唯一真实来源**。
@@ -21,7 +20,6 @@ interface Window {
     apiPost(path: string, body?: unknown): Promise<unknown>;
     apiDelete(path: string): Promise<unknown>;
     getAuthToken?(): string;
-    onHostBack?(handler: () => boolean): void;
     host?: {
       isAvailable?(): boolean;
       openUrl?(params: { url: string }): Promise<unknown>;

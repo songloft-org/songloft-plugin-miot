@@ -18,10 +18,9 @@ let appliedNonce = 0;
 /**
  * 并发槽的兜底归还时限。
  *
- * 槽位本来只在 `load` / `error` 时归还，但 WebF 存在**两个事件都不发**的情形
- * （`covers.ts` 注释②：imageCache 驱逐后画着已 dispose 的 ui.Image）。那样每漏一个槽
- * 就少一份并发预算，漏满 3 个之后整个列表的封面就永久停在占位图
- * （songloft-org/songloft-plugin-miot#96「列表封面全空白」）。
+ * 槽位本来只在 `load` / `error` 时归还，但存在**两个事件都不发**的情形
+ * （见 `covers.ts` 的注释）。那样每漏一个槽就少一份并发预算，漏满 3 个之后整个
+ * 列表的封面就永久停在占位图（songloft-org/songloft-plugin-miot#96）。
  * 到点强制归还只放开预算，不影响那张图自己继续加载。
  */
 const COVER_SLOT_WATCHDOG_MS = 6000;
