@@ -988,7 +988,7 @@ export class PlaylistManager {
    *
    * 只探 2 次（最多 ~2.4s）：真续上的设备第一次就报 status=1；探失败的代价只是多一次带位置的重推
    * （听感是一下小卡顿），远小于让用户干等整首歌的静音。
-   * 只查主设备：分组成员各自的媒体上下文无法逐台补救，主设备没续上就整组重推 URL 对���。
+   * 只查主设备：分组成员各自的媒体上下文无法逐台补救，主设备没续上就整组重推 URL 对齐。
    * status 拿不到（-1，网络抖动 / 云端 502）时**按成功处理**——宁可少一次重推，也不要
    * 因为一次查询失败就把好端端在放的歌打断重来。
    *
@@ -1038,7 +1038,7 @@ export class PlaylistManager {
   /**
    * 获取当前播放位置（秒，曲内绝对位置）
    *
-   * 倍��下「墙钟经过秒数」不等于「曲内经过秒数」：1.5x 流播放 1 墙钟秒 = 1.5 曲内秒。
+   * 倍速下「墙钟经过秒数」不等于「曲内经过秒数」：1.5x 流播放 1 墙钟秒 = 1.5 曲内秒。
    * playStartTimeMs 在 playCurrent 里按 1/speed 反向缩放锚定（见那处的注释），
    * 这里要再按 speed 正向缩放回来，得到「从 seekSeconds 起、按 speed 倍速流逝」的曲内绝对位置。
    */
@@ -1928,7 +1928,7 @@ export class PlaylistManager {
           return;
         }
       }
-      // status != 1 或未上报 position���不计��，等下一轮
+      // status != 1 或未上报 position：不计入，等下一轮
     } catch (e) {
       songloft.log.warn('[PlaylistManager] duration probe query failed: ' + String(e));
     }
@@ -2048,7 +2048,7 @@ export class PlaylistManager {
   }
 
   /**
-   * 安排下一次外部停止����测。每次重新校准自动切歌定时器（resetAutoNextTimer / 续播等）
+   * 安排下一次外部停止探测。每次重新校准自动切歌定时器（resetAutoNextTimer / 续播等）
    * 都会经 startCheckTimer 重走这里，探测计划随之刷新，与切歌定时器保持同源。
    */
   private scheduleStopPoll(remainingBudgetMs: number): void {
