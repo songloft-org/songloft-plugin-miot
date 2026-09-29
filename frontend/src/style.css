@@ -161,7 +161,10 @@ h1, h2, h3, p { margin: 0; }
 .sl-slider { width: 100%; accent-color: var(--md-primary); }
 .sl-slider-wrap { width: 100%; display: flex; align-items: stretch; justify-content: center; }
 .sl-list-view { display: block; width: 100%; height: var(--miot-list-height); }
-.sl-list-view { overflow-y: auto; border-top: 1px solid var(--md-outline-variant); }
+/* 列表容器不画上边框：桌面由 .song-list-header 自己的底边线承担分隔；移动端表头
+   隐藏，容器上再画一条横贯整宽的线会让第一行（常是“正在播放”）上方凭空多出一根
+   主程序曲库没有的分隔线。 */
+.sl-list-view { overflow-y: auto; }
 
 /* 自定义可拖动滚动条：覆盖在 SlListView 右侧。原生滚动条命中区太窄，长歌单里几百首
    歌很难快速跳位（songloft-org/songloft#469）。命中区 32px 但只画一根 4px 轨道 + 6px 拇指，
@@ -227,8 +230,11 @@ h1, h2, h3, p { margin: 0; }
 /* 行高必须**精确**等于 --miot-row-height，不能只给 min-height：MainPage 的虚拟列表
    靠 `行号 × 行高` 算占位条高度和 scrollTop，行高哪怕差 1px，滚到第 1900 行也会偏出
    十几屏（songloft-org/songloft-plugin-miot#96）。box-sizing 是全局 border-box，
-   所以 64px 已含 7px×2 内边距与 1px 下边框，内容区 49px 正好放得下 48px 封面。 */
-.song-row { height: var(--miot-row-height); display: flex; align-items: center; gap: 12px; padding: 7px 8px; border-bottom: 1px solid var(--md-outline-variant); cursor: pointer; }
+   所以 64px 已含 7px×2 内边距，内容区 50px 正好放得下 48px 封面。
+   这里**不能**给 .song-row 加 border：主程序曲库的普通行是无外框的，行分隔线是
+   redesign.css 用 ::after 画的半像素发丝线（不占布局高度，也不受 Chrome 把
+   `border-width: .5px` 向上取整到 1px 的影响）。 */
+.song-row { height: var(--miot-row-height); display: flex; align-items: center; gap: 12px; padding: 7px 8px; cursor: pointer; }
 /* 虚拟列表上下占位条：撑出未渲染行的高度，让滚动条长度和真实列表一致。 */
 .song-list-spacer { flex: 0 0 auto; width: 100%; }
 .song-row-button { display: flex; align-items: center; gap: 12px; flex: 1; min-width: 0; border: 0; padding: 0; margin: 0; background: transparent; color: inherit; font: inherit; text-align: inherit; cursor: pointer; outline: none; -webkit-tap-highlight-color: transparent; }
@@ -253,7 +259,7 @@ h1, h2, h3, p { margin: 0; }
 .player-bar-progress-thumb { position: absolute; top: 50%; width: 10px; height: 10px; border-radius: 50%; background: var(--md-primary); transform: translate(-50%, -50%); pointer-events: none; box-shadow: var(--md-shadow-1); }
 .player-bar-progress:hover .player-bar-progress-track { height: 6px; }
 .player-bar-progress:hover .player-bar-progress-thumb { width: 14px; height: 14px; }
-.player-bar { box-sizing: border-box; width: 100%; max-width: 1200px; height: 73px; display: flex; align-items: center; gap: 16px; margin: 0 auto; padding: 0 16px; background: var(--md-surface); }
+.player-bar { box-sizing: border-box; width: 100%; max-width: 1200px; height: 73px; display: flex; align-items: center; gap: 16px; margin: 0 auto; padding: 0 16px; background: transparent; }
 .player-bar-left { display: flex; align-items: center; gap: 8px; min-width: 0; flex: 3; }
 .player-bar-info { display: flex; align-items: center; gap: 12px; min-width: 0; flex: 1; cursor: pointer; }
 .player-bar-info:focus-visible { outline: 2px solid var(--md-primary); outline-offset: -2px; border-radius: var(--md-radius-sm); }
@@ -375,7 +381,11 @@ h1, h2, h3, p { margin: 0; }
 .setting-row-title { font-size: 14px; }
 .setting-row-subtitle { margin-top: 2px; color: var(--md-on-surface-variant); font-size: 12px; line-height: 17px; }
 .setting-row-control { flex: 0 0 auto; }
-.form-body { min-width: 0; padding: 16px 20px 4px; }
+.form-body { min-width: 0; padding: 16px 20px; }
+/* 表单项之间由自身 margin 保持节奏，最后一项交给 form-body 的对称内边距收尾。
+   旧版 bottom padding 只有 4px，并依赖 .field 的 margin-bottom 补足；直接放置
+   .inline-fields / SlInput 时没有这层 margin，输入框就会贴近卡片底边。 */
+.form-body > :last-child { margin-bottom: 0; }
 .field { min-width: 0; margin-bottom: 16px; }
 .field-label { display: block; margin-bottom: 6px; color: var(--md-on-surface-variant); font-size: 12px; font-weight: 500; }
 .field-help { margin-top: 6px; color: var(--md-on-surface-variant); font-size: 12px; overflow-wrap: anywhere; }

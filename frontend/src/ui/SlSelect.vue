@@ -12,6 +12,7 @@ const props = withDefaults(
     options: SelectOption[];
     placeholder?: string;
     ariaLabel?: string;
+    leadingIcon?: string;
     allowEmpty?: boolean;
     disabled?: boolean;
     /**
@@ -239,6 +240,7 @@ onBeforeUnmount(() => {
       :key="modelValue"
       class="sl-select-trigger"
       variant="tonal"
+      :icon="leadingIcon"
       :label="label"
       trailing-icon="expand_more"
       :disabled="disabled"

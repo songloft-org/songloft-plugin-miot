@@ -1,0 +1,962 @@
+/* MIoT 2026 responsive visual system. Keep all colors derived from the host M3 theme. */
+:root {
+  --miot-content-width: 1280px;
+  --miot-detail-width: 900px;
+  --miot-nav-width: 268px;
+  --miot-space-1: 4px;
+  --miot-space-2: 8px;
+  --miot-space-3: 12px;
+  --miot-space-4: 16px;
+  --miot-space-5: 20px;
+  --miot-space-6: 24px;
+  --miot-space-8: 32px;
+}
+
+body { text-rendering: optimizeLegibility; }
+
+.miot-page {
+  width: 100%;
+  padding-right: clamp(12px, 3vw, 28px);
+  padding-left: clamp(12px, 3vw, 28px);
+}
+
+.miot-main-appbar,
+.settings-appbar-shell,
+.fullscreen-appbar-shell {
+  background: var(--md-surface);
+  border-bottom: 0;
+  box-shadow: none;
+}
+
+.miot-main-appbar-inner,
+.settings-appbar-inner,
+.fullscreen-appbar-inner {
+  padding-right: clamp(12px, 3vw, 28px);
+  padding-left: clamp(12px, 3vw, 28px);
+}
+
+.appbar-actions { flex: 0 0 auto; }
+.appbar-actions > .sl-button-icon {
+  width: 40px;
+  height: 40px;
+  flex: 0 0 40px;
+}
+
+.player-toolbar {
+  min-height: 52px;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+/* 歌单选择和歌曲搜索是同一级筛选控件：相同高度、胶囊圆角、背景与焦点环。 */
+.player-toolbar .sl-select-trigger {
+  height: 52px;
+  min-height: 52px;
+  padding: 0 16px;
+  border: 1px solid var(--md-outline);
+  border-radius: var(--md-radius-full);
+  background: var(--md-surface-container-low);
+  transition: border-color .18s ease, box-shadow .18s ease, background .18s ease;
+}
+.player-toolbar .sl-select-trigger:hover {
+  border-color: var(--md-outline);
+  background: var(--md-surface-container);
+  box-shadow: none;
+}
+.player-toolbar .sl-select-trigger:focus-visible,
+.player-toolbar .sl-select-wrap-open .sl-select-trigger {
+  border-color: var(--md-primary);
+  outline: 0;
+  background: var(--md-surface-container-lowest);
+  box-shadow: 0 0 0 1px var(--md-primary);
+}
+.player-toolbar .sl-select-trigger .sl-button-content { gap: 12px; }
+.player-toolbar .sl-select-trigger .sl-icon:first-child { color: var(--md-primary); }
+.player-toolbar > .sl-button {
+  width: auto;
+  min-height: 52px;
+  flex: 0 0 auto;
+  padding: 0 18px;
+  border-radius: var(--md-radius-full);
+}
+.search-bar {
+  height: 52px;
+  border: 1px solid var(--md-outline);
+  background: var(--md-surface-container-low);
+  transition: border-color .18s ease, box-shadow .18s ease, background .18s ease;
+}
+.search-bar:focus-within {
+  border-color: var(--md-primary);
+  background: var(--md-surface-container-lowest);
+  box-shadow: 0 0 0 1px var(--md-primary);
+}
+/* 搜索框只由外层胶囊绘制焦点环；SlInput 自己的 focus 阴影会形成双重边框。 */
+.search-bar .sl-input:focus,
+.search-bar .sl-input:focus-visible {
+  border: 0;
+  outline: 0;
+  box-shadow: none;
+}
+
+/* Reusable semantic status treatment. */
+.sl-status-chip {
+  min-height: 26px;
+  max-width: 160px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 3px 9px;
+  border: 1px solid var(--md-outline-variant);
+  border-radius: var(--md-radius-full);
+  background: var(--md-surface-container-high);
+  color: var(--md-on-surface-variant);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 18px;
+  white-space: nowrap;
+}
+.sl-status-chip-success { border-color: transparent; background: var(--md-tertiary-container); color: var(--md-on-tertiary-container); }
+.sl-status-chip-warning { border-color: transparent; background: var(--md-error-container); color: var(--md-on-error-container); }
+.sl-status-chip-error { border-color: transparent; background: var(--md-error-container); color: var(--md-on-error-container); }
+.sl-status-chip-info { border-color: transparent; background: var(--md-secondary-container); color: var(--md-on-secondary-container); }
+
+/* Sections: one heading level outside the card, one content surface inside. */
+.miot-section { margin-bottom: 28px; }
+.section-heading {
+  min-height: 44px;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 0 8px 9px;
+}
+.section-heading-icon {
+  width: 32px;
+  height: 32px;
+  flex: 0 0 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 10px;
+  background: var(--md-secondary-container);
+  color: var(--md-on-secondary-container);
+}
+.section-heading-copy { min-width: 0; flex: 1; display: block; }
+.miot-section .section-title {
+  margin: 0;
+  padding: 0;
+  color: var(--md-on-surface);
+  font-size: 16px;
+  font-weight: 650;
+  line-height: 22px;
+  letter-spacing: 0;
+}
+.miot-section .section-description {
+  display: block;
+  margin-top: 2px;
+  padding: 0;
+  color: var(--md-on-surface-variant);
+  font-size: 12px;
+  line-height: 18px;
+  overflow-wrap: anywhere;
+}
+.section-heading-actions { flex: 0 0 auto; }
+.card.miot-card {
+  border-radius: 20px;
+  background: var(--md-surface-container-low);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, .04);
+}
+.miot-section-warning .section-heading-icon,
+.miot-section-danger .section-heading-icon { background: var(--md-error-container); color: var(--md-on-error-container); }
+
+.setting-row {
+  min-height: 68px;
+  gap: 14px;
+  padding: 13px 18px;
+  transition: background .15s ease;
+}
+.setting-row:hover { background: var(--md-surface-container); }
+.setting-row-leading {
+  width: 36px;
+  height: 36px;
+  flex: 0 0 36px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 12px;
+  background: var(--md-surface-container-high);
+  color: var(--md-on-surface-variant);
+}
+.setting-row-title { font-size: 14px; font-weight: 600; line-height: 20px; }
+.setting-row-subtitle { max-width: 620px; line-height: 18px; }
+.setting-row-disabled { opacity: .58; }
+.setting-row-control { min-width: 40px; display: flex; align-items: center; justify-content: flex-end; }
+
+.sl-empty-state {
+  min-height: 220px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 32px 20px;
+  color: var(--md-on-surface-variant);
+  text-align: center;
+}
+.sl-empty-state strong { color: var(--md-on-surface); font-size: 16px; }
+.sl-empty-state > span:not(.sl-empty-state-icon) { max-width: 460px; }
+.sl-empty-state-icon {
+  width: 52px;
+  height: 52px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 4px;
+  border-radius: 18px;
+  background: var(--md-surface-container-high);
+  color: var(--md-primary);
+}
+.sl-empty-state-actions { margin-top: 8px; }
+.sl-empty-state-compact { min-height: 150px; }
+.sl-empty-state-compact .sl-empty-state-icon { width: 44px; height: 44px; }
+
+/* Accessible advanced sections replace nested card stacks. */
+.sl-disclosure {
+  margin-bottom: 24px;
+  border: 1px solid var(--md-outline-variant);
+  border-radius: 20px;
+  background: var(--md-surface-container-low);
+  overflow: visible;
+}
+.sl-disclosure > summary {
+  min-height: 72px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 18px;
+  cursor: pointer;
+  list-style: none;
+}
+.sl-disclosure > summary::-webkit-details-marker { display: none; }
+.sl-disclosure > summary:focus-visible { outline: 2px solid var(--md-primary); outline-offset: -3px; border-radius: 20px; }
+.sl-disclosure-icon {
+  width: 38px;
+  height: 38px;
+  flex: 0 0 38px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 12px;
+  background: var(--md-surface-container-high);
+  color: var(--md-primary);
+}
+.sl-disclosure-copy { min-width: 0; flex: 1; display: flex; flex-direction: column; }
+.sl-disclosure-copy strong { font-size: 15px; }
+.sl-disclosure-copy small { margin-top: 2px; color: var(--md-on-surface-variant); line-height: 17px; }
+.sl-disclosure-chevron { transition: transform .18s ease; }
+.sl-disclosure[open] .sl-disclosure-chevron { transform: rotate(180deg); }
+.sl-disclosure-content { border-top: 1px solid var(--md-outline-variant); }
+
+/* Settings navigation and content density. */
+.settings-layout { max-width: var(--miot-content-width); }
+.settings-nav { padding: 14px 10px 24px; background: var(--md-surface); }
+.settings-nav-item {
+  min-height: 66px;
+  gap: 10px;
+  margin-bottom: 6px;
+  padding: 10px 12px;
+  border-radius: 18px;
+  transition: background .15s ease, transform .15s ease;
+}
+.settings-nav-item:active { transform: scale(.985); }
+.settings-nav-item .sl-status-chip { max-width: 76px; overflow: hidden; text-overflow: ellipsis; }
+.settings-content { padding: 18px 24px 42px; }
+.settings-header {
+  height: auto;
+  min-height: 94px;
+  align-items: flex-end;
+  margin-bottom: 18px;
+  padding: 8px 8px 14px;
+}
+.settings-header-copy { min-width: 0; }
+.settings-header h1 { margin-top: 3px; font-size: 28px; font-weight: 650; line-height: 36px; }
+.settings-header p { margin-top: 3px; color: var(--md-on-surface-variant); }
+.settings-mobile-menu { padding-top: 12px; }
+.settings-mobile-menu > .settings-nav-item { min-height: 72px; }
+
+/* Voice is a mini information architecture, not one 900-line scrolling form. */
+.voice-settings-overview {
+  margin-bottom: 26px;
+  padding: 18px;
+  border: 1px solid var(--md-outline-variant);
+  border-radius: 22px;
+  background: var(--md-surface-container-low);
+}
+.voice-settings-heading { display: flex; flex-direction: column; margin-bottom: 14px; }
+.voice-settings-heading strong { margin-top: 2px; font-size: 18px; line-height: 26px; }
+.voice-settings-heading > span:last-child { color: var(--md-on-surface-variant); line-height: 19px; }
+.voice-section-nav { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+.voice-section-nav-item {
+  min-width: 0;
+  min-height: 66px;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 9px 10px;
+  border: 1px solid transparent;
+  border-radius: 16px;
+  background: var(--md-surface-container);
+  color: var(--md-on-surface);
+  text-align: left;
+}
+.voice-section-nav-item:hover { background: var(--md-surface-container-high); }
+.voice-section-nav-item.active { border-color: var(--md-primary); background: var(--md-secondary-container); color: var(--md-on-secondary-container); }
+.voice-section-nav-icon {
+  width: 34px;
+  height: 34px;
+  flex: 0 0 34px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 11px;
+  background: var(--md-surface-container-high);
+}
+.voice-section-nav-item.active .voice-section-nav-icon { background: var(--md-surface-container-lowest); color: var(--md-primary); }
+.voice-section-nav-item > span:last-child { min-width: 0; display: flex; flex-direction: column; }
+.voice-section-nav-item strong,
+.voice-section-nav-item small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.voice-section-nav-item small { margin-top: 1px; color: var(--md-on-surface-variant); font-size: 11px; }
+.voice-panel { min-width: 0; }
+
+/* Schedules become readable cards and keep editor actions reachable. */
+.schedule-editor { padding-bottom: 0; border-radius: 18px; }
+.schedule-editor-actions {
+  position: sticky;
+  z-index: 4;
+  bottom: 0;
+  margin: 18px -16px 0;
+  padding: 12px 16px;
+  border-top: 1px solid var(--md-outline-variant);
+  background: var(--md-surface-container-high);
+  border-radius: 0 0 16px 16px;
+}
+.schedule-task-row {
+  min-height: 72px;
+  margin-top: 8px;
+  border: 1px solid var(--md-outline-variant);
+  border-radius: 16px;
+  background: var(--md-surface-container-lowest);
+}
+.schedule-task-row + .schedule-task-row { border-top: 1px solid var(--md-outline-variant); }
+
+.toolbox-target-card {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 24px;
+  padding: 16px 18px;
+  border: 1px solid var(--md-outline-variant);
+  border-radius: 20px;
+  background: var(--md-secondary-container);
+  color: var(--md-on-secondary-container);
+}
+.toolbox-target-card > div { min-width: 0; flex: 1; display: flex; flex-direction: column; }
+.toolbox-target-card strong { margin-top: 2px; font-size: 17px; }
+.toolbox-target-card small { margin-top: 2px; opacity: .82; line-height: 18px; }
+
+/* Song list follows the main library: desktop columns, Material row states,
+   and a current-playing row without an extra indicator bar. The row height stays
+   fixed for MainPage's virtual-window math. */
+.song-list-header {
+  display: grid;
+  /* 与 .song-row-button 完全同款的列定义与列间距；只改列宽不改间距会让表头与
+     数据行逐列错位（每列累计 12px）。 */
+  grid-template-columns: 40px 40px minmax(0, 3fr) minmax(0, 2fr) minmax(0, 2fr) 60px 88px;
+  column-gap: 12px;
+  align-items: center;
+  height: 44px;
+  padding: 0 16px;
+  /* 表头对齐主程序曲库：整块直角、无外框，只有一条底部分隔线和一层
+     surfaceContainerLow 底色。给表头加圆角会让整张列表看起来像一张卡片。 */
+  border-bottom: 1px solid var(--md-outline-variant);
+  background: var(--md-surface-container-low);
+  color: var(--md-on-surface-variant);
+  font-size: 12px;
+  font-weight: 600;
+}
+.song-header-duration,
+.song-duration { text-align: right; }
+/* 行内序号是 32px 居中的元素，表头 # 也按同样盒宽居中，否则两者错半格。 */
+.song-header-index { width: 32px; text-align: center; }
+/* 普通行对齐主程序曲库：整行直角、无外框、无底色，只有一条 0.5 CSS px 的发丝
+   分隔线（songloft/clients/player SongListTile 桌面布局 → BorderSide(width: .5,
+   alpha: .5)）。圆角 + 填充只属于“正在播放”那一行（.song-row-current），加在
+   普通行上会让每行看起来像独立的卡片，连分隔线的两端都会跟着圆角翘起来。
+   发丝线必须用伪元素 + scaleY(.5) 画：Chrome 会把 `border-bottom: .5px` 向上取整
+   成完整 1px，只有带非整数几何的 transform 才会真的落在半像素上，否则这里的分隔线
+   会比主程序粗一倍（DPR 1/2/3 实测）。 */
+.song-row {
+  position: relative;
+  display: block;
+  padding: 0;
+}
+/* 半透明度用 opacity 表达（而不是 color-mix / rgba），这样既能直接复用宿主下发的
+   var(--md-outline-variant)，也不依赖新版 WebView 的 color-mix 支持。 */
+.song-row::after {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  height: 1px;
+  background: var(--md-outline-variant);
+  opacity: .5;
+  transform: scaleY(.5);
+  transform-origin: bottom;
+  pointer-events: none;
+  content: '';
+}
+/* The button is the row's full-width grid; actions are overlaid in the final
+   column so the row stays one click target without `display: contents` on an
+   interactive element. */
+.song-row-button {
+  display: grid;
+  grid-template-columns: 40px 40px minmax(0, 3fr) minmax(0, 2fr) minmax(0, 2fr) 60px 88px;
+  column-gap: 12px;
+  align-items: center;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  padding: 0 16px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  outline: none;
+  -webkit-tap-highlight-color: transparent;
+}
+/* Let title and artist participate in the desktop grid while keeping the
+   wrapper available as the mobile title/artist stack. */
+.song-copy { display: contents; }
+.song-cover { width: 40px; height: 40px; flex-basis: 40px; border-radius: 8px; line-height: 40px; }
+.song-cover-img { width: 40px; height: 40px; border-radius: 8px; }
+.song-title,
+.song-artist,
+.song-album {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.song-artist,
+.song-album { color: var(--md-on-surface-variant); font-size: 13px; }
+.song-row:hover { background: var(--md-surface-container-high); }
+.song-row-current {
+  border-radius: 12px;
+  background: var(--md-secondary-container);
+  color: var(--md-on-secondary-container);
+}
+/* 当前播放行是圆角填充块，不该再画横向分隔线。 */
+.song-row-current::after { display: none; }
+.song-row-current .song-title { color: var(--md-primary); font-weight: 600; }
+.song-actions {
+  position: absolute;
+  top: 50%;
+  right: 16px;
+  width: 88px;
+  justify-content: flex-end;
+  transform: translateY(-50%);
+  opacity: .12;
+  transition: opacity .15s ease;
+}
+.song-row:hover .song-actions,
+.song-row:focus-within .song-actions,
+.song-row-current .song-actions { opacity: 1; }
+.song-row-button:focus-visible .song-cover { outline: 2px solid var(--md-primary); outline-offset: 2px; }
+.song-action-remove { color: var(--md-error); }
+.player-tool-danger { color: var(--md-error); }
+.player-bar-shell { box-shadow: 0 -8px 28px rgba(0, 0, 0, .06); }
+.player-bar-progress:focus-visible { outline: 2px solid var(--md-primary); outline-offset: -2px; }
+.fullscreen-swipe-hint { margin-left: 6px; color: var(--md-on-surface-variant); font-size: 11px; }
+
+@media (min-width: 761px) {
+  /* 桌面行高对齐主程序曲库的 SongListTile（垂直内边距 8 × 2 + 40px 封面 = 56px）。
+     MainPage 的虚拟窗口按这个值算占位高度，所以两条规则必须同源：只改行高不改变量
+     会让滚动条长度与真实内容错位。移动端仍是 64px（48px 封面 + 7px 内边距）。 */
+  :root { --miot-row-height: 56px; }
+  .miot-scrollbar-shell .sl-list-view { scrollbar-width: none; }
+  .miot-scrollbar-shell .sl-list-view::-webkit-scrollbar { display: none; }
+}
+
+@media (max-width: 959px) {
+  :root { --miot-nav-width: 240px; }
+  .settings-content { padding-right: 18px; padding-left: 18px; }
+  .voice-section-nav { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@media (max-width: 760px) {
+  .player-toolbar { min-height: 52px; display: flex; align-items: center; padding: 0; }
+  .player-toolbar > .sl-button { width: 52px; min-width: 52px; margin-top: 0; padding: 0; }
+  .player-toolbar > .sl-button .sl-button-label { display: none; }
+  .song-list-header { display: none; }
+  .song-row { display: block; padding: 0; }
+  .song-row-button { grid-template-columns: 48px minmax(0, 1fr) auto; gap: 0 12px; padding: 7px 56px 7px 8px; }
+  .song-copy { display: flex; flex-direction: column; min-width: 0; }
+  .song-index,
+  .song-album { display: none; }
+  .song-cover,
+  .song-cover-img { width: 48px; height: 48px; flex-basis: 48px; line-height: 48px; }
+  .song-actions { right: 8px; width: auto; opacity: 1; }
+  .song-action-play { display: none; }
+}
+
+@media (max-width: 599px) {
+  .miot-appbar-title { font-size: 20px; }
+  .settings-content { padding: 18px 12px calc(30px + var(--sl-safe-bottom, 0px)); }
+  .settings-mobile-menu { padding: 12px 12px calc(28px + var(--sl-safe-bottom, 0px)); }
+  .settings-mobile-menu > .settings-nav-item { margin-bottom: 4px; padding-right: 10px; padding-left: 10px; }
+  .settings-mobile-menu .sl-status-chip { display: none; }
+  .section-heading { padding-right: 6px; padding-left: 6px; }
+  .section-heading-icon { width: 30px; height: 30px; flex-basis: 30px; }
+  .miot-section .section-title { font-size: 15px; }
+  .card.miot-card,
+  .sl-disclosure { border-radius: 18px; }
+  .setting-row { min-height: 64px; padding: 12px 14px; }
+  .setting-row-copy { padding-right: 4px; }
+  .form-body { padding-right: 14px; padding-left: 14px; }
+  .section-description { padding-right: 0; padding-left: 0; }
+  .voice-settings-overview { margin-right: 0; margin-left: 0; padding: 14px; border-radius: 18px; }
+  .voice-settings-heading > span:last-child { font-size: 12px; }
+  .voice-section-nav { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; }
+  .voice-section-nav-item { min-height: 58px; padding: 8px; }
+  .voice-section-nav-icon { width: 30px; height: 30px; flex-basis: 30px; }
+  .voice-section-nav-item small { display: none; }
+  .inline-fields,
+  .field-grid { min-width: 0; }
+  .inline-fields > *,
+  .field-grid > * { min-width: 0; }
+  .webhook-fields,
+  .model-row { align-items: stretch; }
+  .webhook-fields > .sl-button,
+  .model-row > .sl-button { width: 100%; }
+  .schedule-editor { margin-right: 0; margin-left: 0; }
+  .schedule-editor-actions {
+    margin-right: -14px;
+    margin-left: -14px;
+    padding-right: 14px;
+    padding-left: 14px;
+  }
+  .schedule-editor-actions > .sl-button-filled { flex: 1; }
+  .schedule-task-row { align-items: flex-start; flex-wrap: wrap; padding: 12px; }
+  .schedule-task-row .list-item-copy { flex-basis: calc(100% - 56px); }
+  .toolbox-target-card { align-items: flex-start; padding: 14px; }
+  .fullscreen-page-indicator { position: relative; }
+  .fullscreen-swipe-hint { position: absolute; left: calc(50% + 22px); white-space: nowrap; }
+}
+
+@media (max-width: 359px) {
+  .miot-main-appbar .appbar-actions > .sl-button:nth-child(2) { display: none; }
+  .appbar-actions > .sl-button-icon { width: 38px; height: 38px; flex-basis: 38px; }
+  .miot-appbar-title { font-size: 18px; }
+  .miot-appbar-subtitle { font-size: 11px; }
+  .voice-section-nav-item { gap: 6px; }
+  .voice-section-nav-icon { display: none; }
+  .song-index { width: 26px; flex-basis: 26px; }
+  .song-row-button { column-gap: 9px; row-gap: 0; }
+}
+
+@media (max-height: 650px) and (max-width: 959px) {
+  .fullscreen-mobile-slide .fullscreen-cover-frame { width: min(54vw, 230px); height: min(54vw, 230px); }
+  .fullscreen-layout { padding-bottom: calc(204px + var(--sl-safe-bottom, 0px)); }
+  .fullscreen-playback { height: 204px; }
+  .fullscreen-controls-mobile .control-primary.sl-button { width: 64px; height: 64px; border-radius: 22px; }
+  .fullscreen-song-meta-mobile { padding-bottom: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .settings-nav-item,
+  .search-bar,
+  .song-actions,
+  .sl-disclosure-chevron { transition: none; }
+}
+
+/* Small WebViews sometimes keep the title's intrinsic width; force the action rail to remain visible. */
+.miot-appbar-title { width: 0; flex: 1 1 0; }
+.song-actions { opacity: .12; }
+
+@media (max-width: 760px) {
+  .song-actions { opacity: 1; }
+}
+
+@media (max-width: 599px) {
+  .miot-main-appbar .appbar-actions > .sl-button:nth-child(2) { display: none; }
+  .miot-main-appbar .appbar-actions { width: 82px; justify-content: flex-end; }
+}
+
+.player-favorite-button.player-control-active { color: var(--md-error); }
+@media (max-width: 760px) {
+  .song-action-remove { color: var(--md-on-surface-variant); opacity: .58; }
+  .song-row-current .song-action-remove { color: var(--md-error); opacity: 1; }
+}
+@media (max-width: 599px) {
+  .miot-main-appbar .appbar-actions { width: 124px; }
+  .miot-main-appbar .appbar-actions > .sl-button:nth-child(2) { display: inline-flex; }
+}
+.field-error { color: var(--md-error); }
+
+/* Searchable select: focus belongs to the complete search row (icon + input), not
+   the nested SlInput. Otherwise the input starts after the icon and produces a
+   detached blue rectangle that cannot align with the panel's outer border. */
+.sl-select-panel-search {
+  border-radius: calc(var(--md-radius-sm) - 1px) calc(var(--md-radius-sm) - 1px) 0 0;
+  transition: border-color .15s ease, box-shadow .15s ease, background .15s ease;
+}
+.sl-select-panel-search:focus-within {
+  border-bottom-color: var(--md-primary);
+  background: var(--md-surface-container-lowest);
+  box-shadow: inset 0 0 0 1px var(--md-primary);
+}
+.sl-select-panel-search .sl-input:focus,
+.sl-select-panel-search .sl-input:focus-visible {
+  border: 0;
+  outline: 0;
+  box-shadow: none;
+}
+
+/* Mini player follows the main Songloft player: slim progress, three balanced
+   zones and one continuous click surface. Individual controls stop bubbling. */
+.player-bar-shell {
+  height: calc(75px + var(--sl-safe-bottom, 0px));
+  padding-bottom: var(--sl-safe-bottom, 0px);
+  border-top: 0;
+  background: var(--md-surface);
+  box-shadow: 0 -1px 0 var(--md-outline-variant), 0 -8px 28px rgba(0, 0, 0, .05);
+}
+.player-bar-progress { height: 4px; }
+.player-bar-progress-track { height: 3px; }
+.player-bar {
+  max-width: var(--miot-content-width);
+  height: 71px;
+  display: grid;
+  background: transparent;
+  grid-template-columns: minmax(220px, 1fr) auto minmax(220px, 1fr);
+  align-items: center;
+  gap: 20px;
+  padding: 0 clamp(16px, 3vw, 28px);
+  cursor: pointer;
+}
+.player-bar-left { min-width: 0; justify-self: stretch; }
+.player-bar-info { max-width: min(420px, 100%); }
+.player-cover { width: 48px; height: 48px; flex-basis: 48px; border-radius: 10px; }
+.player-bar-center { min-width: 152px; justify-self: center; }
+.player-bar-center-controls { gap: 2px; }
+.player-bar-center-controls .sl-button-icon { width: 38px; height: 38px; min-height: 38px; }
+.bar-play-primary.sl-button-icon { width: 44px; height: 44px; min-height: 44px; }
+.player-bar-tools { min-width: 0; justify-self: end; }
+.player-bar-tools > .player-popup-anchor,
+.player-bar-tools > .sl-button-icon { width: 38px; height: 38px; }
+.player-bar .sl-button:hover:not(:disabled) { box-shadow: none; background: var(--md-surface-container-high); }
+
+/* Full player mirrors the host player: blurred cover ambience, centered top bar,
+   cover/lyrics split on wide screens, and controls grouped below the content. */
+.fullscreen-player {
+  position: relative;
+  isolation: isolate;
+  color: var(--md-on-surface);
+  background: var(--md-surface);
+}
+.fullscreen-ambient {
+  position: fixed;
+  z-index: -2;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  background: var(--md-surface);
+}
+.fullscreen-ambient-cover {
+  position: absolute;
+  inset: -12%;
+  width: 124%;
+  height: 124%;
+  object-fit: cover;
+  opacity: .34;
+  filter: blur(64px) saturate(1.2);
+  transform: scale(1.08);
+}
+.fullscreen-ambient-tint {
+  position: absolute;
+  inset: 0;
+  background: var(--md-surface);
+  opacity: .76;
+}
+.fullscreen-ambient-glow {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(to bottom, transparent 0%, var(--md-surface) 100%);
+  opacity: .52;
+}
+.fullscreen-topbar {
+  position: fixed;
+  z-index: 230;
+  top: var(--sl-safe-top, 0px);
+  right: 0;
+  left: 0;
+  height: 56px;
+  display: grid;
+  grid-template-columns: 48px minmax(0, 1fr) 48px;
+  align-items: center;
+  padding: 0 12px;
+}
+.fullscreen-collapse-button.sl-button-icon { width: 48px; height: 48px; }
+.fullscreen-collapse-button .sl-icon { font-size: 32px; }
+.fullscreen-topbar-title {
+  overflow: hidden;
+  color: var(--md-on-surface);
+  font-size: 13px;
+  font-weight: 600;
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.fullscreen-topbar-spacer { width: 48px; height: 48px; }
+.fullscreen-inner {
+  position: relative;
+  z-index: 1;
+  max-width: 1180px;
+  padding-right: clamp(24px, 4vw, 48px);
+  padding-left: clamp(24px, 4vw, 48px);
+}
+.fullscreen-stage { padding-top: 8px; }
+.fullscreen-desktop-stage {
+  grid-template-columns: minmax(260px, 4fr) minmax(320px, 5fr);
+  gap: clamp(48px, 7vw, 96px);
+}
+.fullscreen-cover-frame {
+  width: clamp(240px, 27vw, 340px);
+  height: clamp(240px, 27vw, 340px);
+  max-height: calc(100vh - 390px);
+}
+.fullscreen-cover { border-radius: 22px; box-shadow: 0 18px 42px rgba(0, 0, 0, .22); }
+.fullscreen-song-meta-desktop { max-width: 440px; margin-top: 18px; }
+.fullscreen-song-title { font-size: 23px; font-weight: 700; }
+.fullscreen-song-artist { margin-top: 5px; }
+.fullscreen-song-album {
+  display: block;
+  margin-top: 4px;
+  overflow: hidden;
+  color: var(--md-on-surface-variant);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.fullscreen-lyrics-panel { padding-top: 28px; padding-bottom: 28px; }
+.lyric-line { min-height: 52px; font-size: 16px; opacity: .78; }
+.lyric-line.active { font-size: 20px; opacity: 1; }
+.fullscreen-playback { max-width: 840px; padding: 10px 0 16px; }
+.fullscreen-controls-desktop { margin-top: 8px; }
+.fullscreen-controls-desktop .control-primary.sl-button { width: 56px; height: 56px; }
+.fullscreen-tools { max-width: 600px; margin-top: 6px; }
+
+@media (min-width: 761px) {
+  .miot-page { padding-bottom: calc(82px + var(--sl-safe-bottom, 0px)); }
+}
+
+@media (max-width: 760px) {
+  .player-bar-shell {
+    height: calc(66px + var(--sl-safe-bottom, 0px));
+    box-shadow: 0 -1px 0 var(--md-outline-variant), 0 -5px 18px rgba(0, 0, 0, .07);
+  }
+  .player-bar-progress { height: 2px; }
+  .player-bar {
+    height: 64px;
+    display: flex;
+    gap: 0;
+    padding: 0 12px;
+  }
+    .player-cover { width: 48px; height: 48px; flex-basis: 48px; }
+  .player-bar-center { min-width: 0; }
+  .player-bar-center-controls .sl-button-icon { width: 36px; height: 40px; min-height: 40px; }
+  .bar-play-primary.sl-button-icon { width: 44px; height: 44px; min-height: 44px; }
+  .fullscreen-ambient-cover { opacity: .3; filter: blur(52px) saturate(1.15); }
+  .fullscreen-ambient-tint { opacity: .82; }
+}
+
+@media (max-width: 599px) {
+  .fullscreen-topbar { padding: 0 4px; }
+  .fullscreen-inner { padding-right: 0; padding-left: 0; }
+  .fullscreen-cover { border-radius: 20px; box-shadow: 0 14px 34px rgba(0, 0, 0, .2); }
+  .fullscreen-playback { background: transparent; }
+}
+
+/* Host theme-pack appearance. Values are injected by common.js; these fallbacks
+   keep the plugin usable in browsers and older Songloft clients. */
+:root {
+  --sl-theme-card-radius: 12px;
+  --sl-theme-control-radius: 12px;
+  --sl-theme-navigation-radius: 12px;
+  /* old clients do not push glass colors; opaque M3 roles remain the fallback */
+  --sl-theme-glass-fill: var(--md-surface-container);
+  --sl-theme-glass-border: var(--md-outline-variant);
+  --player-palette-dominant: var(--md-primary);
+  --player-palette-vibrant: var(--md-tertiary);
+  --player-palette-dark: var(--md-surface);
+  --player-palette-on-image: var(--md-on-surface);
+  --player-palette-on-image-muted: var(--md-on-surface-variant);
+  --player-palette-on-image-faint: var(--md-outline-variant);
+}
+
+.player-cover,
+.fullscreen-cover { border-radius: var(--sl-theme-card-radius); }
+
+/* The host's capsule theme uses a compact floating mini player rather than the
+   edge-to-edge standard bar. Keep one DOM tree so playback state and controls
+   cannot drift between the two visual variants. */
+html[data-navigation-style='capsule'] .player-bar-shell {
+  right: auto;
+  bottom: calc(8px + var(--sl-safe-bottom, 0px));
+  left: 50%;
+  width: calc(100% - 16px);
+  max-width: calc(var(--miot-content-width) - 16px);
+  height: 51px;
+  padding-bottom: 0;
+  overflow: hidden;
+  border: .5px solid var(--sl-theme-glass-border);
+  border-radius: 25.5px;
+  background: var(--sl-theme-glass-fill);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, .078);
+  transform: translateX(-50%);
+}
+html[data-navigation-style='capsule'] .player-bar-progress {
+  height: 3px;
+  overflow: hidden;
+  border-radius: 26px 26px 0 0;
+}
+html[data-navigation-style='capsule'] .player-bar-progress-track {
+  height: 3px;
+  border-radius: 26px 26px 0 0;
+}
+html[data-navigation-style='capsule'] .player-bar-progress-thumb { display: none; }
+html[data-navigation-style='capsule'] .player-bar {
+  height: 48px;
+  display: flex;
+  gap: 0;
+  padding: 0 12px;
+  border-radius: 0 0 26px 26px;
+  background: transparent;
+}
+html[data-navigation-style='capsule'] .player-bar-left {
+  min-width: 0;
+  flex: 1 1 auto;
+  gap: 0;
+}
+html[data-navigation-style='capsule'] .player-bar-info { max-width: none; gap: 12px; }
+html[data-navigation-style='capsule'] .player-cover {
+  width: 36px;
+  height: 36px;
+  flex-basis: 36px;
+  border-radius: min(8px, var(--sl-theme-card-radius));
+}
+html[data-navigation-style='capsule'] .player-title { font-size: 12px; font-weight: 600; }
+html[data-navigation-style='capsule'] .player-subtitle { margin-top: 1px; font-size: 11px; }
+html[data-navigation-style='capsule'] .player-bar-favorite,
+html[data-navigation-style='capsule'] .player-bar-tools,
+html[data-navigation-style='capsule'] .player-bar-time,
+html[data-navigation-style='capsule'] .player-control-button { display: none; }
+html[data-navigation-style='capsule'] .player-bar-center {
+  min-width: 36px;
+  flex: 0 0 36px;
+  margin-left: 8px;
+}
+html[data-navigation-style='capsule'] .player-bar-center-controls { gap: 0; }
+html[data-navigation-style='capsule'] .bar-play-primary.sl-button-icon {
+  width: 36px;
+  height: 36px;
+  min-height: 36px;
+  padding: 0;
+  border-radius: 50%;
+  background: var(--md-primary);
+  color: var(--md-on-primary);
+  box-shadow: none;
+}
+html[data-navigation-style='capsule'] .miot-page {
+  padding-bottom: calc(67px + var(--sl-safe-bottom, 0px));
+}
+
+/* Cover-derived player palette. The blurred cover remains a low-opacity texture;
+   sampled colors provide the stable background and keep working when blur is
+   unavailable or the image is evicted. */
+.fullscreen-player {
+  /* Player content lives on the cover-derived background, so reuse the palette's
+     contrast-safe foreground for all inherited M3 text/icon roles. */
+  --md-on-surface: var(--player-palette-on-image);
+  --md-on-surface-variant: var(--player-palette-on-image-muted);
+  --md-outline: var(--player-palette-on-image-muted);
+  --md-outline-variant: var(--player-palette-on-image-faint);
+  color: var(--player-palette-on-image);
+  background: var(--player-palette-dark, var(--md-surface));
+  transition: background-color .5s ease;
+}
+.fullscreen-ambient {
+  background:
+    radial-gradient(circle at 14% 10%, var(--player-palette-vibrant) 0%, transparent 52%),
+    radial-gradient(circle at 88% 24%, var(--player-palette-dominant) 0%, transparent 58%),
+    linear-gradient(155deg, var(--player-palette-dominant), var(--player-palette-dark));
+  transition: background .8s ease;
+}
+.fullscreen-ambient-cover { opacity: .2; mix-blend-mode: soft-light; }
+.fullscreen-ambient-tint {
+  background: linear-gradient(
+    to bottom,
+    var(--md-surface) 0%,
+    var(--player-palette-dark) 58%,
+    var(--md-surface) 100%
+  );
+  opacity: .64;
+}
+.fullscreen-ambient-glow {
+  background:
+    radial-gradient(circle at 18% 18%, var(--player-palette-vibrant) 0%, transparent 48%),
+    radial-gradient(circle at 78% 12%, var(--player-palette-dominant) 0%, transparent 55%);
+  opacity: .34;
+}
+.fullscreen-theme-gradient {
+  position: absolute;
+  inset: 0;
+  background: var(--sl-theme-player-gradient, transparent);
+  opacity: 0;
+  transition: opacity .5s ease;
+}
+html[data-player-gradient='custom'] .fullscreen-theme-gradient { opacity: .4; }
+
+@media (max-width: 760px) {
+  html[data-navigation-style='capsule'] .player-bar-shell {
+    height: 51px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, .1);
+  }
+  html[data-navigation-style='capsule'] .player-bar-progress { height: 3px; pointer-events: auto; }
+  html[data-navigation-style='capsule'] .player-bar { height: 48px; padding: 0 12px; }
+  html[data-navigation-style='capsule'] .player-cover {
+    width: 36px;
+    height: 36px;
+    flex-basis: 36px;
+  }
+  html[data-navigation-style='capsule'] .player-bar-center-controls .sl-button-icon {
+    width: 36px;
+    height: 36px;
+    min-height: 36px;
+  }
+  .fullscreen-ambient-cover { opacity: .16; }
+  .fullscreen-ambient-tint { opacity: .72; }
+  .fullscreen-ambient-glow { opacity: .3; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .fullscreen-player,
+  .fullscreen-ambient,
+  .fullscreen-theme-gradient { transition: none; }
+}

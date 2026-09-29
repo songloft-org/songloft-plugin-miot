@@ -128,12 +128,14 @@ onUnmounted(() => {
         <!-- 标记放在歌名**前面**：.song-title 是 nowrap + ellipsis，挂在后面会被长歌名截掉，
              而这个标记恰恰是长歌名时也必须看得见的东西 -->
         <span class="song-title"><span v-if="isLastPlayed()" class="song-last-played">上次播放</span>{{ song.title || '未知歌曲' }}</span>
-        <span class="song-meta">{{ song.artist || '未知艺术家' }}<span v-if="song.album"> · {{ song.album }}</span><span v-if="duration(song.duration)"> · {{ duration(song.duration) }}</span></span>
+        <span class="song-artist">{{ song.artist || '未知艺术家' }}</span>
       </span>
+      <span class="song-album">{{ song.album || '' }}</span>
+      <span class="song-duration">{{ duration(song.duration) }}</span>
     </button>
     <div class="song-actions">
-      <SlButton variant="icon" icon="play_arrow" title="播放此曲" @click="emit('play', song, index)" />
-      <SlButton v-if="removable" variant="icon" icon="delete" title="从歌单删除" @click="emit('remove', song)" />
+      <SlButton class="song-action-play" variant="icon" icon="play_arrow" title="播放此曲" @click="emit('play', song, index)" />
+      <SlButton v-if="removable" class="song-action-remove" variant="icon" icon="delete" title="从歌单删除" @click="emit('remove', song)" />
     </div>
   </div>
 </template>

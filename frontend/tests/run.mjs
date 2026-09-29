@@ -22,8 +22,16 @@ const selectComponent = read('ui/SlSelect.vue');
 const slListView = read('ui/SlListView.vue');
 const slButton = read('ui/SlButton.vue');
 const slIcon = read('ui/SlIcon.vue');
+const sectionCard = read('ui/SectionCard.vue');
+const settingRow = read('ui/SettingRow.vue');
+const statusChip = read('ui/SlStatusChip.vue');
+const emptyState = read('ui/SlEmptyState.vue');
+const disclosure = read('ui/SlDisclosure.vue');
+const redesign = read('styles/redesign.css');
+const voiceSectionNav = read('views/settings/voice/VoiceSectionNav.vue');
 const playerBar = read('views/PlayerBar.vue');
 const fullscreenPlayer = read('views/FullscreenPlayer.vue');
+const playerPalette = read('playerPalette.ts');
 const voiceSettings = read('views/settings/VoiceSettings.vue');
 const scheduleSettings = read('views/settings/ScheduleSettings.vue');
 const modePopup = read('views/PlayerModePopup.vue');
@@ -73,8 +81,58 @@ assert.match(store, /while \(pendingConfigPatch\)/);
 assert.doesNotMatch(switchComponent, /flutter-cupertino-switch/);
 // SlButton 不得恢复原生控件分支：单一 HTML 实现（songloft-org/songloft#440）。
 assert.doesNotMatch(slButton, /flutter-cupertino-button/);
+// 2026 UI 重构：基础组件必须保留语义结构，响应式视觉层单独加载。
+assert.match(sectionCard, /<h2 class="section-title">/);
+assert.match(sectionCard, /section-heading/);
+assert.match(settingRow, /setting-row-leading/);
+assert.match(statusChip, /sl-status-chip/);
+assert.match(emptyState, /sl-empty-state/);
+assert.match(disclosure, /<details class="sl-disclosure"/);
+assert.match(redesign, /@media \(max-width: 599px\)/);
+assert.match(redesign, /@media \(max-height: 650px\)/);
+assert.match(redesign, /prefers-reduced-motion/);
+assert.match(redesign, /voice-section-nav/);
+assert.doesNotMatch(mainPage, /class="play-context"/);
+assert.match(redesign, /search-bar \.sl-input:focus/);
+assert.match(redesign, /sl-select-panel-search:focus-within/);
+assert.match(redesign, /sl-select-panel-search \.sl-input:focus/);
+assert.match(redesign, /border-bottom: 0/);
+assert.match(style, /\.form-body \{ min-width: 0; padding: 16px 20px; \}/);
+assert.match(style, /\.form-body > :last-child \{ margin-bottom: 0; \}/);
+assert.match(read('main.ts'), /styles\/redesign\.css/);
+assert.match(mainPage, /<SlEmptyState/);
+assert.match(settingsPage, /categoryStatus/);
+assert.match(settingsPage, /state\.configSaving/);
+assert.match(voiceSectionNav, /aria-label="语音设置分类"/);
+assert.match(voiceSectionNav, /update:modelValue/);
+assert.match(voiceSettings, /<VoiceSectionNav/);
+assert.match(voiceSettings, /data-voice-panel="listen"/);
+assert.match(voiceSettings, /data-voice-panel="intelligence"/);
+assert.match(playerBar, /role="slider"/);
+assert.match(playerBar, /onProgressKeydown/);
+assert.match(playerBar, /onBarSurfaceClick/);
+assert.match(playerBar, /player-bar-shell" title="打开全屏播放器" @click="onBarSurfaceClick"/);
+assert.match(fullscreenPlayer, /fullscreen-ambient-cover/);
+assert.match(fullscreenPlayer, /fullscreen-topbar-title/);
+assert.match(fullscreenPlayer, /fullscreen-swipe-hint/);
+assert.match(fullscreenPlayer, /extractCoverPalette/);
+assert.match(fullscreenPlayer, /paletteGeneration/);
+assert.match(fullscreenPlayer, /:style="backgroundStyle"/);
+assert.match(fullscreenPlayer, /fullscreen-theme-gradient/);
+assert.match(playerPalette, /PALETTE_SAMPLE_SIZE = 48/);
+assert.match(playerPalette, /MAX_CACHE_SIZE = 20/);
+assert.match(playerPalette, /paletteFromMetadata/);
+assert.match(playerPalette, /getImageData/);
+assert.match(redesign, /data-navigation-style='capsule'/);
+assert.match(redesign, /--sl-theme-player-gradient/);
+assert.match(redesign, /--player-palette-dominant/);
+
 assert.match(selectComponent, /getBoundingClientRect\(\)/);
 assert.match(selectComponent, /sl-select-option-on/);
+assert.match(selectComponent, /leadingIcon\?: string/);
+assert.match(selectComponent, /:icon="leadingIcon"/);
+assert.match(mainPage, /leading-icon="queue_music"/);
+assert.match(redesign, /player-toolbar \.sl-select-trigger/);
 assert.match(selectComponent, /sl-select-wrap-open/);
 assert.match(selectComponent, /sl-select-panel-fixed/);
 assert.match(selectComponent, /sl-select-backdrop/);
@@ -197,6 +255,8 @@ assert.match(mainPage, /class="song-list-spacer" :style="\{ height: `\$\{tailSpa
 // 占位条按“行号 × 行高”算，所以行高必须是精确值，不能只给 min-height。
 assert.match(style, /\.song-row \{[^}]*height: var\(--miot-row-height\)/);
 assert.doesNotMatch(style, /\.song-row \{[^}]*min-height: var\(--miot-row-height\)/);
+// 基础样式里也不能残留行边框：它会和 redesign.css 的发丝线叠成双线，而且是不透明的 1px。
+assert.doesNotMatch(style, /\.song-row \{[^}]*border/);
 // 列表必须绑 @scroll：不绑窗口就永不推进。
 assert.match(slListView, /<div[\s\S]*?@scroll="emit\('scroll', \$event\)"/);
 // #444 回归测试：歌单列表是 div 滚动容器（overflow 滚动的 scrollHeight 是子元素
@@ -224,6 +284,57 @@ assert.match(slListView, /defineEmits<\{ scroll/);
 assert.match(style, /\.player-bar-shell[\s\S]*position: fixed/);
 assert.match(style, /\.song-cover[^}]*width: 48px[^}]*height: 48px/);
 assert.match(songRow, /class="song-cover-img"/);
+// 播放栏背景只允许由 shell 承担；内层 hover 再画背景会出现“多一层底色”。
+assert.match(style, /\.player-bar\s*\{[^}]*background: transparent/);
+assert.doesNotMatch(redesign, /\.player-bar:hover/);
+// 胶囊模式使用宿主下发的玻璃 token，而不是用不透明 M3 色近似。
+assert.match(redesign, /--sl-theme-glass-fill: var\(--md-surface-container\)/);
+assert.match(redesign, /background: var\(--sl-theme-glass-fill\)/);
+// 曲库列表对齐主程序：表头 + 独立列 + Material 行状态，且保持虚拟列表定高。
+assert.match(mainPage, /class="song-list-header"/);
+assert.match(songRow, /class="song-artist"/);
+assert.match(songRow, /class="song-album"/);
+assert.match(songRow, /class="song-duration"/);
+assert.match(redesign, /\.song-list-header\s*\{[^}]*grid-template-columns: 40px 40px minmax\(0, 3fr\) minmax\(0, 2fr\) minmax\(0, 2fr\) 60px 88px/);
+// 行的按钮自己就是同一套网格；不能把交互按钮设成 display:contents，否则部分 WebView
+// 会丢按钮语义。标题/艺术家用 song-copy 展平参与列，移动端再恢复成纵向堆叠。
+assert.match(redesign, /\.song-row-button\s*\{[^}]*display: grid[^}]*grid-template-columns: 40px 40px minmax\(0, 3fr\) minmax\(0, 2fr\) minmax\(0, 2fr\) 60px 88px/);
+// 表头与数据行必须共用同一套列间距：只对齐列宽、漏掉 column-gap 会让每列累计错位 12px。
+assert.match(redesign, /\.song-list-header\s*\{[^}]*column-gap: 12px/);
+assert.match(redesign, /\.song-row-button\s*\{[^}]*column-gap: 12px/);
+assert.doesNotMatch(redesign, /\.song-row-button\s*\{[^}]*display: contents/);
+assert.match(redesign, /\.song-copy\s*\{\s*display: contents/);
+assert.match(redesign, /\.song-actions\s*\{[^}]*position: absolute[^}]*right: 16px/);
+// 列表容器本身不能画上边框：桌面端那条线与表头底边线无关，
+// 会整宽横贯到圆角外；移动端表头隐藏时它更是凭空出现在第一行上方，主程序曲库没有这根线。
+assert.doesNotMatch(style, /\.sl-list-view \{[^}]*border/);
+assert.doesNotMatch(redesign, /\.sl-list-view \{[^}]*border/);
+// 表头在滚动容器外，原生滚动条会吃掉 15px 内容宽度，导致表头/行列错位。
+assert.match(redesign, /\.miot-scrollbar-shell \.sl-list-view\s*\{[^}]*scrollbar-width: none/);
+assert.match(redesign, /\.miot-scrollbar-shell \.sl-list-view::-webkit-scrollbar\s*\{\s*display: none/);
+assert.match(redesign, /\.song-row:hover\s*\{[^}]*background: var\(--md-surface-container-high\)/);
+assert.match(redesign, /\.song-row-current\s*\{[^}]*background: var\(--md-secondary-container\)/);
+// 主程序曲库的普通行是**无外框、无圆角**的：圆角 + 填充只属于 .song-row-current。
+// 给普通行加圆角会让分隔线两端向上翘、每行看起来像一张独立卡片。
+assert.doesNotMatch(redesign, /\.song-row\s*\{[^}]*border-radius/);
+assert.doesNotMatch(redesign, /\.song-row\s*\{[^}]*border(-bottom)?:/);
+assert.match(redesign, /\.song-row-current\s*\{[^}]*border-radius: 12px/);
+// 行分隔线 = 主程序 SongListTile 的 BorderSide(width: .5, alpha: .5)。Chrome 会把
+// `border-bottom: .5px` 向上取整到完整 1px（DPR 1/2/3 实测），看起来比主程序粗一倍，
+// 所以必须用伪元素 + scaleY(.5) 拿到真正的半像素线，50% 透明度用 opacity 表达。
+assert.match(redesign, /\.song-row::after\s*\{[^}]*height: 1px/);
+assert.match(redesign, /\.song-row::after\s*\{[^}]*background: var\(--md-outline-variant\)/);
+assert.match(redesign, /\.song-row::after\s*\{[^}]*opacity: \.5/);
+assert.match(redesign, /\.song-row::after\s*\{[^}]*transform: scaleY\(\.5\)/);
+assert.match(redesign, /\.song-row::after\s*\{[^}]*pointer-events: none/);
+assert.match(redesign, /\.song-row-current::after\s*\{\s*display: none/);
+// 表头同样直角、无外框，只有一层 surfaceContainerLow 底色与一条 1px 分隔线。
+assert.doesNotMatch(redesign, /\.song-list-header\s*\{[^}]*border-radius/);
+assert.match(redesign, /\.song-list-header\s*\{[^}]*background: var\(--md-surface-container-low\)/);
+// 桌面行高与主程序曲库一致（8 × 2 内边距 + 40px 封面 = 56px）；MainPage 的虚拟窗口
+// 按同一个变量算占位高度，两者必须同源。
+assert.match(redesign, /@media \(min-width: 761px\) \{[\s\S]*?:root \{ --miot-row-height: 56px; \}/);
+assert.doesNotMatch(redesign, /inset 3px 0 0 var\(--md-primary\)/);
 assert.match(songRow, /acquireCoverSlot/);
 assert.match(covers, /access_token/);
 assert.match(covers, /MAX_CONCURRENT_COVERS = 3/);
@@ -314,8 +425,8 @@ assert.match(style, /\.card\.miot-card\s*\{[^}]*padding: 0/);
 assert.match(style, /\.player-mini-progress[\s\S]*height: 2px/);
 // 1a7a63a 起播放条不再复用 <PlayerProgress mini>，改成自带的 player-bar-progress，
 // 这条断言当时漏改、一直是红的。
-assert.match(playerBar, /class="player-bar-progress"[\s\S]*player-bar-progress-fill/);
-assert.match(playerBar, /@click="openPlayer"/);
+assert.match(playerBar, /class="player-bar-progress"[\s\S]*@click\.stop="onProgressClick"[\s\S]*player-bar-progress-fill/);
+assert.match(playerBar, /player-bar-shell"[^>]*@click="onBarSurfaceClick"/);
 // 1a7a63a 起宽屏播放条带上了「播放模式 / 音量 / 延迟停止 / 停止」工具区，窄屏由
 // media query 隐藏。原来那两条 doesNotMatch 已与设计相反、一直是红的，改成正向断言。
 assert.match(playerBar, /class="player-bar-tools"/);
@@ -391,7 +502,9 @@ assert.match(fullscreenPlayer, /pager\.scrollLeft = pager\.clientWidth \* index/
 assert.match(fullscreenPlayer, /mobileSettledPage === 0[\s\S]*ratio >= 0\.12[\s\S]*ratio <= 0\.88/);
 assert.match(fullscreenPlayer, /@scroll\.passive="syncMobilePage"/);
 assert.match(fullscreenPlayer, /icon="keyboard_arrow_down"/);
-assert.doesNotMatch(fullscreenPlayer, /AppBar|正在播放/);
+assert.doesNotMatch(fullscreenPlayer, /<AppBar/);
+assert.match(fullscreenPlayer, /fullscreen-topbar-title/);
+assert.match(fullscreenPlayer, /正在播放/);
 assert.match(fullscreenPlayer, /@touchstart\.passive="startMobileSwipe"/);
 assert.match(fullscreenPlayer, /@touchend="finishMobileSwipe"/);
 assert.doesNotMatch(fullscreenPlayer, /scrollIntoView/);

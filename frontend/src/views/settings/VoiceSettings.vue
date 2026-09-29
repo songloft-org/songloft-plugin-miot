@@ -7,6 +7,7 @@ import SlIcon from '../../ui/SlIcon.vue';
 import SlInput from '../../ui/SlInput.vue';
 import SlSelect from '../../ui/SlSelect.vue';
 import SlSwitch from '../../ui/SlSwitch.vue';
+import VoiceSectionNav from './voice/VoiceSectionNav.vue';
 import { del, post, pluginWebSocketUrl } from '../../api';
 import { AI_PRESET_PROVIDERS } from '../../aiPresets';
 import {
@@ -29,6 +30,16 @@ import {
   state,
 } from '../../store';
 import type { MemoryEntity, SearchSource, SelectOption, VoiceCommand } from '../../types';
+
+const voicePanel = ref<VoicePanel>('listen');
+const voicePanels: Array<{ id: VoicePanel; title: string; subtitle: string; icon: string }> = [
+  { id: 'listen', title: '监听', subtitle: '对话与索引', icon: 'record_voice_over' },
+  { id: 'commands', title: '口令', subtitle: '规则与测试', icon: 'mic' },
+  { id: 'memory', title: '记忆', subtitle: '命中与歧义', icon: 'memory' },
+  { id: 'intelligence', title: '搜索与 AI', subtitle: '外部搜索源', icon: 'auto_awesome' },
+];
+
+type VoicePanel = 'listen' | 'commands' | 'memory' | 'intelligence';
 
 interface CommandTestResult {
   matched: boolean;
@@ -714,9 +725,12 @@ async function deleteMemoryRecord(id?: string): Promise<void> {
 </script>
 
 <template>
+  <VoiceSectionNav v-model="voicePanel" :panels="voicePanels" />
+
+  <div v-show="voicePanel === 'listen'" class="voice-panel" data-voice-panel="listen">
   <SectionCard title="对话监听" icon="record_voice_over" description="监听已启用管理的音箱对话记录，并把语音内容交给语音引擎。">
     <SettingRow title="启用对话监听" subtitle="关闭后会同时关闭语音口令、AI 分析和外部搜索">
-      <SlSwitch :model-value="state.config.conversation_monitor_enabled" @update:model-value="setConversationEnabled" />
+      <SlSwitch aria-label="启用对话监听" :model-value="state.config.conversation_monitor_enabled" @update:model-value="setConversationEnabled" />
     </SettingRow>
     <div class="form-body">
       <div class="field-grid">
@@ -760,10 +774,12 @@ async function deleteMemoryRecord(id?: string): Promise<void> {
       <div class="field-actions"><SlButton variant="outlined" label="刷新索引" icon="refresh" @click="refreshIndex" /></div>
     </div>
   </SectionCard>
+  </div>
 
+  <div v-show="voicePanel === 'commands'" class="voice-panel" data-voice-panel="commands">
   <SectionCard title="语音口令" icon="mic" description="为每种操作维护可识别的口令词；添加、删除和启停都会立即保存。">
     <SettingRow title="启用语音口令" :subtitle="state.config.conversation_monitor_enabled ? '将对话监听结果交给播放器执行' : '需要先开启对话监听'">
-      <SlSwitch :model-value="state.config.voice_command_enabled" :disabled="!state.config.conversation_monitor_enabled" @update:model-value="setVoiceEnabled" />
+      <SlSwitch aria-label="启用语音口令" :model-value="state.config.voice_command_enabled" :disabled="!state.config.conversation_monitor_enabled" @update:model-value="setVoiceEnabled" />
     </SettingRow>
     <div v-if="!state.config.conversation_monitor_enabled" class="dependency-hint"><SlIcon name="warning" :size="18" /><span>需要先开启"对话监听"才能使用语音口令。</span></div>
     <div v-if="state.config.voice_command_enabled" class="dependency-hint"><SlIcon name="info" :size="18" /><span>口令触发后，音箱会先播完自身的语音回复，再由插件打断并开始播放，中间会有短暂延迟。</span></div>
@@ -805,9 +821,11 @@ async function deleteMemoryRecord(id?: string): Promise<void> {
       <pre v-if="commandTestResult" class="result-pre" :class="commandTestSuccess ? 'result-success' : 'result-error'">{{ commandTestResult }}</pre>
     </div>
   </SectionCard>
+  </div>
 
+  <div v-show="voicePanel === 'memory'" class="voice-panel" data-voice-panel="memory">
   <SectionCard title="语音记忆" icon="memory" description="记录用户说法与歌曲实体的对应关系，减少重复 AI 分析。">
-    <SettingRow title="启用语音记忆" subtitle="关闭后保留历史记忆，但不再写入新记录"><SlSwitch :model-value="state.config.voice_memory_enabled" @update:model-value="setSwitch('voice_memory_enabled', $event)" /></SettingRow>
+    <SettingRow title="启用语音记忆" subtitle="关闭后保留历史记忆，但不再写入新记录"><SlSwitch aria-label="启用语音记忆" :model-value="state.config.voice_memory_enabled" @update:model-value="setSwitch('voice_memory_enabled', $event)" /></SettingRow>
     <div class="form-body">
       <button type="button" class="advanced-toggle" @click="toggleMemoryExpanded">
         <span>{{ memoryExpanded ? '收起语音记忆' : '展开语音记忆' }}</span>
@@ -834,9 +852,11 @@ async function deleteMemoryRecord(id?: string): Promise<void> {
       </div>
     </div>
   </SectionCard>
+  </div>
 
+  <div v-show="voicePanel === 'intelligence'" class="voice-panel" data-voice-panel="intelligence">
   <SectionCard title="外部搜索" icon="search" description="本地曲库未命中时，按优先级调用已启用的搜索源。">
-    <SettingRow title="启用外部搜索" :subtitle="state.config.voice_command_enabled ? '搜索源需要返回 topone 格式结果' : '需要先开启语音口令'"><SlSwitch :model-value="state.config.external_search_enabled" :disabled="!state.config.voice_command_enabled" @update:model-value="setExternalSearchEnabled" /></SettingRow>
+    <SettingRow title="启用外部搜索" :subtitle="state.config.voice_command_enabled ? '搜索源需要返回 topone 格式结果' : '需要先开启语音口令'"><SlSwitch aria-label="启用外部搜索" :model-value="state.config.external_search_enabled" :disabled="!state.config.voice_command_enabled" @update:model-value="setExternalSearchEnabled" /></SettingRow>
     <div v-if="!state.config.voice_command_enabled" class="dependency-hint"><SlIcon name="warning" :size="18" /><span>需要先开启"语音口令"才能使用外部搜索。</span></div>
     <div class="form-body">
       <div class="field"><label class="field-label">搜索优先级</label><SlSelect :model-value="state.config.search_priority" :options="searchPriorityOptions" aria-label="搜索优先级" @update:model-value="saveConfig({ search_priority: $event as 'parallel' | 'local_first' | 'external_first' })" /></div>
@@ -869,7 +889,7 @@ async function deleteMemoryRecord(id?: string): Promise<void> {
              原因见 style.css（songloft-org/songloft-plugin-miot#79）。 -->
         <div class="field-grid"><div class="field"><SlInput v-model="sourceDrafts[source.id].name" placeholder="显示名称" /></div><div class="field"><SlInput v-model="sourceDrafts[source.id].url" placeholder="接口地址" /></div></div>
         <SlInput v-model="sourceDrafts[source.id].token" type="password" placeholder="Bearer Token（可选）" />
-        <SettingRow title="启用此源"><SlSwitch v-model="sourceDrafts[source.id].enabled" /></SettingRow>
+        <SettingRow title="启用此源"><SlSwitch v-model="sourceDrafts[source.id].enabled" :aria-label="`启用搜索源 ${sourceDrafts[source.id].name || source.id}`" /></SettingRow>
         <div class="field-actions"><SlButton variant="text" label="移除" icon="delete" @click="removeSource(source.id)" /></div>
       </div>
       <div v-if="!state.config.external_search_sources.length" class="empty-state">暂无已配置源，从上方「快速选择」添加，或手动添加</div>
@@ -883,7 +903,7 @@ async function deleteMemoryRecord(id?: string): Promise<void> {
   </SectionCard>
 
   <SectionCard title="AI 口令分析" icon="auto_awesome" description="可选的 OpenAI 兼容接口，用于解析复杂自然语言口令。">
-    <SettingRow title="启用 AI 分析" :subtitle="state.config.voice_command_enabled ? '规则和记忆未命中时再调用 AI' : '需要先开启语音口令'"><SlSwitch :model-value="!!state.config.ai_config.enabled" :disabled="!state.config.voice_command_enabled" @update:model-value="setAIEnabled" /></SettingRow>
+    <SettingRow title="启用 AI 分析" :subtitle="state.config.voice_command_enabled ? '规则和记忆未命中时再调用 AI' : '需要先开启语音口令'"><SlSwitch aria-label="启用 AI 分析" :model-value="!!state.config.ai_config.enabled" :disabled="!state.config.voice_command_enabled" @update:model-value="setAIEnabled" /></SettingRow>
     <div v-if="!state.config.voice_command_enabled" class="dependency-hint"><SlIcon name="warning" :size="18" /><span>需要先开启"语音口令"才能使用 AI 分析。</span></div>
     <div class="form-body">
       <div class="field">
@@ -935,8 +955,9 @@ async function deleteMemoryRecord(id?: string): Promise<void> {
       <div class="status-chips">
         <span class="chip" :class="aiConnChipClass">{{ aiConnText }}</span>
       </div>
-      <div v-if="aiModelError" class="field-help" style="color:#ef5350;">{{ aiModelError }}</div>
+      <div v-if="aiModelError" class="field-help field-error">{{ aiModelError }}</div>
       <div class="command-test-panel command-test-panel-inset"><strong>AI 分析测试</strong><div class="inline-fields"><SlInput v-model="aiTestQuery" placeholder="输入自然语言口令" @submit="testAI" /><SlButton variant="outlined" label="测试分析" icon="science" :disabled="aiTestBusy" @click="testAI" /></div><pre v-if="aiTestResult" class="result-pre">{{ aiTestResult }}</pre></div>
     </div>
   </SectionCard>
+  </div>
 </template>

@@ -10,6 +10,7 @@ import SlIcon from '../ui/SlIcon.vue';
 import SlInput from '../ui/SlInput.vue';
 import SlListView from '../ui/SlListView.vue';
 import SlSelect from '../ui/SlSelect.vue';
+import SlEmptyState from '../ui/SlEmptyState.vue';
 import { openSelect } from '../ui/selectState';
 import { navigation, openPage } from '../runtime';
 import { confirmAction, currentDevice, deviceName, lastPlayedSong, messageOf, playlistLabel, playSong, refreshAll, removeSongFromPlaylist, resumePlaylist, selectPlaylist, state, visibleSongs } from '../store';
@@ -334,7 +335,7 @@ onUnmounted(() => {
 
     <div class="player-toolbar">
       <div class="toolbar-field">
-        <SlSelect :model-value="state.selectedPlaylistId" :options="playlistOptions" placeholder="选择歌单" allow-empty searchable search-placeholder="搜索歌单" aria-label="选择歌单" @update:model-value="onPlaylist" />
+        <SlSelect leading-icon="queue_music" :model-value="state.selectedPlaylistId" :options="playlistOptions" placeholder="选择播放歌单" allow-empty searchable search-placeholder="搜索歌单" aria-label="选择歌单" @update:model-value="onPlaylist" />
       </div>
       <!-- 有上次播放记录才出现：从这个歌单自己的进度接着播，不受中间切过别的歌单影响 -->
       <SlButton
@@ -359,6 +360,15 @@ onUnmounted(() => {
          避免窗口滑动时原生 ListView 的子节点索引整体错位。
          外层 miot-scrollbar-shell 是 position: relative，让自定义可拖动滚动条能覆盖在右侧。 -->
     <div v-if="state.selectedPlaylistId && !state.songsLoading && !state.songsError" class="miot-scrollbar-shell">
+      <div class="song-list-header" aria-hidden="true">
+        <span class="song-header-index">#</span>
+        <span class="song-header-cover"></span>
+        <span class="song-header-title">标题</span>
+        <span class="song-header-artist">艺术家</span>
+        <span class="song-header-album">专辑</span>
+        <span class="song-header-duration">时长</span>
+        <span class="song-header-actions"></span>
+      </div>
       <SlListView ref="listRef" aria-label="歌曲列表" @scroll="onListScroll">
         <div class="song-list-spacer" :style="{ height: `${leadSpacerHeight}px` }"></div>
         <SongRow v-for="(song, index) in renderedSongs" :key="song.id" :song="song" :index="windowStart + index" :removable="songRemovable" @play="play" @remove="removeSong" />
@@ -377,8 +387,10 @@ onUnmounted(() => {
       />
     </div>
     <div v-else-if="state.songsLoading" class="song-list-empty"><span class="loading-spinner"></span><span>正在加载歌曲</span></div>
-    <div v-else-if="state.songsError" class="song-list-empty"><span>{{ state.songsError }}</span><SlButton variant="text" label="重试" @click="selectPlaylist(state.selectedPlaylistId)" /></div>
-    <div v-else class="song-list-empty"><div><SlIcon name="queue_music" :size="34" /><p>选择歌单后开始播放</p></div></div>
+    <SlEmptyState v-else-if="state.songsError" title="歌曲加载失败" :description="state.songsError" icon="cloud_off">
+      <SlButton variant="tonal" label="重新加载" icon="refresh" @click="selectPlaylist(state.selectedPlaylistId)" />
+    </SlEmptyState>
+    <SlEmptyState v-else title="选择一个歌单" description="选好歌单后，可以搜索、定位并直接推送到音箱播放。" icon="queue_music" />
 
     <PlayerBar />
 

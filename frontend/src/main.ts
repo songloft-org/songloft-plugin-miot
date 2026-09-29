@@ -2,6 +2,7 @@ import { createApp } from 'vue';
 import App from './App.vue';
 import { installListCoverVisibilityRecovery } from './covers';
 import './style.css';
+import './styles/redesign.css';
 
 if (!window.SongloftPlugin && !import.meta.env.DEV) {
   throw new Error('SongloftPlugin 宿主脚本未注入');

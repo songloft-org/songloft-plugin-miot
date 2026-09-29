@@ -7,6 +7,7 @@ import VoiceSettings from './settings/VoiceSettings.vue';
 import ScheduleSettings from './settings/ScheduleSettings.vue';
 import ToolboxSettings from './settings/ToolboxSettings.vue';
 import SlIcon from '../ui/SlIcon.vue';
+import SlStatusChip from '../ui/SlStatusChip.vue';
 import { closePage, navigation } from '../runtime';
 import { state } from '../store';
 import { openSelect } from '../ui/selectState';
@@ -20,6 +21,37 @@ const categories = [
   { id: 'toolbox', title: '工具箱', subtitle: 'URL、TTS 和操作结果', icon: 'construction', component: ToolboxSettings },
 ];
 const currentCategory = computed(() => categories.find((category) => category.id === (navigation.settingsCategory || 'device')) || categories[0]);
+const managedDeviceCount = computed(() => state.devices.reduce(
+  (total, account) => total + account.devices.filter((device) => device.managed).length,
+  0,
+));
+function categorySubtitle(category: (typeof categories)[number]): string {
+  if (category.id === 'device') {
+    const accountCount = state.accounts.length;
+    return accountCount || managedDeviceCount.value
+      ? `${accountCount} 个账号 · ${managedDeviceCount.value} 台受管理设备`
+      : category.subtitle;
+  }
+  if (category.id === 'voice') {
+    return state.config.conversation_monitor_enabled ? '监听运行中 · 口令与智能搜索' : category.subtitle;
+  }
+  if (category.id === 'schedule') {
+    return state.schedules.length ? `${state.schedules.length} 个任务 · ${state.config.scheduled_tasks_enabled ? '已启用' : '已暂停'}` : category.subtitle;
+  }
+  if (category.id === 'toolbox' && state.operationLog.length) {
+    return `${state.operationLog.length} 条最近操作结果`;
+  }
+  return category.subtitle;
+}
+function categoryStatus(category: (typeof categories)[number]): { label: string; tone: 'neutral' | 'success' | 'warning' } | null {
+  if (category.id === 'device') {
+    if (!state.accounts.length) return { label: '待配置', tone: 'warning' };
+    return { label: `${managedDeviceCount.value} 台`, tone: managedDeviceCount.value ? 'success' : 'warning' };
+  }
+  if (category.id === 'voice') return { label: state.config.conversation_monitor_enabled ? '运行中' : '未启用', tone: state.config.conversation_monitor_enabled ? 'success' : 'neutral' };
+  if (category.id === 'schedule') return { label: state.config.scheduled_tasks_enabled ? '已启用' : '已暂停', tone: state.config.scheduled_tasks_enabled ? 'success' : 'neutral' };
+  return null;
+}
 const showMobileMenu = computed(() => isNarrow.value && !navigation.settingsCategory);
 const appbarTitle = computed(() => isNarrow.value && navigation.settingsCategory ? currentCategory.value.title : '设置');
 const settingsBody = ref<HTMLElement | null>(null);
@@ -53,20 +85,37 @@ onUnmounted(() => window.removeEventListener('resize', updateWidth));
   <div class="settings-page page-view">
     <div class="settings-appbar-shell">
       <div class="settings-appbar-inner">
-        <AppBar :title="appbarTitle" back @back="back" />
+        <AppBar :title="appbarTitle" back @back="back">
+          <SlStatusChip v-if="state.configSaving" label="保存中" tone="info" icon="save" />
+        </AppBar>
       </div>
     </div>
     <div ref="settingsBody" class="settings-scroll-body">
     <div class="settings-shell">
       <div v-if="showMobileMenu" ref="mobileMenu" class="settings-mobile-menu">
-        <button v-for="category in categories" :key="category.id" class="settings-nav-item" @click="setCategory(category.id)"><span class="settings-nav-icon"><SlIcon :name="category.icon" :size="20" /></span><span class="settings-nav-copy"><strong class="settings-nav-title">{{ category.title }}</strong><small class="settings-nav-subtitle">{{ category.subtitle }}</small></span><SlIcon name="chevron_right" :size="20" /></button>
+        <button v-for="category in categories" :key="category.id" class="settings-nav-item" @click="setCategory(category.id)">
+          <span class="settings-nav-icon"><SlIcon :name="category.icon" :size="20" /></span>
+          <span class="settings-nav-copy"><strong class="settings-nav-title">{{ category.title }}</strong><small class="settings-nav-subtitle">{{ categorySubtitle(category) }}</small></span>
+          <SlStatusChip v-if="categoryStatus(category)" :label="categoryStatus(category)!.label" :tone="categoryStatus(category)!.tone" />
+          <SlIcon name="chevron_right" :size="20" />
+        </button>
       </div>
       <div v-else class="settings-layout">
         <nav class="settings-nav" aria-label="设置分类">
-          <button v-for="category in categories" :key="category.id" class="settings-nav-item" :class="{ active: category.id === currentCategory.id }" @click="setCategory(category.id)"><span class="settings-nav-icon"><SlIcon :name="category.icon" :size="20" /></span><span class="settings-nav-copy"><strong class="settings-nav-title">{{ category.title }}</strong><small class="settings-nav-subtitle">{{ category.subtitle }}</small></span></button>
+          <button v-for="category in categories" :key="category.id" class="settings-nav-item" :class="{ active: category.id === currentCategory.id }" @click="setCategory(category.id)">
+            <span class="settings-nav-icon"><SlIcon :name="category.icon" :size="20" /></span>
+            <span class="settings-nav-copy"><strong class="settings-nav-title">{{ category.title }}</strong><small class="settings-nav-subtitle">{{ categorySubtitle(category) }}</small></span>
+            <SlStatusChip v-if="categoryStatus(category)" :label="categoryStatus(category)!.label" :tone="categoryStatus(category)!.tone" />
+          </button>
         </nav>
         <section ref="settingsContent" class="settings-content">
-          <div class="settings-header"><h1>{{ currentCategory.title }}</h1></div>
+          <div class="settings-header">
+            <div class="settings-header-copy">
+              <span class="settings-header-eyebrow">MIoT 设置</span>
+              <h1>{{ currentCategory.title }}</h1>
+              <p>{{ categorySubtitle(currentCategory) }}</p>
+            </div>
+          </div>
           <component :is="currentCategory.component" />
         </section>
       </div>

@@ -7,6 +7,7 @@ import SlCheckbox from '../../ui/SlCheckbox.vue';
 import SlInput from '../../ui/SlInput.vue';
 import SlSelect from '../../ui/SlSelect.vue';
 import SlSwitch from '../../ui/SlSwitch.vue';
+import SlDisclosure from '../../ui/SlDisclosure.vue';
 import { postEnvelope } from '../../api';
 import { navigation } from '../../runtime';
 import { deviceId, deviceName, confirmAction, deleteGroup, loadAccountsAndDevices, loadGroups, messageOf, saveConfig, saveGroup, state, toggleManaged, notify } from '../../store';
@@ -45,6 +46,7 @@ const hostOptions = computed<SelectOption[]>(() => [
 const isCustomHost = computed(() => serverChoice.value === '__custom__');
 const managed = computed(() => state.devices.flatMap((account) => account.devices.filter((device) => device.managed).map((device) => ({ accountId: account.account_id, device }))));
 const accountStatuses = computed(() => state.accounts);
+function isDeviceOnline(device: { online?: boolean; presence?: string }): boolean { return device.online === true || device.presence === 'online'; }
 
 onMounted(() => {
   const suggested = Array.isArray(state.config.suggested_addresses) ? state.config.suggested_addresses : [];
@@ -243,14 +245,14 @@ async function toggleMusicApi(hardware: string, enabled: boolean): Promise<void>
   </SectionCard>
 
   <SectionCard title="设备管理" icon="speaker_group" description="开启管理后，设备才会出现在播放选择器、分组和定时任务中。">
-    <div class="form-body"><div v-if="!state.devices.length" class="empty-state">暂无设备，请先登录账号并刷新。</div><div v-for="account in state.devices" :key="account.account_id" class="device-account"><h3 class="card-title">{{ account.account_name || account.account_id }}</h3><div v-for="device in account.devices" :key="deviceId(device)" class="device-check-row"><SlCheckbox :model-value="!!device.managed" :aria-label="`管理 ${deviceName(device)}`" @update:model-value="setManaged(account.account_id, deviceId(device), $event)" /><div class="device-check-copy"><strong>{{ deviceName(device) }}</strong><small>{{ device.model || device.hardware || '未知型号' }} · {{ device.presence === 'online' ? '在线' : '离线' }}</small></div><span class="chip" :class="device.presence === 'online' ? 'chip-success' : 'chip-warning'">{{ device.presence === 'online' ? '在线' : '离线' }}</span></div></div></div>
+    <div class="form-body"><div v-if="!state.devices.length" class="empty-state">暂无设备，请先登录账号并刷新。</div><div v-for="account in state.devices" :key="account.account_id" class="device-account"><h3 class="card-title">{{ account.account_name || account.account_id }}</h3><div v-for="device in account.devices" :key="deviceId(device)" class="device-check-row"><SlCheckbox :model-value="!!device.managed" :aria-label="`管理 ${deviceName(device)}`" @update:model-value="setManaged(account.account_id, deviceId(device), $event)" /><div class="device-check-copy"><strong>{{ deviceName(device) }}</strong><small>{{ device.model || device.hardware || '未知型号' }} · {{ isDeviceOnline(device) ? '在线' : '离线' }}</small></div><span class="chip" :class="isDeviceOnline(device) ? 'chip-success' : 'chip-warning'">{{ isDeviceOnline(device) ? '在线' : '离线' }}</span></div></div></div>
   </SectionCard>
 
   <SectionCard title="设备分组" icon="speaker_group" description="组内设备共享队列、播放模式和控制操作；一台设备只能属于一个组。">
     <div class="form-body"><SlButton variant="filled" block label="新建分组" icon="add" @click="openGroup()" /><div v-if="groupEditor" class="sub-panel"><div class="field"><label class="field-label">分组名称</label><SlInput v-model="groupName" placeholder="例如 客厅 + 卧室" aria-label="分组名称" /></div><label class="field-label">选择至少两台已管理设备</label><div v-for="item in managed" :key="`${item.accountId}:${deviceId(item.device)}`" class="device-check-row"><SlCheckbox :model-value="selectedMembers.includes(`${item.accountId}:${deviceId(item.device)}`)" @update:model-value="(value) => value ? selectedMembers.push(`${item.accountId}:${deviceId(item.device)}`) : selectedMembers = selectedMembers.filter((key) => key !== `${item.accountId}:${deviceId(item.device)}`)" /><div class="device-check-copy"><strong>{{ deviceName(item.device) }}</strong><small>{{ item.accountId }}</small></div></div><div class="field-actions"><SlButton variant="text" label="取消" @click="closeGroup" /><SlButton variant="filled" label="保存" icon="save" @click="saveCurrentGroup" /></div></div><div v-if="!state.groups.length && !groupEditor" class="empty-state">暂无分组</div><div v-for="group in state.groups" :key="group.id" class="list-item"><div class="list-item-copy"><strong class="list-item-title">{{ group.name }}</strong><span class="list-item-subtitle">{{ group.members.length }} 台设备</span></div><SlButton variant="icon" icon="edit" title="编辑分组" @click="openGroup(group)" /><SlButton variant="icon" icon="delete" title="删除分组" @click="removeGroup(group.id)" /></div></div>
   </SectionCard>
 
-  <SectionCard title="设备播放能力" icon="speaker" description="勾选后使用 Music API（含歌词/曲库联动）播放；若音箱一直播报“播放服务遇到问题”等错误，取消勾选改用直链播放。">
+  <SlDisclosure title="高级设备兼容" icon="speaker" description="按设备型号调整 Music API 与指示灯行为。">
     <div class="form-body">
       <label class="field-label">按型号选择播放方式</label>
       <p v-if="!musicApiModelRows.length" class="field-help">尚未识别到任何设备型号，登录并开启设备管理后会出现在这里。</p>
@@ -268,5 +270,5 @@ async function toggleMusicApi(hardware: string, enabled: boolean): Promise<void>
       </p>
     </div>
     <SettingRow title="播放时保持指示灯" subtitle="关闭后播放时音箱指示灯不亮，适合夜间使用"><SlSwitch v-model="state.config.indicator_light_enabled" aria-label="播放时保持指示灯" @update:model-value="saveConfig({ indicator_light_enabled: $event })" /></SettingRow>
-  </SectionCard>
+  </SlDisclosure>
 </template>

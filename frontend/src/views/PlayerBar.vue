@@ -31,6 +31,25 @@ function onProgressClick(event: MouseEvent): void {
   seekPlayer(position);
 }
 
+function onProgressKeydown(event: KeyboardEvent): void {
+  const duration = Number(state.player.duration || 0);
+  if (duration <= 0 || state.playerBusy) return;
+  const current = Number(state.player.position || 0);
+  if (event.key === 'ArrowLeft' || event.key === 'ArrowDown') {
+    event.preventDefault();
+    void seekPlayer(Math.max(0, current - 5));
+  } else if (event.key === 'ArrowRight' || event.key === 'ArrowUp') {
+    event.preventDefault();
+    void seekPlayer(Math.min(duration, current + 5));
+  } else if (event.key === 'Home') {
+    event.preventDefault();
+    void seekPlayer(0);
+  } else if (event.key === 'End') {
+    event.preventDefault();
+    void seekPlayer(duration);
+  }
+}
+
 const isFavorite = ref(false);
 const favoriteBusy = ref(false);
 const sleepTimerBusy = ref(false);
@@ -57,6 +76,16 @@ onUnmounted(() => window.removeEventListener('resize', onResize));
 
 function openPlayer(): void {
   openPage('player');
+}
+
+/**
+ * 与主程序 MiniPlayer 一致：整条播放栏都是展开播放器的点击面。
+ * 控制按钮和进度条会自行 stop/位于播放栏外，不触发这里。
+ */
+function onBarSurfaceClick(event: MouseEvent): void {
+  const target = event.target as HTMLElement | null;
+  if (target?.closest('button, input, .player-popup-anchor')) return;
+  openPlayer();
 }
 
 async function loadFavoriteStatus(): Promise<void> {
@@ -145,8 +174,18 @@ async function cancelSleepTimer(): Promise<void> {
 </script>
 
 <template>
-  <div v-if="currentDevice" class="player-bar-shell">
-    <div class="player-bar-progress" @click="onProgressClick">
+  <div v-if="currentDevice" class="player-bar-shell" title="打开全屏播放器" @click="onBarSurfaceClick">
+    <div
+      class="player-bar-progress"
+      role="slider"
+      tabindex="0"
+      aria-label="播放进度"
+      aria-valuemin="0"
+      :aria-valuemax="Math.round(Number(state.player.duration || 0))"
+      :aria-valuenow="Math.round(Number(state.player.position || 0))"
+      @click.stop="onProgressClick"
+      @keydown="onProgressKeydown"
+    >
       <div class="player-bar-progress-track">
         <div class="player-bar-progress-fill" :style="{ width: progressPercent + '%' }"></div>
         <div class="player-bar-progress-thumb" :style="{ left: progressPercent + '%' }"></div>
@@ -155,7 +194,7 @@ async function cancelSleepTimer(): Promise<void> {
     <div class="player-bar">
       <!-- 左侧：歌曲信息 + 收藏按钮 -->
       <div class="player-bar-left">
-        <div class="player-bar-info" role="button" tabindex="0" aria-label="展开播放器" @click="openPlayer" @keydown.enter="openPlayer">
+        <div class="player-bar-info" role="button" tabindex="0" aria-label="展开播放器" @click.stop="openPlayer" @keydown.enter.stop="openPlayer" @keydown.space.prevent.stop="openPlayer">
           <img v-if="cover" :key="coverEpoch" class="player-cover" :src="cover" :alt="state.player.current_song?.title || '歌曲封面'" @error="onCoverError" @load="onCoverLoad" />
           <div v-else class="player-cover player-cover-empty"><SlIcon name="music_note" :size="22" player-icon /></div>
           <div class="player-copy">
