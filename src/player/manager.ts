@@ -170,8 +170,6 @@ const LANDING_FAILURE_CIRCUIT_BREAK = 3;
  */
 const LANDING_EARLY_STOP_SEC = 15;
 
-/** 单首跳歌 TTS 文案 */
-const LANDING_FAILURE_TTS_TEXT = '这首歌暂时无法播放，为您切换下一首';
 /** 连续失败熔断 TTS 文案 */
 const LANDING_CIRCUIT_BREAK_TTS_TEXT = '当前多首歌曲无法播放，请稍后再试';
 /** 电台/单曲播放起播失败 TTS 文案（无「下一首」可跳，直接停播） */
@@ -298,6 +296,11 @@ export class PlaylistManager {
   private stopPollTimer: any = null;    // 定时器ID（后台探测外部停止，见 EXTERNAL_STOP_* 常量）
   private stopPollMisses: number = 0;   // 连续探测到设备"未在播放"的次数
   private stopPollLastPosition: number = -1; // 上次探测读到的设备流内位置（秒），-1 = 还没有基线
+  private stopPollMaxPosition: number = 0; // 外部停止探测期间见过的最大设备流内位置（秒），
+  // 用于区分「自然播完 position 回零」与「起播即失败」(#114)：曾推进到起播窗口之外又落回近 0
+  // 是自然播完，不是起播失败，不应走 landing-failure 的 TTS+跳歌级联
+  private stopPollDeadlineMs: number = 0; // 外部停止探测的绝对截止墙钟（ms），按实际墙钟判定是否
+  // 继续下一轮，避免按调度间隔递减、不计云端查询耗时导致 stop-poll 漏进尾部窗口与 tail-probe 竞态(#114)
   private resumePollTimer: any = null;  // 定时器ID（后台探测外部恢复，见 EXTERNAL_RESUME_* 常量）
   private resumePollStartedAt: number = 0;
   private resumePollHits: number = 0;   // 连续探测到设备"在播放"的次数
@@ -1549,8 +1552,12 @@ export class PlaylistManager {
    * - 累加连续失败计数；达到熔断阈值 → TTS 提示后 stop（走 startResumePoll 兜底自愈）
    * - 未达阈值 → TTS「切换下一首」+ advanceToNext；无下一首 → TTS「稍后再试」后 stop
    *
-   * TTS 与 advanceToNext 并发发送：不等 TTS 播完，音箱侧的「播放失败」提示已经出现在前，
-   * 让我们的提示紧跟其后即可；等 TTS 会多出 3-4s 静默，得不偿失。
+   * 单首跳歌不发 TTS：TTS（MiIO action）与下一首的 play-url（mediaplayer ubus）是不同通道，
+   * TTS 会抢断刚下发的下一首 URL，TTS 播完后设备停在空闲态、不会自动恢复下一首的流，
+   * 于是下一首的起播确认读到 status!=1 又判其不可播——形成「一首失败连累下一首也跳」的
+   * 级联（#114）。改为静默跳歌，让下一首不被打断、正常起播；仅连续多首失败熔断时才发 TTS
+   * 提示用户是音源问题（见下方 CIRCUIT_BREAK 分支）。
+   * 电台/单曲播放无下一首，TTS 不会打断谁，仍发停播提示。
    * 分组只对主设备发 TTS（forEachTarget 只处理播放/暂停/停止，textToSpeech 本身按主设备发）。
    */
   private async handleLandingFailure(opts: { tts: boolean }): Promise<void> {
@@ -1578,10 +1585,8 @@ export class PlaylistManager {
       return;
     }
 
-    // 常规跳歌：先并发下发 TTS 再切歌
-    if (opts.tts) {
-      void this.minaService.textToSpeech(this.accountId, this.deviceId, LANDING_FAILURE_TTS_TEXT).catch(() => {});
-    }
+    // 常规跳歌：静默切下一首（不发 TTS，避免打断下一首起播造成级联，#114）。
+    // 单首「这首歌暂时无法播放」提示具误导性（用户因此报 #114），跳歌本身用户可感知，无需提示。
     await this.advanceToNext();
   }
 
@@ -1859,7 +1864,12 @@ export class PlaylistManager {
     const pollBudgetMs = delayMs - EXTERNAL_STOP_TAIL_GUARD_SEC * 1000;
     if (pollBudgetMs >= EXTERNAL_STOP_POLL_INTERVAL_MS) {
       this.stopPollMisses = 0;
-      this.scheduleStopPoll(pollBudgetMs);
+      // 用绝对截止墙钟而非递减 budget：每次 getPlayState 的云端查询耗时（1-2s）不被计入，
+      // 旧实现按「调度间隔」递减会让 stop-poll 比墙钟慢约 10%、漏进尾部 15s 窗口与 tail-probe
+      // 竞态并抢先命中 status=3。改读 deadline 后 stop-poll 准时在尾部前停下，自然结束交给
+      // tail-probe（其 maxPosition 判据能正确识别）(#114)。
+      this.stopPollDeadlineMs = Date.now() + pollBudgetMs;
+      this.scheduleStopPoll();
     }
 
     // 尾部设备进度校验（#481）：外部停止探测在结尾前 EXTERNAL_STOP_TAIL_GUARD_SEC 主动关闭，
@@ -2050,12 +2060,18 @@ export class PlaylistManager {
   /**
    * 安排下一次外部停止探测。每次重新校准自动切歌定时器（resetAutoNextTimer / 续播等）
    * 都会经 startCheckTimer 重走这里，探测计划随之刷新，与切歌定时器保持同源。
+   *
+   * 按 stopPollDeadlineMs（绝对截止墙钟）决定是否继续以及等多久：旧实现把剩余预算按
+   * 「调度间隔」递减、不计 getPlayState 的云端查询耗时，导致 stop-poll 比墙钟慢约 10%，
+   * 漏进尾部 15s 窗口与 tail-probe 竞态。改读 deadline 后准时停(#114)。
    */
-  private scheduleStopPoll(remainingBudgetMs: number): void {
-    const wait = Math.min(EXTERNAL_STOP_POLL_INTERVAL_MS, remainingBudgetMs);
+  private scheduleStopPoll(): void {
+    const remainingMs = this.stopPollDeadlineMs - Date.now();
+    if (remainingMs <= 0) return;
+    const wait = Math.min(EXTERNAL_STOP_POLL_INTERVAL_MS, remainingMs);
     this.stopPollTimer = setTimeout(() => {
       this.stopPollTimer = null;
-      this.checkExternalStop(remainingBudgetMs - wait).catch(e => {
+      this.checkExternalStop().catch(e => {
         songloft.log.warn('[PlaylistManager] checkExternalStop error: ' + String(e));
       });
     }, wait);
@@ -2071,7 +2087,7 @@ export class PlaylistManager {
    * 推进，说明设备其实在播，按 status 误报处理并清零计数
    * （见 EXTERNAL_STOP_POSITION_ADVANCE_MIN_SEC）。
    */
-  private async checkExternalStop(remainingBudgetMs: number): Promise<void> {
+  private async checkExternalStop(): Promise<void> {
     if (this.state !== 'playing') return;
     const indexAtCheck = this.currentIndex;
 
@@ -2079,6 +2095,11 @@ export class PlaylistManager {
       const { status, position } = await this.minaService.getPlayState(this.accountId, this.deviceId);
       // 探测期间状态已变化（暂停/停止/切歌）：交给触发那次操作的逻辑处理，这里不再插手
       if (this.state !== 'playing' || this.currentIndex !== indexAtCheck) return;
+
+      // 跟踪本曲探测期间见过的最大 position（status>=0 即有效）：用于在 landing-failure 分支
+      // 区分「自然播完 position 回零」与「起播即失败」(#114)。必须在 status===1 分支前更新——
+      // 否则播放期间（status=1）的推进不计入，maxPosition 恒为 0，回零时无法识别自然结束。
+      if (status >= 0 && position > this.stopPollMaxPosition) this.stopPollMaxPosition = position;
 
       if (status === 1) {
         this.stopPollMisses = 0;
@@ -2098,10 +2119,23 @@ export class PlaylistManager {
             // 判失败同源，直接走 handleLandingFailure：可跳歌就跳、电台/单曲播放就 TTS 停播（#466）。
             // 起播确认漏网（首查恰好 status=1、随后 502）由这条兜住。
             const song = this.getCurrentSong();
-            if (song && position >= 0 && position < LANDING_EARLY_STOP_SEC) {
+            const nearStart = !!song && position >= 0 && position < LANDING_EARLY_STOP_SEC;
+            if (nearStart && this.stopPollMaxPosition < LANDING_EARLY_STOP_SEC) {
+              // 真起播失败：从未推进出起播窗口就停了 → 跳歌 + TTS（#466 原逻辑）
               songloft.log.warn(`[PlaylistManager] External stop early (status=${status}, position=${position}s), treating as landing failure`);
-              if (song.id > 0) this.unplayableSongIds.add(song.id);
+              if (song!.id > 0) this.unplayableSongIds.add(song!.id);
               await this.handleLandingFailure({ tts: true });
+              return;
+            }
+            if (nearStart) {
+              // 曾推进到起播窗口之外又回零：自然播完的 position 回零，不是起播失败（#114）。
+              // 不标 unplayable、不发 TTS，直接走正常切歌；否则 TTS 会打断下一首起播、
+              // 起播确认又误判下一首也不可播，形成级联。
+              songloft.log.info(`[PlaylistManager] External stop near start but song played to ${this.stopPollMaxPosition}s, advancing as natural end (status=${status}, position=${position}s)`);
+              this.stopCheckTimer();
+              this.onSongFinished().catch(e => {
+                songloft.log.error('[PlaylistManager] onSongFinished error: ' + String(e));
+              });
               return;
             }
             songloft.log.info(`[PlaylistManager] External stop confirmed (status=${status}, position=${position}s, misses=${this.stopPollMisses}), cancelling auto-next`);
@@ -2118,8 +2152,8 @@ export class PlaylistManager {
       songloft.log.warn('[PlaylistManager] checkExternalStop query failed: ' + String(e));
     }
 
-    if (this.state === 'playing' && this.currentIndex === indexAtCheck && remainingBudgetMs > 0) {
-      this.scheduleStopPoll(remainingBudgetMs);
+    if (this.state === 'playing' && this.currentIndex === indexAtCheck && Date.now() < this.stopPollDeadlineMs) {
+      this.scheduleStopPoll();
     }
   }
 
@@ -2137,6 +2171,8 @@ export class PlaylistManager {
     }
     this.stopPollMisses = 0;
     this.stopPollLastPosition = -1;
+    this.stopPollMaxPosition = 0;
+    this.stopPollDeadlineMs = 0;
     if (this.durationProbeTimer !== null) {
       clearTimeout(this.durationProbeTimer);
       this.durationProbeTimer = null;
