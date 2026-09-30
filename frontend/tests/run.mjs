@@ -39,7 +39,10 @@ const speedPopup = read('views/PlayerSpeedPopup.vue');
 const toolboxSettings = read('views/settings/ToolboxSettings.vue');
 const volumePopup = read('views/PlayerVolumePopup.vue');
 const sleepTimerPopup = read('views/PlayerSleepTimerPopup.vue');
+const sleepPanel = read('views/SleepTimerPanel.vue');
+const sleepTimerUtil = read('sleepTimer.ts');
 const progress = read('views/PlayerProgress.vue');
+const morePopup = read('views/PlayerBarMorePopup.vue');
 const songRow = read('views/SongRow.vue');
 const covers = read('covers.ts');
 const playlistHandler = fs.readFileSync(path.join(frontendRoot, '../src/handlers/playlist.ts'), 'utf8');
@@ -111,7 +114,7 @@ assert.match(voiceSettings, /data-voice-panel="intelligence"/);
 assert.match(playerBar, /role="slider"/);
 assert.match(playerBar, /onProgressKeydown/);
 assert.match(playerBar, /onBarSurfaceClick/);
-assert.match(playerBar, /player-bar-shell" title="打开全屏播放器" @click="onBarSurfaceClick"/);
+assert.match(playerBar, /player-bar-shell"[\s\S]{0,160}@click="onBarSurfaceClick"/);
 assert.match(fullscreenPlayer, /fullscreen-ambient-cover/);
 assert.match(fullscreenPlayer, /fullscreen-topbar-title/);
 assert.match(fullscreenPlayer, /fullscreen-swipe-hint/);
@@ -333,7 +336,7 @@ assert.doesNotMatch(redesign, /\.song-list-header\s*\{[^}]*border-radius/);
 assert.match(redesign, /\.song-list-header\s*\{[^}]*background: var\(--md-surface-container-low\)/);
 // 桌面行高与主程序曲库一致（8 × 2 内边距 + 40px 封面 = 56px）；MainPage 的虚拟窗口
 // 按同一个变量算占位高度，两者必须同源。
-assert.match(redesign, /@media \(min-width: 761px\) \{[\s\S]*?:root \{ --miot-row-height: 56px; \}/);
+assert.match(redesign, /@media \(min-width: 600px\) \{[\s\S]*?:root \{ --miot-row-height: 56px; \}/);
 assert.doesNotMatch(redesign, /inset 3px 0 0 var\(--md-primary\)/);
 assert.match(songRow, /acquireCoverSlot/);
 assert.match(covers, /access_token/);
@@ -431,8 +434,78 @@ assert.match(playerBar, /player-bar-shell"[^>]*@click="onBarSurfaceClick"/);
 // media query 隐藏。原来那两条 doesNotMatch 已与设计相反、一直是红的，改成正向断言。
 assert.match(playerBar, /class="player-bar-tools"/);
 assert.match(playerBar, /@change="setVolume"/);
-assert.match(style, /@media \(max-width: 760px\)[\s\S]*\.player-bar-tools \{ display: none; \}/);
+assert.match(style, /@media \(max-width: 599px\)[\s\S]*\.player-bar-tools \{ display: none; \}/);
 assert.doesNotMatch(playerBar, /mini-mode-control|mini-stop-control/);
+
+// #98 回归：迷你播放器对齐主程序（断点 / 歌词按钮 / 更多菜单 / 胶囊玻璃 / 列表垫底）。
+// 主程序 responsive.dart：tablet = 600，迷你播放器只吃这一档 —— <600 是手机档
+// (MiniPlayer / AppCapsulePlayer.compact)，>=600 是桌面档 (DesktopPlayer / dense)。
+// 插件原来用单一的 760 档，600~760 这段与主程序对不上。
+assert.match(playerBar, /viewportWidth\.value >= 600/);
+assert.doesNotMatch(redesign, /@media \(max-width: 760px\)|@media \(min-width: 761px\)/);
+assert.doesNotMatch(style, /@media \(max-width: 760px\)|@media \(min-width: 761px\)/);
+// 歌词按钮：主程序胶囊 / 桌面工具栏都有；「队列」主程序有，但插件按需求不做。
+assert.match(playerBar, /icon="lyrics"/);
+// lyrics 码点只存在于通用 UI 图标字体（miot-ui-icons.otf），不在 player 图标字体里。
+// 写成 player-icon 会渲染成 msdf 乱码（实测大屏胶囊上显示成 "lyrics" 字样）。
+assert.doesNotMatch(playerBar, /icon="lyrics"\s+player-icon/);
+assert.match(playerBar, /player-lyrics-button/);
+assert.match(playerBar, /'player-tool-muted': !state\.player\.current_song\?\.lyric_url/);
+assert.doesNotMatch(playerBar, /icon="queue_music"|togglePlaylistDrawer/);
+// 「更多」：两档都只在放不下时出现 —— 放得下就整排平铺、一枚不藏。
+// 标准档量网格列宽，胶囊档量「行内容宽 − 其它项 − 标题保底宽」（工具区 flex:0 0 auto
+// 不参与收缩，量不到列宽），所以胶囊档不再无条件出现「更多」。
+assert.match(playerBar, /const TOOLS_INLINE_MIN = TOOLS_INLINE_COUNT \* 38/);
+assert.match(playerBar, /const TOOLS_INLINE_COUNT = 5/);
+assert.match(playerBar, /standardToolsCompact = computed/);
+assert.match(playerBar, /capsuleToolsCompact = computed/);
+assert.match(playerBar, /showMoreMenu = computed\(\(\) => standardToolsCompact\.value \|\| capsuleToolsCompact\.value\)/);
+assert.match(playerBar, /capsuleReservedWidth = computed/);
+assert.match(playerBar, /new ResizeObserver/);
+assert.match(playerBar, /<PlayerBarMorePopup\s+v-if="showMoreMenu"/);
+// 主程序 CapsuleMiniPlayer._buildMoreMenu / DesktopPlayer 溢出菜单都是 Icons.more_vert_rounded，
+// 插件一度写成 expand_more（下拉箭头），形状对不上。
+assert.match(morePopup, /icon="more_vert"/);
+assert.match(slIcon, /more_vert: 0xe5d4/);
+assert.match(morePopup, /class="player-bar-more-popup"/);
+assert.match(morePopup, /sleep: \[mode: 'time' \| 'songs', value: number\]/);
+assert.match(style, /\.player-bar-more-popup\s*\{[^}]*position: fixed/);
+// 菜单只列「动作行」（延迟停止 / 停止播放）。延迟停止的时长档位是二级面板：
+// 直接把 15 分钟 / 30 分钟 / 1 小时 摊进菜单，点开看着不像菜单而像误触了延迟停止
+// （主程序 CapsuleMiniPlayer._buildMoreMenu 也是菜单项 → SleepTimerSheet）。
+assert.match(morePopup, /import SleepTimerPanel from '\.\/SleepTimerPanel\.vue'/);
+assert.match(morePopup, /stage\.value === 'sleep' \? 280 : 200/);
+assert.match(morePopup, /function openSleep\(\): void/);
+assert.match(morePopup, /class="player-bar-more-label">延迟停止/);
+assert.doesNotMatch(morePopup, /choose\('time', 15\)/);
+// 选完就收：主程序 SleepTimerSheet.show / _SleepTimerOverlayPanel 都是回调 + 关浮层，
+// 菜单里的「停止播放」同样点完即关。插件一度选完仍摊着，必须再点空白处才收起。
+assert.match(morePopup, /function chooseSleep\(mode: 'time' \| 'songs', value: number\): void \{\s*emit\('sleep', mode, value\);\s*navigation\.playerPopup = '';/);
+assert.match(morePopup, /@set="chooseSleep"/);
+// 平铺时工具区真正需要的宽度 = 5 枚 38px 按钮（播放模式/音量/延迟停止/歌词/停止）。
+assert.match(redesign, /\.player-bar-tools > \.player-popup-anchor,[\s\S]*?\.player-bar-tools > \.sl-button-icon \{[^}]*width: 38px/);
+// 胶囊玻璃：真模糊挂在 ::before 上——shell 自己带 backdrop-filter 会成为 fixed 弹层
+// （播放模式 / 音量 / 更多）的包含块，弹层按 viewport 算出来的坐标会整体错位，还会被
+// 圆角裁掉。顶部内高光 + 淡出阴影与主程序 GlassSurface / 静态玻璃同款。
+assert.match(redesign, /player-bar-capsule-dense::before \{[\s\S]*?backdrop-filter: blur\(20px\)/);
+assert.match(redesign, /html\[data-navigation-style='capsule'\] \.player-bar-shell \{[\s\S]*?background-image: linear-gradient\(180deg, var\(--sl-theme-glass-highlight/);
+assert.match(redesign, /box-shadow: 0 2px 8px rgba\(0, 0, 0, \.102\)/);
+assert.match(redesign, /--capsule-height: 59px/);
+assert.match(redesign, /--capsule-height: 64px/);
+// 胶囊 shell 的 overflow: hidden 只用来把整宽顶边进度按 pill 轮廓裁掉（进度层自己也带
+// 同款圆角 + overflow）。弹层是 fixed + JS 坐标，不被它裁剪，所以音量滑杆能弹出来。
+assert.match(redesign, /html\[data-navigation-style='capsule'\] \.player-bar-progress \{[^}]*overflow: hidden/);
+assert.match(style, /\.player-mode-popup, \.player-volume-popup \{[^}]*position: fixed/);
+assert.match(style, /\.player-volume-popup \{[^}]*width: 64px[^}]*height: 200px/);
+assert.match(volumePopup, /function positionPopup\(\): void/);
+assert.match(volumePopup, /ref="anchor"/);
+// 胶囊档列表一直铺到视口底（浮起胶囊不占布局），靠 padding-bottom 把末尾垫到胶囊之上，
+// 否则滚到底时最后一行正好卡在胶囊底下——就是「滚动不到底」的根因。
+assert.match(mainPage, /function navScrollInset\(\): number/);
+assert.match(mainPage, /return capsuleCompact \? 83 : 84/);
+assert.match(mainPage, /list\.style\.paddingBottom = inset > 0 \? `\$\{inset\}px` : ''/);
+assert.match(mainPage, /listHeight\.value - navInset\.value/);
+assert.match(mainPage, /totalHeight \+ navInset\.value - listHeight\.value/);
 assert.match(modePopup, /value: 'single'/);
 assert.match(modePopup, /value: 'random'/);
 assert.match(modePopup, /value: 'singlePlay'.*label: '单曲播放'.*icon: 'looks_one'/);
@@ -441,7 +514,8 @@ assert.match(modePopup, /const panelWidth = mobile \? 140 : 160/);
 assert.match(modePopup, /height: `\$\{panelHeight\}px`/);
 assert.match(modePopup, /Math\.max\(edgeInset, Math\.min\(centeredLeft/);
 assert.match(modePopup, /aboveTop < edgeInset \? rect\.bottom \+ gap : aboveTop/);
-assert.match(style, /\.player-mode-popup\s*\{[^}]*position: fixed[^}]*width: 160px/);
+assert.match(style, /\.player-mode-popup, \.player-volume-popup \{[^}]*position: fixed/);
+assert.match(style, /\.player-mode-popup \{[^}]*width: 160px/);
 assert.match(style, /@media \(max-width: 599px\)[\s\S]*\.player-mode-popup\s*\{[^}]*width: 140px/);
 assert.match(style, /@media \(max-width: 599px\)[\s\S]*\.player-mode-option\s*\{[^}]*height: 44px/);
 assert.match(toolboxSettings, /ref\('https:\/\/lhttp\.qtfm\.cn\/live\/4915\/64k\.mp3'\)/);
@@ -477,8 +551,12 @@ assert.match(style, /\.sl-select-backdrop[^}]*position: fixed/);
 assert.match(style, /material-icons-player\.otf/);
 assert.match(style, /\.player-favorite-button\.player-control-active[^}]*#f44336/);
 assert.match(sleepTimerPopup, /status\.active \? 'alarm_on' : 'alarm'/);
-assert.match(sleepTimerPopup, /choose\('time', 15\)/);
-assert.match(sleepTimerPopup, /choose\('songs', 5\)/);
+assert.match(sleepTimerPopup, /<SleepTimerPanel/);
+// 档位列表（按时长 / 按歌曲 + 自定义）在面板组件里，浮层与「更多」菜单共用一份。
+assert.match(sleepPanel, /choose\('time', 15\)/);
+assert.match(sleepPanel, /choose\('songs', 5\)/);
+assert.match(sleepPanel, /sleepTimerLabel\(props\.status\)/);
+assert.match(sleepTimerUtil, /export function sleepTimerLabel/);
 assert.match(style, /\.player-sleep-popup[^}]*width: 280px[^}]*max-width: calc\(100vw - 32px\)/);
 // PlayerBar 工具区弹层右对齐，防止右侧溢出视口（#388）。
 // 这件事已从 CSS override 迁到 positionPopup() 里算 fixed 坐标（弹层要脱离
@@ -490,6 +568,8 @@ assert.match(sleepTimerPopup, /window\.innerWidth - maxWidth - edgeInset/);
 // 遮罩必须与弹层的 z-index 不冲突（songloft-org/songloft-plugin-miot 历史结论）。
 assert.match(style, /\.player-popup-dismiss \{ position: fixed; z-index: 231; inset: 0;/);
 assert.match(sleepTimerPopup, /navigation\.playerPopup = props\.popupId;\s*emit\('refresh'\)/);
+// 工具条那枚浮层同样选完就收，跟「更多」菜单里的二级面板保持一致。
+assert.match(sleepTimerPopup, /function choose\(mode: 'time' \| 'songs', value: number\): void \{\s*emit\('set', mode, value\);\s*navigation\.playerPopup = '';/);
 assert.match(style, /\.fullscreen-stage\s*\{\s*flex: 1 1 0%/);
 assert.match(style, /\.fullscreen-mobile-slide \.fullscreen-cover-frame[^}]*height: 72vw[^}]*max-height: 320px/);
 assert.match(style, /\.fullscreen-layout[^}]*padding-bottom: calc\(228px \+ var\(--sl-safe-bottom/);
@@ -594,7 +674,7 @@ for (const [name, source] of vueSources) {
 assert.match(voiceSettings, /field-grid"><div class="field"><SlInput v-model="sourceDrafts\[source\.id\]\.name"/);
 assert.match(voiceSettings, /field-grid"><div class="field"><SlInput v-model="newSourceName"/);
 assert.match(style, /\.grid-cell \{ min-width: 0; \}/);
-assert.match(sleepTimerPopup, /sleep-timer-custom">\s*<div class="grid-cell"><SlInput/);
+assert.match(sleepPanel, /sleep-timer-custom">\s*<div class="grid-cell"><SlInput/);
 
 // 歌单下拉统一显示歌曲数（songloft-org/songloft-plugin-miot#79 评论）
 assert.match(store, /export function playlistLabel/);
@@ -698,6 +778,36 @@ assert.match(mainPage, /同时从曲库中永久删除歌曲文件/);
 assert.match(fullscreenPlayer, /removeCurrentSong/);
 assert.match(fullscreenPlayer, /title="从歌单删除"/);
 assert.match(fullscreenPlayer, /同时从曲库中永久删除歌曲文件/);
+
+// 图标码点守卫：SlIcon / SlButton 用 `name` / `icon` 查码点表，查不到就把字面名当文本
+// 渲染（SlIcon 的 glyph 回退），而 player 图标字体与通用 UI 图标字体是两个不同的子集，
+// 用错字体就是 msdf 乱码。这里静扫全部 vue 源，凡是指定了图标的标签都必须能在对应表里
+// 找到码点（lyrics 只存在于通用 UI 字体、却一度被写成 player-icon）。
+const iconMaps = (() => {
+  const grab = (name) => {
+    const i = slIcon.indexOf(`const ${name}`);
+    const j = slIcon.indexOf('};', i);
+    return Object.fromEntries([...slIcon.slice(i, j).matchAll(/(\w+):\s*(0x[0-9a-fA-F]+)/g)].map((m) => [m[1], m[2]]));
+  };
+  return { player: grab('playerIconCodePoints'), ui: grab('uiIconCodePoints') };
+})();
+const walkVue = (dir) => fs.readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+  const full = path.join(dir, entry.name);
+  if (entry.isDirectory()) return walkVue(full);
+  return entry.name.endsWith('.vue') ? [full] : [];
+});
+const unknownIcons = [];
+for (const file of walkVue(sourceRoot)) {
+  const text = fs.readFileSync(file, 'utf8');
+  for (const tag of text.match(/<Sl(?:Icon|Button)\b[\s\S]*?\/>/g) || []) {
+    // 只校验静态属性；`:icon="panel.icon"` 这类动态绑定按运行时值渲染，静态扫不到。
+    const nameMatch = tag.match(/\s(?:icon|name)="([^"]+)"/);
+    if (!nameMatch) continue;
+    const table = /(^|\s)player-icon(\s|$)/.test(tag) ? iconMaps.player : iconMaps.ui;
+    if (!(nameMatch[1] in table)) unknownIcons.push(`${path.relative(frontendRoot, file)}: ${nameMatch[1]}`);
+  }
+}
+assert.deepEqual(unknownIcons, [], `图标码点表缺少条目（会渲染成字面文本）：\n${unknownIcons.join('\n')}`);
 
 const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
 assert.equal(clamp(120, 0, 100), 100);

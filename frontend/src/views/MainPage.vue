@@ -35,6 +35,7 @@ const resumeTitle = computed(() => {
 const listMeasureRetries = 6;
 let listMeasureTimer: ReturnType<typeof setTimeout> | null = null;
 let locateTimer: ReturnType<typeof setTimeout> | null = null;
+let navStyleObserver: MutationObserver | null = null;
 let mounted = false;
 
 // ===== 双向虚拟列表 =====
@@ -58,6 +59,8 @@ const listRef = ref<InstanceType<typeof SlListView> | null>(null);
 const rowHeight = ref(64);
 /** 列表可视区高度（px），由 measureListHeight 写入。 */
 const listHeight = ref(0);
+/** 浮起胶囊（移动端）压在列表上的高度：固定滚动泥巴值，见 navScrollInset()。 */
+const navInset = ref(0);
 /** 窗口起点的「意向值」，真正生效的是下面 clamp 过的 windowStart。 */
 const rawWindowStart = ref(0);
 /** 供自定义滚动条读取当前滚动位置：由轮询与 @scroll 同步，不依赖组件相互读写 DOM。 */
@@ -65,7 +68,10 @@ const currentScrollTop = ref(0);
 
 const totalSongs = computed(() => visibleSongs.value.length);
 const windowRows = computed(() => {
-  const visible = rowHeight.value > 0 ? Math.ceil(listHeight.value / rowHeight.value) : 0;
+  // 浮起胶囊覆盖在列表底缘之上，真正可用的滚动画布高度要扣掉它，否则窗口
+  // 会比可视区少渲染一行，滚到底时最后一行被胶囊盖住。
+  const usable = Math.max(0, listHeight.value - navInset.value);
+  const visible = rowHeight.value > 0 ? Math.ceil(usable / rowHeight.value) : 0;
   return Math.max(8, visible + WINDOW_BUFFER_ROWS * 2);
 });
 const windowStart = computed(() => {
@@ -139,7 +145,8 @@ function calibrateRowHeight(): void {
  */
 function syncWindowToScroll(top: number): void {
   const firstVisible = Math.max(0, Math.floor(top / rowHeight.value));
-  const lastVisible = Math.min(totalSongs.value, Math.ceil((top + listHeight.value) / rowHeight.value));
+  const usable = Math.max(0, listHeight.value - navInset.value);
+  const lastVisible = Math.min(totalSongs.value, Math.ceil((top + usable) / rowHeight.value));
   const desired = Math.max(0, firstVisible - WINDOW_BUFFER_ROWS);
   const uncovered = windowStart.value > firstVisible || windowEnd.value < lastVisible;
   if (uncovered || Math.abs(desired - rawWindowStart.value) >= WINDOW_STEP_ROWS) rawWindowStart.value = desired;
@@ -174,8 +181,10 @@ function seekToFraction(fraction: number): void {
   const total = totalSongs.value;
   if (total <= 0 || rowHeight.value <= 0) return;
   const clamped = Math.max(0, Math.min(1, fraction));
+  // 列表底部给浮起胶囊留了 padding-bottom（= navInset），这段也要算进滚动范围：
+  // 否则自定义滚动条拖到底时，最后一行正好停在胶囊底缘之下。
   const totalHeight = total * rowHeight.value;
-  const maxTop = Math.max(0, totalHeight - listHeight.value);
+  const maxTop = Math.max(0, totalHeight + navInset.value - listHeight.value);
   const target = maxTop * clamped;
   rawWindowStart.value = Math.max(0, Math.floor(target / rowHeight.value) - WINDOW_BUFFER_ROWS);
   locateGuardUntilMs = Date.now() + 400;
@@ -183,29 +192,55 @@ function seekToFraction(fraction: number): void {
   void nextTick(() => list.setScrollTop(target));
 }
 
+/**
+ * 当前导航形态下，浮起胶囊压在列表底缘之上的高度（CSS 像素）。
+ * - 标准档：贴底播放条不遮挡列表（.miot-page-with-player 已把 padding-bottom 归零），返回 0。
+ * - 胶囊档：列表一直铺到视口底，最后一段被浮起胶囊盖住，靠 .sl-list-view 的
+ *   padding-bottom 把内容垫起来。留白按 主程序 navScrollInset 取证：
+ *   手机 bottom(8) + height(59) + 16 呼吸 = 83；平板/桌面 12 + 64 + 8 = 84。
+ */
+function navScrollInset(): number {
+  if (document.documentElement.getAttribute('data-navigation-style') !== 'capsule') return 0;
+  const capsuleCompact = window.innerWidth < 600;
+  return capsuleCompact ? 83 : 84;
+}
+
+/**
+ * 量列表可视区高度并同步虚拟窗口状态。
+ *
+ * 标准档量到播放条顶（fixed 贴底，.miot-page-with-player 已把 padding-bottom 归零）；
+ * 胶囊档浮起，getBoundingClientRect().top 量出来的是被遮挡的位置，列表必须一直铺到
+ * 视口底，再用 padding-bottom 垫出胶囊的高度（旧写法量到 741px 处，比正确的列表底
+ * 短了 59px，于是最后一行滚不到、正好卡在胶囊底下）。
+ */
 function measureListHeight(attempt = 0): void {
   if (!mounted) return;
   const list = document.querySelector<HTMLElement>('.sl-list-view');
   const player = document.querySelector<HTMLElement>('.player-bar-shell');
   const listTop = list?.getBoundingClientRect().top || 0;
-  // 有播放条：列表填到播放条顶（它 fixed 在底部，`.miot-page-with-player` 已把
-  // padding-bottom 归零）。无播放条：列表只能填到「视口底 − .miot-page 的
-  // padding-bottom」—— 这段内边距是给 fixed 播放条预留的、无条件存在（移动端 90px）。
-  // 旧写法恒用 innerHeight - 16 没算它，列表越过内容区底端把页面撑出约 74px，
-  // 哪怕只有 1 首歌页面也出滚动条（songloft-org/songloft#410 后续报告）。
+  const capsule = document.documentElement.getAttribute('data-navigation-style') === 'capsule';
+  const inset = navScrollInset();
+  navInset.value = inset;
+
   let listBottom: number;
-  if (player) {
+  if (player && !capsule) {
     listBottom = player.getBoundingClientRect().top;
   } else {
-    const page = list?.closest('.miot-page');
-    const padBottom = page ? parseFloat(getComputedStyle(page).paddingBottom) || 0 : 0;
+    // 无播放条 / 胶囊档：填到视口底。标准档无播放条时要扣掉 .miot-page 为
+    // fixed 播放条预留的 padding-bottom，否则只有 1 首歌页面也会被撑出滚动条。
+    let padBottom = 0;
+    if (!player && !capsule) {
+      const page = list?.closest('.miot-page');
+      padBottom = page ? parseFloat(getComputedStyle(page).paddingBottom) || 0 : 0;
+    }
     listBottom = window.innerHeight - padBottom;
   }
+
+  if (list) list.style.paddingBottom = inset > 0 ? `${inset}px` : '';
+
   if (list && listTop > 0 && listBottom > listTop) {
     const height = Math.max(128, Math.round(listBottom - listTop));
     list.style.height = `${height}px`;
-    // 窗口大小按可视区行数算，所以量到高度后要同步给虚拟列表。
-    // 行也已经布局完了，顺便校准行高（这条重试阶梯本来就是等首次布局的）。
     listHeight.value = height;
     calibrateRowHeight();
     return;
@@ -297,12 +332,18 @@ onMounted(() => {
   mounted = true;
   calibrateRowHeight();
   window.addEventListener('resize', remeasureList);
+  if (typeof MutationObserver !== 'undefined') {
+    navStyleObserver = new MutationObserver(remeasureList);
+    navStyleObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['data-navigation-style'] });
+  }
   remeasureList();
   startWindowPoll();
 });
 onUnmounted(() => {
   mounted = false;
   window.removeEventListener('resize', remeasureList);
+  navStyleObserver?.disconnect();
+  navStyleObserver = null;
   if (listMeasureTimer) clearTimeout(listMeasureTimer);
   if (locateTimer) clearTimeout(locateTimer);
   if (windowPollTimer) {
@@ -379,7 +420,7 @@ onUnmounted(() => {
       <MiotScrollbar
         :total-items="totalSongs"
         :row-height="rowHeight"
-        :viewport-height="listHeight"
+        :viewport-height="Math.max(0, listHeight - navInset)"
         :scroll-top="currentScrollTop"
         :enabled="totalSongs > 20"
         :label-builder="(i, t) => `${i} / ${t}`"

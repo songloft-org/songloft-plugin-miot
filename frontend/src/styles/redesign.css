@@ -484,7 +484,7 @@ body { text-rendering: optimizeLegibility; }
 .player-bar-progress:focus-visible { outline: 2px solid var(--md-primary); outline-offset: -2px; }
 .fullscreen-swipe-hint { margin-left: 6px; color: var(--md-on-surface-variant); font-size: 11px; }
 
-@media (min-width: 761px) {
+@media (min-width: 600px) {
   /* 桌面行高对齐主程序曲库的 SongListTile（垂直内边距 8 × 2 + 40px 封面 = 56px）。
      MainPage 的虚拟窗口按这个值算占位高度，所以两条规则必须同源：只改行高不改变量
      会让滚动条长度与真实内容错位。移动端仍是 64px（48px 封面 + 7px 内边距）。 */
@@ -499,7 +499,7 @@ body { text-rendering: optimizeLegibility; }
   .voice-section-nav { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
-@media (max-width: 760px) {
+@media (max-width: 599px) {
   .player-toolbar { min-height: 52px; display: flex; align-items: center; padding: 0; }
   .player-toolbar > .sl-button { width: 52px; min-width: 52px; margin-top: 0; padding: 0; }
   .player-toolbar > .sl-button .sl-button-label { display: none; }
@@ -589,7 +589,7 @@ body { text-rendering: optimizeLegibility; }
 .miot-appbar-title { width: 0; flex: 1 1 0; }
 .song-actions { opacity: .12; }
 
-@media (max-width: 760px) {
+@media (max-width: 599px) {
   .song-actions { opacity: 1; }
 }
 
@@ -599,7 +599,7 @@ body { text-rendering: optimizeLegibility; }
 }
 
 .player-favorite-button.player-control-active { color: var(--md-error); }
-@media (max-width: 760px) {
+@media (max-width: 599px) {
   .song-action-remove { color: var(--md-on-surface-variant); opacity: .58; }
   .song-row-current .song-action-remove { color: var(--md-error); opacity: 1; }
 }
@@ -629,37 +629,48 @@ body { text-rendering: optimizeLegibility; }
 }
 
 /* Mini player follows the main Songloft player: slim progress, three balanced
-   zones and one continuous click surface. Individual controls stop bubbling. */
+   zones and one continuous click surface. Individual controls stop bubbling.
+   尺寸逐条对齐主程序：桌面档 90 = 16 进度带 + 74 主体 / 水平 16 / 封面 56 圆角 8 /
+   中央键 40 间距 8；手机档 66 = 2 + 64 / 水平 12 / 封面 48 圆角 12 / 中央键 36×40 /
+   播放键 44 透明底主色图标（见下方 599 断点）。 */
 .player-bar-shell {
-  height: calc(75px + var(--sl-safe-bottom, 0px));
+  height: calc(90px + var(--sl-safe-bottom, 0px));
   padding-bottom: var(--sl-safe-bottom, 0px);
   border-top: 0;
   background: var(--md-surface);
   box-shadow: 0 -1px 0 var(--md-outline-variant), 0 -8px 28px rgba(0, 0, 0, .05);
 }
-.player-bar-progress { height: 4px; }
-.player-bar-progress-track { height: 3px; }
+.player-bar-progress { height: 16px; }
+.player-bar-progress-track { height: 4px; }
 .player-bar {
   max-width: var(--miot-content-width);
-  height: 71px;
+  height: 74px;
   display: grid;
   background: transparent;
-  grid-template-columns: minmax(220px, 1fr) auto minmax(220px, 1fr);
+  /* 主程序 DesktopPlayer 是 info flex3 / controls flex4 / toolbar flex3 的三段式。
+     两侧列必须能被压到内容宽以下，工具区才会真的「放不下」并触发更多菜单
+     （PlayerBar.toolsCompact 按列宽 190 = 5 × 38px 判定）。 */
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
   align-items: center;
   gap: 20px;
-  padding: 0 clamp(16px, 3vw, 28px);
+  padding: 0 16px;
   cursor: pointer;
 }
 .player-bar-left { min-width: 0; justify-self: stretch; }
 .player-bar-info { max-width: min(420px, 100%); }
-.player-cover { width: 48px; height: 48px; flex-basis: 48px; border-radius: 10px; }
+/* 封面圆角冻结成主程序硬编码值（桌面 8 / 手机 12 / 胶囊 8）。主题包下发的
+   --sl-theme-card-radius 只给全屏播放器等其它封面用。 */
+.player-cover { width: 56px; height: 56px; flex-basis: 56px; border-radius: 8px; }
 .player-bar-center { min-width: 152px; justify-self: center; }
-.player-bar-center-controls { gap: 2px; }
-.player-bar-center-controls .sl-button-icon { width: 38px; height: 38px; min-height: 38px; }
-.bar-play-primary.sl-button-icon { width: 44px; height: 44px; min-height: 44px; }
-.player-bar-tools { min-width: 0; justify-self: end; }
+.player-bar-center-controls { gap: 8px; }
+.player-bar-center-controls .sl-button-icon { width: 40px; height: 40px; min-height: 40px; }
+.bar-play-primary.sl-button-icon { width: 40px; height: 40px; min-height: 40px; border-radius: 50%; background: var(--md-primary); color: var(--md-on-primary); box-shadow: none; }
+/* 工具区必须 stretch 整列：ResizeObserver 量到的列宽就是主程序 LayoutBuilder 的
+   maxWidth 语义，用 300 阈值决定平铺还是收进「更多」（PlayerBar.toolsCompact）。 */
+.player-bar-tools { min-width: 0; justify-self: stretch; justify-content: flex-end; }
 .player-bar-tools > .player-popup-anchor,
-.player-bar-tools > .sl-button-icon { width: 38px; height: 38px; }
+.player-bar-tools > .sl-button-icon { width: 38px; height: 38px; flex: 0 0 auto; }
+.player-tool-muted { color: var(--md-on-surface-variant); opacity: .5; }
 .player-bar .sl-button:hover:not(:disabled) { box-shadow: none; background: var(--md-surface-container-high); }
 
 /* Full player mirrors the host player: blurred cover ambience, centered top bar,
@@ -762,11 +773,12 @@ body { text-rendering: optimizeLegibility; }
 .fullscreen-controls-desktop .control-primary.sl-button { width: 56px; height: 56px; }
 .fullscreen-tools { max-width: 600px; margin-top: 6px; }
 
-@media (min-width: 761px) {
-  .miot-page { padding-bottom: calc(82px + var(--sl-safe-bottom, 0px)); }
+@media (min-width: 600px) {
+  .miot-page { padding-bottom: calc(98px + var(--sl-safe-bottom, 0px)); }
 }
 
-@media (max-width: 760px) {
+/* 标准手机档（<600，主程序 MiniPlayer） */
+@media (max-width: 599px) {
   .player-bar-shell {
     height: calc(66px + var(--sl-safe-bottom, 0px));
     box-shadow: 0 -1px 0 var(--md-outline-variant), 0 -5px 18px rgba(0, 0, 0, .07);
@@ -778,9 +790,12 @@ body { text-rendering: optimizeLegibility; }
     gap: 0;
     padding: 0 12px;
   }
-    .player-cover { width: 48px; height: 48px; flex-basis: 48px; }
+  .player-cover { width: 48px; height: 48px; flex-basis: 48px; border-radius: 12px; }
   .player-bar-center { min-width: 0; }
   .player-bar-center-controls .sl-button-icon { width: 36px; height: 40px; min-height: 40px; }
+  /* 内联进中央控制区的播放模式（主程序 MiniPlayer 的 _kPlayModeMinWidth = 340）；
+     右侧工具栏在手机档整条收起，只有这一枚留在上一首左边。 */
+  .player-bar-center-controls > .player-popup-anchor { width: 36px; height: 40px; }
   .bar-play-primary.sl-button-icon { width: 44px; height: 44px; min-height: 44px; }
   .fullscreen-ambient-cover { opacity: .3; filter: blur(52px) saturate(1.15); }
   .fullscreen-ambient-tint { opacity: .82; }
@@ -813,79 +828,161 @@ body { text-rendering: optimizeLegibility; }
 .player-cover,
 .fullscreen-cover { border-radius: var(--sl-theme-card-radius); }
 
-/* The host's capsule theme uses a compact floating mini player rather than the
-   edge-to-edge standard bar. Keep one DOM tree so playback state and controls
-   cannot drift between the two visual variants. */
+/* 胶囊迷你播放器：对齐主程序 AppCapsulePlayer（两档尺寸）。
+   骨架是 Stack —— 内容行绝对定位并垂直居中，顶边进度热区是**覆盖层**，不占纵向布局。
+   主程序把进度与内容行做成 Stack 的两层而不是 Column 的兄弟：当兄弟时内容行会被
+   热区推下去 (hitHeight/2) 左右，封面与按钮看着就是没对齐。 */
 html[data-navigation-style='capsule'] .player-bar-shell {
-  right: auto;
-  bottom: calc(8px + var(--sl-safe-bottom, 0px));
-  left: 50%;
-  width: calc(100% - 16px);
-  max-width: calc(var(--miot-content-width) - 16px);
-  height: 51px;
+  /* left/right + auto margin 居中，而不是 left:50% + translateX(-50%)：shell 一旦带上
+     transform / backdrop-filter 就成为 fixed 弹层（播放模式 / 音量 / 更多）的包含块，
+     弹层按 viewport 算出来的坐标会整体错位，还会被 shell 的圆角裁掉。 */
+  right: 0;
+  left: 0;
+  bottom: calc(var(--capsule-bottom) + var(--sl-safe-bottom, 0px));
+  width: calc(100% - var(--capsule-side) * 2);
+  max-width: calc(var(--miot-content-width) - var(--capsule-side) * 2);
+  margin: 0 auto;
+  height: var(--capsule-height);
   padding-bottom: 0;
+  /* overflow: hidden 只用于把整宽顶边进度按 pill 轮廓裁掉；弹层是 fixed、且 shell 不是
+     它们的包含块，所以照旧画出到 shell 之外。 */
   overflow: hidden;
   border: .5px solid var(--sl-theme-glass-border);
-  border-radius: 25.5px;
+  border-radius: calc(var(--capsule-height) / 2);
   background: var(--sl-theme-glass-fill);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, .078);
-  transform: translateX(-50%);
+  /* 顶部内高光：与主程序 GlassSurface / 静态玻璃同款。终点必须是同色透明，
+     写成 transparent 会从白 60% 插值到透明黑，中途的灰落在半透玻璃上就是顶边
+     那条压暗的"重阴影"。 */
+  background-image: linear-gradient(180deg, var(--sl-theme-glass-highlight, rgba(255, 255, 255, .6)) 0%, rgba(255, 255, 255, 0) 30%);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, .102);
 }
+
+/* 手机档（<600，主程序 AppCapsulePlayer.compact）：59 = 11 热区 + 48 行；静态玻璃无真模糊 */
+html[data-navigation-style='capsule'] .player-bar-capsule-compact {
+  --capsule-height: 59px;
+  --capsule-hit: 11px;
+  --capsule-row-padding: 12px;
+  --capsule-side: 8px;
+  --capsule-bottom: 8px;
+  --capsule-cover: 36px;
+  --capsule-hit-size: 36px;
+}
+/* 大屏档（>=600，dense）：64 = 16 热区 + 48 行；真毛玻璃 sigma 20 */
+html[data-navigation-style='capsule'] .player-bar-capsule-dense {
+  --capsule-height: 64px;
+  --capsule-hit: 16px;
+  --capsule-row-padding: 16px;
+  --capsule-side: 16px;
+  --capsule-bottom: 12px;
+  --capsule-cover: 44px;
+  --capsule-hit-size: 44px;
+}
+/* 模糊挂在 ::before 而不是 shell 上：shell 自己带 backdrop-filter 会变成 fixed 弹层的
+   包含块（见上）。::before 覆盖整条胶囊，在 shell 背景之上、内容之下做真模糊。 */
+html[data-navigation-style='capsule'] .player-bar-capsule-dense::before {
+  content: '';
+  position: absolute;
+  z-index: -1;
+  inset: 0;
+  border-radius: inherit;
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+}
+
 html[data-navigation-style='capsule'] .player-bar-progress {
-  height: 3px;
+  position: absolute;
+  top: 0;
+  right: 0;
+  left: 0;
+  height: var(--capsule-hit);
   overflow: hidden;
-  border-radius: 26px 26px 0 0;
+  border-radius: calc(var(--capsule-height) / 2) calc(var(--capsule-height) / 2) 0 0;
+  cursor: default;
+  pointer-events: none;
 }
 html[data-navigation-style='capsule'] .player-bar-progress-track {
+  position: absolute;
+  top: 0;
   height: 3px;
-  border-radius: 26px 26px 0 0;
+  border-radius: 0;
 }
 html[data-navigation-style='capsule'] .player-bar-progress-thumb { display: none; }
+
 html[data-navigation-style='capsule'] .player-bar {
+  position: absolute;
+  top: calc((var(--capsule-height) - 48px) / 2);
+  right: 0;
+  left: 0;
   height: 48px;
   display: flex;
   gap: 0;
-  padding: 0 12px;
-  border-radius: 0 0 26px 26px;
+  padding: 0 var(--capsule-row-padding);
+  border-radius: 0;
   background: transparent;
 }
-html[data-navigation-style='capsule'] .player-bar-left {
+/* 用 display:contents + order 把三个 zone 展平成主程序那一行：
+   封面 · 标题 · 时间 · 收藏 · 切歌/播放 · 工具栏 */
+html[data-navigation-style='capsule'] .player-bar-left,
+html[data-navigation-style='capsule'] .player-bar-center { display: contents; }
+html[data-navigation-style='capsule'] .player-bar-info {
+  order: 1;
   min-width: 0;
   flex: 1 1 auto;
+  max-width: none;
+  gap: 12px;
+}
+html[data-navigation-style='capsule'] .player-bar-time {
+  order: 2;
+  margin-left: 12px;
+  font-size: 12px;
+}
+html[data-navigation-style='capsule'] .player-bar-favorite {
+  order: 3;
+  margin-right: 4px;
+}
+html[data-navigation-style='capsule'] .player-bar-center-controls {
+  order: 4;
+  margin-left: 8px;
   gap: 0;
 }
-html[data-navigation-style='capsule'] .player-bar-info { max-width: none; gap: 12px; }
-html[data-navigation-style='capsule'] .player-cover {
-  width: 36px;
-  height: 36px;
-  flex-basis: 36px;
-  border-radius: min(8px, var(--sl-theme-card-radius));
-}
-html[data-navigation-style='capsule'] .player-title { font-size: 12px; font-weight: 600; }
-html[data-navigation-style='capsule'] .player-subtitle { margin-top: 1px; font-size: 11px; }
-html[data-navigation-style='capsule'] .player-bar-favorite,
-html[data-navigation-style='capsule'] .player-bar-tools,
-html[data-navigation-style='capsule'] .player-bar-time,
-html[data-navigation-style='capsule'] .player-control-button { display: none; }
-html[data-navigation-style='capsule'] .player-bar-center {
-  min-width: 36px;
-  flex: 0 0 36px;
+html[data-navigation-style='capsule'] .player-bar-tools {
+  order: 5;
+  flex: 0 0 auto;
   margin-left: 8px;
+  gap: 0;
 }
-html[data-navigation-style='capsule'] .player-bar-center-controls { gap: 0; }
-html[data-navigation-style='capsule'] .bar-play-primary.sl-button-icon {
-  width: 36px;
-  height: 36px;
-  min-height: 36px;
+html[data-navigation-style='capsule'] .player-cover {
+  width: var(--capsule-cover);
+  height: var(--capsule-cover);
+  flex-basis: var(--capsule-cover);
+  border-radius: 8px;
+}
+html[data-navigation-style='capsule'] .player-title { font-size: 13px; font-weight: 600; }
+html[data-navigation-style='capsule'] .player-subtitle { margin-top: 1px; font-size: 11px; }
+html[data-navigation-style='capsule'] .player-control-button,
+html[data-navigation-style='capsule'] .player-bar-center-controls .sl-button-icon {
+  width: var(--capsule-hit-size);
+  height: var(--capsule-hit-size);
+  min-height: var(--capsule-hit-size);
   padding: 0;
-  border-radius: 50%;
-  background: var(--md-primary);
-  color: var(--md-on-primary);
+}
+/* 播放键：透明底 + 主色图标（不是主色填充圆），与主程序 CompactPlayButton 一致 */
+html[data-navigation-style='capsule'] .bar-play-primary.sl-button-icon {
+  background: transparent;
+  color: var(--md-primary);
   box-shadow: none;
 }
-html[data-navigation-style='capsule'] .miot-page {
-  padding-bottom: calc(67px + var(--sl-safe-bottom, 0px));
+html[data-navigation-style='capsule'] .player-bar-tools > .player-popup-anchor,
+html[data-navigation-style='capsule'] .player-bar-tools > .sl-button-icon {
+  width: var(--capsule-hit-size);
+  height: var(--capsule-hit-size);
 }
+
+/* 手机档：收掉收藏、时间与工具栏，把宽度整块留给标题（主程序 compact 同款取舍） */
+html[data-navigation-style='capsule'] .player-bar-capsule-compact .player-bar-favorite,
+html[data-navigation-style='capsule'] .player-bar-capsule-compact .player-bar-time,
+html[data-navigation-style='capsule'] .player-bar-capsule-compact .player-bar-tools { display: none; }
+html[data-navigation-style='capsule'] .player-bar-capsule-compact .player-bar-center-controls { margin-left: 4px; }
 
 /* Cover-derived player palette. The blurred cover remains a low-opacity texture;
    sampled colors provide the stable background and keep working when blur is
@@ -933,23 +1030,7 @@ html[data-navigation-style='capsule'] .miot-page {
 }
 html[data-player-gradient='custom'] .fullscreen-theme-gradient { opacity: .4; }
 
-@media (max-width: 760px) {
-  html[data-navigation-style='capsule'] .player-bar-shell {
-    height: 51px;
-    box-shadow: 0 4px 12px rgba(0, 0, 0, .1);
-  }
-  html[data-navigation-style='capsule'] .player-bar-progress { height: 3px; pointer-events: auto; }
-  html[data-navigation-style='capsule'] .player-bar { height: 48px; padding: 0 12px; }
-  html[data-navigation-style='capsule'] .player-cover {
-    width: 36px;
-    height: 36px;
-    flex-basis: 36px;
-  }
-  html[data-navigation-style='capsule'] .player-bar-center-controls .sl-button-icon {
-    width: 36px;
-    height: 36px;
-    min-height: 36px;
-  }
+@media (max-width: 599px) {
   .fullscreen-ambient-cover { opacity: .16; }
   .fullscreen-ambient-tint { opacity: .72; }
   .fullscreen-ambient-glow { opacity: .3; }

@@ -297,15 +297,15 @@ h1, h2, h3, p { margin: 0; }
 .player-mini-progress-active { height: 100%; background: var(--md-primary); }
 .player-popup-anchor { position: relative; display: inline-flex; align-items: center; justify-content: center; }
 .player-popup-dismiss { position: fixed; z-index: 231; inset: 0; background: transparent; }
-.player-mode-popup, .player-volume-popup { position: absolute; z-index: 232; bottom: calc(100% + 8px); left: 50%; background: var(--md-surface); border: 1px solid var(--md-outline-variant); border-radius: 12px; box-shadow: var(--md-shadow-3); }
-.player-mode-popup { position: fixed; width: 160px; padding: 8px 0; transform: none; }
+.player-mode-popup, .player-volume-popup { position: fixed; z-index: 232; background: var(--md-surface); border: 1px solid var(--md-outline-variant); border-radius: 12px; box-shadow: var(--md-shadow-3); }
+.player-mode-popup { width: 160px; padding: 8px 0; }
 .player-mode-option { width: 100%; height: 48px; min-height: 48px; display: flex; align-items: center; gap: 12px; padding: 8px 16px; border: 0; background: transparent; color: var(--md-on-surface); font-size: 14px; text-align: left; }
 .player-mode-option:hover { background: var(--md-surface-container-highest); }
 .player-mode-option.selected { color: var(--md-primary); font-weight: 500; }
 .player-speed-button { border: 0; background: transparent; font-size: 13px; font-weight: 600; line-height: 1; color: var(--md-on-surface-variant); cursor: pointer; }
 .player-speed-button:disabled { cursor: default; }
 .player-speed-option-label { flex: 1; text-align: center; }
-.player-volume-popup { width: 64px; height: 200px; display: flex; flex-direction: column; align-items: center; padding: 12px 8px 8px; transform: translateX(-50%); }
+.player-volume-popup { width: 64px; height: 200px; display: flex; flex-direction: column; align-items: center; padding: 12px 8px 8px; }
 .player-volume-value { color: var(--md-on-surface-variant); font-size: 12px; font-weight: 500; }
 .player-volume-slider-shell { width: 44px; min-height: 104px; flex: 1; display: flex; align-items: center; justify-content: center; overflow: visible; }
 .player-volume-slider { width: 112px; flex: 0 0 112px; transform: rotate(-90deg); }
@@ -329,6 +329,19 @@ h1, h2, h3, p { margin: 0; }
 .sleep-timer-custom .sl-input { width: 100%; min-width: 0; }
 .sleep-timer-custom .sl-button { min-height: 40px; }
 .sleep-timer-error { display: block; margin-top: 6px; color: var(--md-error); font-size: 12px; }
+/* 「更多」菜单：播放栏工具区放不下时的收纳（延迟停止 / 停止播放）。
+   与 .player-sleep-popup 同款外壳，定位由 PlayerBarMorePopup 的 JS 写 fixed 坐标，
+   脱离 .player-popup-anchor 的堆叠上下文，避免会被遮罩盖住。 */
+.player-bar-more-popup { position: fixed; z-index: 232; width: 200px; max-width: calc(100vw - 32px); max-height: calc(100vh - 96px); overflow-y: auto; padding: 8px 0; background: var(--md-surface); border: 1px solid var(--md-outline-variant); border-radius: 12px; box-shadow: var(--md-shadow-3); }
+.player-bar-more-status { color: var(--md-primary); font-size: 12px; }
+.player-bar-more-popup > button { width: 100%; min-height: 44px; display: flex; align-items: center; gap: 12px; padding: 8px 16px; border: 0; background: transparent; color: var(--md-on-surface); font-size: 14px; text-align: left; }
+.player-bar-more-popup > button > .player-bar-more-label { min-width: 0; flex: 1; }
+.player-bar-more-popup > .player-bar-more-back { min-height: 40px; color: var(--md-on-surface-variant); font-size: 13px; }
+.player-bar-more-popup > button:hover:not(:disabled) { background: var(--md-surface-container-highest); }
+.player-bar-more-popup > button:disabled { opacity: .45; }
+.player-bar-more-chevron { color: var(--md-on-surface-variant); }
+.player-bar-more-divider { height: 1px; margin: 8px 0; background: var(--md-outline-variant); }
+
 .player-full-progress { width: 100%; display: grid; grid-template-columns: 45px minmax(0, 1fr) 45px; align-items: center; gap: 8px; }
 .player-progress-time { color: var(--md-on-surface-variant); font-size: 12px; text-align: center; }
 .player-seek-shell { position: relative; height: 28px; display: flex; align-items: center; }
@@ -543,7 +556,7 @@ h1, h2, h3, p { margin: 0; }
 .fullscreen-tools { width: 100%; max-width: 420px; min-height: 48px; display: flex; align-items: center; justify-content: space-around; margin: 8px auto 0; }
 .fullscreen-tools > .player-popup-anchor, .fullscreen-tools > .sl-button-icon { width: 48px; height: 48px; }
 
-@media (max-width: 760px) {
+@media (max-width: 599px) {
   :root { --miot-list-height: clamp(128px, calc(100vh - 248px), 100vh); }
   .miot-page { padding: calc(66px + var(--sl-safe-top, 0px)) 12px calc(90px + var(--sl-safe-bottom, 0px)); }
   .miot-main-appbar-inner, .settings-appbar-inner, .fullscreen-appbar-inner { padding: 0 12px; }
@@ -624,7 +637,7 @@ h1, h2, h3, p { margin: 0; }
   .list-item > .sl-button-icon { width: 36px; }
 }
 
-@media (min-width: 761px) {
+@media (min-width: 600px) {
   .miot-page { padding-bottom: calc(98px + var(--sl-safe-bottom, 0px)); }
 }
 

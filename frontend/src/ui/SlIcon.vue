@@ -73,6 +73,7 @@ const uiIconCodePoints: Record<string, number> = {
   lyrics: 0xec0b,
   memory: 0xe322,
   mic: 0xe31d,
+  more_vert: 0xe5d4,
   music_note: 0xe405,
   my_location: 0xe55c,
   open_in_new: 0xe89e,
