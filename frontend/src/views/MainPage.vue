@@ -67,6 +67,14 @@ const rawWindowStart = ref(0);
 const currentScrollTop = ref(0);
 
 const totalSongs = computed(() => visibleSongs.value.length);
+/**
+ * 自定义滚动条是否接管列表滚动。
+ *
+ * 它决定两件事，必须同源：① MiotScrollbar 的 `enabled`（20 首以内原生滚动更自然）；
+ * ② shell 上的 `.miot-scrollbar-active`，只有它为真时才压掉原生滚动条 —— 否则短列表会
+ * 既没有原生条、也没有自定义条，滚动指示整个消失。
+ */
+const scrollbarEnabled = computed(() => totalSongs.value > 20);
 const windowRows = computed(() => {
   // 浮起胶囊覆盖在列表底缘之上，真正可用的滚动画布高度要扣掉它，否则窗口
   // 会比可视区少渲染一行，滚到底时最后一行被胶囊盖住。
@@ -399,8 +407,11 @@ onUnmounted(() => {
 
     <!-- 虚拟列表：两个占位条常驻（高度为 0 时也不摘掉），保持列表子节点结构稳定，
          避免窗口滑动时原生 ListView 的子节点索引整体错位。
-         外层 miot-scrollbar-shell 是 position: relative，让自定义可拖动滚动条能覆盖在右侧。 -->
-    <div v-if="state.selectedPlaylistId && !state.songsLoading && !state.songsError" class="miot-scrollbar-shell">
+         miot-scrollbar-shell 是滚动条 overlay 的定位基准（position: relative）。
+         表头必须留在它外面：表头也算进 shell 高度时，轨道从表头顶端起算、拇指
+         滑到底仍差一个表头高度到不了底，顶部则会顶进表头（见 MiotScrollbar 注释）。
+         miot-scrollbar-active 只在自定义滚动条真的接管时挂上，用来压掉原生滚动条。 -->
+    <div v-if="state.selectedPlaylistId && !state.songsLoading && !state.songsError" class="song-list">
       <div class="song-list-header" aria-hidden="true">
         <span class="song-header-index">#</span>
         <span class="song-header-cover"></span>
@@ -410,22 +421,25 @@ onUnmounted(() => {
         <span class="song-header-duration">时长</span>
         <span class="song-header-actions"></span>
       </div>
-      <SlListView ref="listRef" aria-label="歌曲列表" @scroll="onListScroll">
-        <div class="song-list-spacer" :style="{ height: `${leadSpacerHeight}px` }"></div>
-        <SongRow v-for="(song, index) in renderedSongs" :key="song.id" :song="song" :index="windowStart + index" :removable="songRemovable" @play="play" @remove="removeSong" />
-        <div class="song-list-spacer" :style="{ height: `${tailSpacerHeight}px` }"></div>
-        <div v-if="totalSongs === 0" class="song-list-empty">没有匹配的歌曲</div>
-      </SlListView>
-      <!-- 20 首以内没必要出滚动条，短列表用原生滚动更自然 -->
-      <MiotScrollbar
-        :total-items="totalSongs"
-        :row-height="rowHeight"
-        :viewport-height="Math.max(0, listHeight - navInset)"
-        :scroll-top="currentScrollTop"
-        :enabled="totalSongs > 20"
-        :label-builder="(i, t) => `${i} / ${t}`"
-        @seek="seekToFraction"
-      />
+      <div class="miot-scrollbar-shell" :class="{ 'miot-scrollbar-active': scrollbarEnabled }">
+        <SlListView ref="listRef" aria-label="歌曲列表" @scroll="onListScroll">
+          <div class="song-list-spacer" :style="{ height: `${leadSpacerHeight}px` }"></div>
+          <SongRow v-for="(song, index) in renderedSongs" :key="song.id" :song="song" :index="windowStart + index" :removable="songRemovable" @play="play" @remove="removeSong" />
+          <div class="song-list-spacer" :style="{ height: `${tailSpacerHeight}px` }"></div>
+          <div v-if="totalSongs === 0" class="song-list-empty">没有匹配的歌曲</div>
+        </SlListView>
+        <!-- 20 首以内没必要出滚动条，短列表用原生滚动更自然 -->
+        <MiotScrollbar
+          :total-items="totalSongs"
+          :row-height="rowHeight"
+          :viewport-height="Math.max(0, listHeight - navInset)"
+          :bottom-inset="navInset"
+          :scroll-top="currentScrollTop"
+          :enabled="scrollbarEnabled"
+          :label-builder="(i, t) => `${i} / ${t}`"
+          @seek="seekToFraction"
+        />
+      </div>
     </div>
     <div v-else-if="state.songsLoading" class="song-list-empty"><span class="loading-spinner"></span><span>正在加载歌曲</span></div>
     <SlEmptyState v-else-if="state.songsError" title="歌曲加载失败" :description="state.songsError" icon="cloud_off">

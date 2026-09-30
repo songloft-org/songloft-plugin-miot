@@ -44,6 +44,7 @@ const sleepTimerUtil = read('sleepTimer.ts');
 const progress = read('views/PlayerProgress.vue');
 const morePopup = read('views/PlayerBarMorePopup.vue');
 const songRow = read('views/SongRow.vue');
+const scrollbar = read('views/MiotScrollbar.vue');
 const covers = read('covers.ts');
 const playlistHandler = fs.readFileSync(path.join(frontendRoot, '../src/handlers/playlist.ts'), 'utf8');
 const scheduleHandler = fs.readFileSync(path.join(frontendRoot, '../src/handlers/schedule.ts'), 'utf8');
@@ -312,9 +313,9 @@ assert.match(redesign, /\.song-actions\s*\{[^}]*position: absolute[^}]*right: 16
 // 会整宽横贯到圆角外；移动端表头隐藏时它更是凭空出现在第一行上方，主程序曲库没有这根线。
 assert.doesNotMatch(style, /\.sl-list-view \{[^}]*border/);
 assert.doesNotMatch(redesign, /\.sl-list-view \{[^}]*border/);
-// 表头在滚动容器外，原生滚动条会吃掉 15px 内容宽度，导致表头/行列错位。
-assert.match(redesign, /\.miot-scrollbar-shell \.sl-list-view\s*\{[^}]*scrollbar-width: none/);
-assert.match(redesign, /\.miot-scrollbar-shell \.sl-list-view::-webkit-scrollbar\s*\{\s*display: none/);
+// 表头在滚动容器外，原生滚动条会吃掉 15px 内容宽度，导致表头/行列错位；
+// 同时还会和自定义滚动条叠成两根。压掉原生滚动条的规则因此必须移出桌面媒体查询
+// （详见下方 ③ 一组断言）。
 assert.match(redesign, /\.song-row:hover\s*\{[^}]*background: var\(--md-surface-container-high\)/);
 assert.match(redesign, /\.song-row-current\s*\{[^}]*background: var\(--md-secondary-container\)/);
 // 主程序曲库的普通行是**无外框、无圆角**的：圆角 + 填充只属于 .song-row-current。
@@ -506,6 +507,28 @@ assert.match(mainPage, /return capsuleCompact \? 83 : 84/);
 assert.match(mainPage, /list\.style\.paddingBottom = inset > 0 \? `\$\{inset\}px` : ''/);
 assert.match(mainPage, /listHeight\.value - navInset\.value/);
 assert.match(mainPage, /totalHeight \+ navInset\.value - listHeight\.value/);
+// 滚动条拇指必须与列表可视区严丝合缝：
+// ① 表头不能包进 overlay 的定位基准（position: relative 的 .miot-scrollbar-shell）。
+//    包进去时轨道从表头顶端起算，拇指滑到底仍差一个表头高度：顶部顶进表头、底部到不了底。
+assert.match(mainPage, /class="song-list"[\s\S]*?class="song-list-header"[\s\S]*?class="miot-scrollbar-shell"/);
+// ② 胶囊档的 overlay 一直铺到视口底（浮起胶囊压在列表上），轨道必须扣掉被遮挡的那段，
+//    否则拇指停在胶囊上方、轨道还在往下画，看起来就是「拖到底却没到轨道底」。
+assert.match(mainPage, /:bottom-inset="navInset"/);
+assert.match(scrollbar, /bottomInset\?: number/);
+assert.match(scrollbar, /TRACK_VERTICAL_PADDING \+ Math\.max\(0, props\.bottomInset\)/);
+assert.match(scrollbar, /:style="\{ bottom: `\$\{trackBottom\}px` \}"/);
+// ③ 自定义滚动条接管后必须压掉原生滚动条：原先这两条写在 redesign.css 的
+//    min-width: 600px 媒体查询里，窄屏与移动端 WebView 都没命中，于是原生滚动条与
+//    自定义滚动条同时出现（两根）。现在移进 style.css，且只在自定义滚动条真的接管时
+//    生效（.miot-scrollbar-active，与 MiotScrollbar 的 enabled 同源）—— 否则 20 首以内、
+//    只用原生滚动的短列表会连唯一的滚动指示都没有。
+assert.match(mainPage, /const scrollbarEnabled = computed\(\(\) => totalSongs\.value > 20\)/);
+assert.match(mainPage, /:class="\{ 'miot-scrollbar-active': scrollbarEnabled \}"/);
+assert.match(mainPage, /:enabled="scrollbarEnabled"/);
+assert.match(style, /\.miot-scrollbar-shell\.miot-scrollbar-active \.sl-list-view \{ scrollbar-width: none; \}/);
+assert.match(style, /\.miot-scrollbar-shell\.miot-scrollbar-active \.sl-list-view::-webkit-scrollbar \{ display: none; \}/);
+assert.doesNotMatch(style, /\.miot-scrollbar-shell \.sl-list-view \{ scrollbar-width: none/);
+assert.doesNotMatch(redesign, /scrollbar-width: none/);
 assert.match(modePopup, /value: 'single'/);
 assert.match(modePopup, /value: 'random'/);
 assert.match(modePopup, /value: 'singlePlay'.*label: '单曲播放'.*icon: 'looks_one'/);

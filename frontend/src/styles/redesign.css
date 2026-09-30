@@ -489,8 +489,6 @@ body { text-rendering: optimizeLegibility; }
      MainPage 的虚拟窗口按这个值算占位高度，所以两条规则必须同源：只改行高不改变量
      会让滚动条长度与真实内容错位。移动端仍是 64px（48px 封面 + 7px 内边距）。 */
   :root { --miot-row-height: 56px; }
-  .miot-scrollbar-shell .sl-list-view { scrollbar-width: none; }
-  .miot-scrollbar-shell .sl-list-view::-webkit-scrollbar { display: none; }
 }
 
 @media (max-width: 959px) {

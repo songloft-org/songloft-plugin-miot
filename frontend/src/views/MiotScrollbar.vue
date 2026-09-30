@@ -9,12 +9,23 @@ const props = withDefaults(
   defineProps<{
     totalItems: number;
     rowHeight: number;
+    /**
+     * 列表**可视区**高度（px），由 MainPage 传 `listHeight − bottomInset`：已经扣掉了
+     * 被浮起胶囊遮住的那一段，滚动换算（maxScroll）与拇指行程都按它算。
+     */
     viewportHeight: number;
+    /**
+     * 可视区**底部**被遮挡的高度（px）：胶囊档是浮起胶囊压在列表上的高度，标准档 0。
+     * 只用来决定轨道**画**到哪儿 —— overlay 覆盖的是整个列表元素（胶囊档下一直铺到视口
+     * 底），不扣这段时轨道会一直画到视口底，拇指却停在胶囊之上，看起来就是
+     * 「拖到底了却没到轨道底」（songloft-org/songloft#469）。
+     */
+    bottomInset?: number;
     scrollTop: number;
     enabled?: boolean;
     labelBuilder?: (currentIndex: number, total: number) => string;
   }>(),
-  { enabled: true },
+  { enabled: true, bottomInset: 0 },
 );
 const emit = defineEmits<{ seek: [fraction: number] }>();
 
@@ -45,7 +56,10 @@ const scrollFraction = computed(() => {
   return Math.max(0, Math.min(1, props.scrollTop / maxScroll.value));
 });
 
+// 轨道长度和拇指行程共用同一个换算基准：轨道画在 [顶部留白, 底部留白 + 遮挡高度] 之间，
+// 长度 = viewportHeight − 2 × 留白，拇指滑到 fraction=1 时其底边正好落在轨道底边。
 const trackHeight = computed(() => Math.max(0, props.viewportHeight - TRACK_VERTICAL_PADDING * 2));
+const trackBottom = computed(() => TRACK_VERTICAL_PADDING + Math.max(0, props.bottomInset));
 
 const thumbHeight = computed(() => {
   if (props.totalItems <= 0 || totalContentHeight.value <= 0) return THUMB_MIN_HEIGHT;
@@ -191,7 +205,7 @@ defineExpose({ poke });
     @touchend="onTouchEnd"
     @touchcancel="onTouchEnd"
   >
-    <div ref="trackRef" class="miot-scrollbar-track"></div>
+    <div ref="trackRef" class="miot-scrollbar-track" :style="{ bottom: `${trackBottom}px` }"></div>
     <div
       class="miot-scrollbar-thumb"
       :style="{ top: thumbTop + 'px', height: thumbHeight + 'px' }"

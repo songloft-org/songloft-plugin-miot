@@ -170,6 +170,13 @@ h1, h2, h3, p { margin: 0; }
    歌很难快速跳位（songloft-org/songloft#469）。命中区 32px 但只画一根 4px 轨道 + 6px 拇指，
    保持视觉极简。移动端 1.5s 后淡出，桌面常驻。 */
 .miot-scrollbar-shell { position: relative; }
+/* 自定义滚动条接管后必须压掉原生滚动条：两者都在「开始滚动」时出现、都在 1.5s 后淡出，
+   叠在一起就是两根。这两条原先是写在 redesign.css 的 min-width: 600px 媒体查询里（且不看
+   曲目数），窄屏与移动端 WebView 都没命中，于是原生滚动条照常出现，与自定义滚动条叠成两根。
+   只在自定义滚动条真的接管时压掉（.miot-scrollbar-active，与 MiotScrollbar 的 enabled 同源，
+   即曲目 > 20）：20 首以内的短列表本来就只用原生滚动，连它一起压掉会让滚动指示整个消失。 */
+.miot-scrollbar-shell.miot-scrollbar-active .sl-list-view { scrollbar-width: none; }
+.miot-scrollbar-shell.miot-scrollbar-active .sl-list-view::-webkit-scrollbar { display: none; }
 .miot-scrollbar {
   position: absolute;
   top: 0;
