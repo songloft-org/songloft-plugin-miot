@@ -83,7 +83,7 @@ jobs:
         run: npm ci
 
       - name: Build frontend
-        run: cd frontend && npm install && npx vite build
+        run: cd frontend && npm ci && npx vite build
 
       - name: Resolve version
         id: version
