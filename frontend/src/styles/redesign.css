@@ -821,6 +821,15 @@ body { text-rendering: optimizeLegibility; }
   --player-palette-on-image: var(--md-on-surface);
   --player-palette-on-image-muted: var(--md-on-surface-variant);
   --player-palette-on-image-faint: var(--md-outline-variant);
+  /* 宿主真实前景角色的**快照**：`.fullscreen-player` 会把下面这几个角色改写成
+     「封面取色背景上的对比色」（通常是白字），播放弹层是它的 DOM 后代，
+     会在改写发生 **之后** 才用到这些角色 —— 那时已经拿不到原值了。
+     var() 在声明处求值，所以这里存下来的是宿主下推（含 ThemePack）的真实色。
+     用途见「播放弹层还原前景角色」那段。 */
+  --player-popup-on-surface: var(--md-on-surface);
+  --player-popup-on-surface-variant: var(--md-on-surface-variant);
+  --player-popup-outline: var(--md-outline);
+  --player-popup-outline-variant: var(--md-outline-variant);
 }
 
 .player-cover,
@@ -995,6 +1004,22 @@ html[data-navigation-style='capsule'] .player-bar-capsule-compact .player-bar-ce
   color: var(--player-palette-on-image);
   background: var(--player-palette-dark, var(--md-surface));
   transition: background-color .5s ease;
+}
+
+/* 播放弹层（播放模式 / 倍速 / 音量 / 延迟停止 / 更多）虽然 `position: fixed`，
+   但在 DOM 上仍是 `.fullscreen-player` 的后代，会继承上面那组被改写成封面对比色的
+   前景角色；而弹层底色用的是**没被改写**的 `--md-surface`（主题色）。
+   两者一撞，亮色主题下就是「浅底 + 白字」：非选中项完全看不见，只剩用
+   `--md-primary` 的选中项。这里在弹层自身还原成宿主真实色板，与宿主菜单观感一致。 */
+.player-mode-popup,
+.player-volume-popup,
+.player-sleep-popup,
+.player-bar-more-popup {
+  --md-on-surface: var(--player-popup-on-surface);
+  --md-on-surface-variant: var(--player-popup-on-surface-variant);
+  --md-outline: var(--player-popup-outline);
+  --md-outline-variant: var(--player-popup-outline-variant);
+  color: var(--player-popup-on-surface);
 }
 .fullscreen-ambient {
   background:

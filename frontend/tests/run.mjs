@@ -131,6 +131,28 @@ assert.match(redesign, /data-navigation-style='capsule'/);
 assert.match(redesign, /--sl-theme-player-gradient/);
 assert.match(redesign, /--player-palette-dominant/);
 
+// 播放弹层必须用**宿主真实色板**渲染：`.fullscreen-player` 会把 --md-on-surface 等
+// 前景角色改写成「封面对比色」（典型是白字），而弹层底色用的是没被改写的
+// --md-surface（主题色）—— 不还原就是「浅底 + 白字」，非选中项完全看不见，
+// 只剩用 --md-primary 的选中项。所以弹层要取 :root 上的快照值。
+// 快照必须是**插件自有**变量名，不能占用宿主下推的 --sl-theme-* 命名空间。
+assert.match(redesign, /--player-popup-on-surface: var\(--md-on-surface\)/);
+assert.match(redesign, /--player-popup-on-surface-variant: var\(--md-on-surface-variant\)/);
+assert.match(redesign, /--player-popup-outline: var\(--md-outline\)/);
+assert.match(redesign, /--player-popup-outline-variant: var\(--md-outline-variant\)/);
+assert.doesNotMatch(redesign, /--sl-theme-on-surface/);
+// 四个弹层都要**逐个**还原，漏一个就漏一处「浅底白字」（比如延迟停止的下拉标题）。
+for (const role of ['on-surface', 'on-surface-variant', 'outline', 'outline-variant']) {
+  assert.match(
+    redesign,
+    new RegExp(
+      `\\.player-mode-popup,\\s*\\.player-volume-popup,\\s*\\.player-sleep-popup,\\s*\\.player-bar-more-popup \\{[^}]*`
+        + `--md-${role}: var\\(--player-popup-${role}\\)`,
+    ),
+    `弹层缺少 --md-${role} 还原`,
+  );
+}
+
 assert.match(selectComponent, /getBoundingClientRect\(\)/);
 assert.match(selectComponent, /sl-select-option-on/);
 assert.match(selectComponent, /leadingIcon\?: string/);
