@@ -105,7 +105,7 @@ export class MinaService {
 
   /**
    * 播放指定URL
-   * 先暂停当前播放（防止声音叠加），再根据设备型号选择播放接口
+   * 先暂停并停止旧播放（清理旧媒体上下文），再根据设备型号选择播放接口
    */
   async playURL(accountId: string, deviceId: string, url: string, song?: string | PlayMetadata): Promise<boolean> {
     const client = this.getClient(accountId);
@@ -115,10 +115,16 @@ export class MinaService {
     }
 
     try {
-      // 播放前先暂停当前播放，防止小爱音箱出现两个声音叠加
-      await client.playerPause(deviceId);
+      // pause 可能被固件忽略，或只保留一个可被语音/自然结束恢复的旧媒体上下文。
+      // 切歌本来就要替换旧流，复用 pause → stop 清掉它后再推新 URL（#481）。
+      const startedAt = Date.now();
+      const stopped = await client.playerStop(deviceId);
+      songloft.log.info(`[MinaService] Pre-stop before play device=${deviceId} accepted=${stopped} elapsedMs=${Date.now() - startedAt}`);
+      if (!stopped) {
+        songloft.log.warn('[MinaService] Pre-stop rejected, continuing with replacement URL');
+      }
     } catch (e) {
-      songloft.log.warn('[MinaService] Pre-pause before play failed, continuing: ' + String(e));
+      songloft.log.warn('[MinaService] Pre-stop before play failed, continuing: ' + String(e));
     }
 
     try {
@@ -383,29 +389,34 @@ export class MinaService {
    * （speed=1 时退化为只加 seekOffset）。设备不上报 play_song_detail 时 position 退化为 0
    * （此时别拿它当「真在开头」用）。
    *
+   * hasPosition 表示设备实际返回了有效进度；缺失时 position 仍为 0 以兼容旧调用方，
+   * 但循环/停滞探测必须检查 hasPosition，不能把兜底的 0 当作设备真的回零。
    * duration 是设备当前媒体的**流长**（秒，0 = 未上报），用于判断音箱在放的到底是不是
    * 我们推的那条流：status=1 只说明音箱在响，小爱接管播它自己的内容时同样是 1
    * （见 PlaylistManager.matchDeviceStream，songloft-org/songloft-plugin-miot#96）。
    */
-  async getPlayState(accountId: string, deviceId: string): Promise<{ status: number; position: number; duration: number }> {
+  async getPlayState(accountId: string, deviceId: string): Promise<{ status: number; position: number; duration: number; hasPosition: boolean; }> {
     const raw = await this.getPlayerStatus(accountId, deviceId);
     let status = -1;
     let position = 0;
     let duration = 0;
+    let hasPosition = false;
     const info = (raw?.data as any)?.info;
     if (typeof info === 'string') {
       try {
         const parsed = JSON.parse(info);
         if (typeof parsed.status === 'number') status = parsed.status;
-        if (parsed.play_song_detail && typeof parsed.play_song_detail.position === 'number') {
+        if (parsed.play_song_detail && typeof parsed.play_song_detail.position === 'number'
+          && Number.isFinite(parsed.play_song_detail.position) && parsed.play_song_detail.position >= 0) {
           position = Math.floor(parsed.play_song_detail.position / 1000);
+          hasPosition = true;
         }
         if (parsed.play_song_detail && typeof parsed.play_song_detail.duration === 'number') {
           duration = Math.floor(parsed.play_song_detail.duration / 1000);
         }
       } catch {}
     }
-    return { status, position, duration };
+    return { status, position, duration, hasPosition };
   }
 
   // ===== 内部辅助方法 =====
