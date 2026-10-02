@@ -227,7 +227,7 @@ assert.match(mainPage, /@click="openDevicePicker"/);
 // wrap 不再创建层叠上下文，面板 z-index 300 直接在根层叠上下文生效（songloft-org/songloft#432）
 assert.doesNotMatch(style, /\.sl-select-wrap\b[^{]*\{[^}]*z-index/);
 assert.match(style, /\.miot-main-appbar[\s\S]*position: fixed/);
-assert.match(style, /\.settings-scroll-body[^}]*height: calc\(100dvh - 56px\)[^}]*overflow: hidden/);
+assert.match(style, /\.settings-scroll-body[^}]*height: calc\(100dvh - 56px - var\(--sl-safe-top, 0px\)\)[^}]*overflow: hidden/);
 assert.match(style, /\.switch-track::after[^}]*transition: transform/);
 assert.match(style, /\.switch input:checked ~ \.switch-track::after[^}]*translateX\(20px\)/);
 assert.match(settingsPage, /class="settings-scroll-body"/);
