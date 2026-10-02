@@ -42,6 +42,9 @@ interface DeviceMonitorState {
    */
   primed: boolean;
   isRunning: boolean;
+  /** 连续失败时的退避间隔；成功后归零。 */
+  retryDelayMs: number;
+  nextPollAt: number;
 }
 
 /** 监听器状态（与 WASM 版 MonitorStatus 一致） */
@@ -92,6 +95,12 @@ export class ConversationMonitor {
   /** 是否启用 */
   private enabled: boolean = false;
 
+  /** 停止/重启后旧异步任务不能再修改当前监听状态。 */
+  private generation = 0;
+  private startPromise: Promise<void> | null = null;
+  /** 跨启停保留，旧请求结束前同一设备不能再发起请求。 */
+  private inFlight = new Set<string>();
+
   constructor(accountManager: AccountManager, configManager: ConfigManager) {
     this.accountManager = accountManager;
     this.configManager = configManager;
@@ -108,32 +117,33 @@ export class ConversationMonitor {
    * 调用方随后查询 getStatus() 即可拿到真实设备数量（修复首次开启显示 0 台设备）。
    */
   async start(): Promise<void> {
-    // 已启动且定时器正在运行，直接返回
-    if (this.enabled && this.pollTimer !== null) {
-      songloft.log.info('[ConversationMonitor] Already running, skip start');
-      return;
-    }
-
-    // 清理残留的定时器
-    if (this.pollTimer !== null) {
-      clearInterval(this.pollTimer);
-      this.pollTimer = null;
-    }
+    if (this.startPromise) return this.startPromise;
+    if (this.enabled && this.pollTimer !== null) return;
 
     this.enabled = true;
+    const generation = ++this.generation;
+    const promise = this.startSession(generation);
+    this.startPromise = promise;
+    try {
+      await promise;
+    } finally {
+      if (this.startPromise === promise) this.startPromise = null;
+    }
+  }
 
+  private async startSession(generation: number): Promise<void> {
     try {
       // 从配置读取轮询间隔
       const config = await this.configManager.getConfig();
       // getConfig 可能耗时，其间若被 stop()，则放弃启动
-      if (!this.enabled) return;
+      if (!this.isCurrent(generation)) return;
 
       const intervalSec = Math.max(1, Math.min(30, config.conversation_poll_interval ?? 1));
       this.pollInterval = intervalSec * 1000;
 
       // 等待设备列表刷新完成，确保 getStatus() 能读到真实设备数
-      await this.refreshDevices();
-      if (!this.enabled) return;
+      await this.refreshDevices(generation);
+      if (!this.isCurrent(generation)) return;
 
       // 注意：这里**不能**用 Date.now() 预置 lastTimestampMs（本地时钟与平台服务端
       // 时间戳不同轴）。基线交给首轮 poll 用服务端返回值建立，见 pollDevice 的 primed 分支
@@ -153,18 +163,18 @@ export class ConversationMonitor {
       // 这段窗口内发生的对话会被吞进基线而不投递。提前做掉，把窗口压到一次请求的时间。
       // 独立 try/catch：建基线失败绝不能阻止下面的定时器安装，否则监听彻底不工作
       try {
-        await this.pollAll();
+        await this.pollAll(generation);
       } catch (e) {
         songloft.log.warn('[ConversationMonitor] Initial priming failed: ' + String(e));
       }
       // 建基线期间可能被 stop()
-      if (!this.enabled) return;
+      if (!this.isCurrent(generation)) return;
 
       if (this.pollTimer !== null) {
         clearInterval(this.pollTimer);
       }
       this.pollTimer = setInterval(() => {
-        this.pollAll().catch(e => {
+        this.pollAll(generation).catch(e => {
           songloft.log.error('[ConversationMonitor] pollAll error: ' + String(e));
         });
       }, this.pollInterval);
@@ -182,6 +192,8 @@ export class ConversationMonitor {
     }
 
     this.enabled = false;
+    this.generation++;
+    this.startPromise = null;
 
     if (this.pollTimer !== null) {
       clearInterval(this.pollTimer);
@@ -202,7 +214,7 @@ export class ConversationMonitor {
     if (!this.enabled) {
       return;
     }
-    await this.refreshDevices();
+    await this.refreshDevices(this.generation);
   }
 
   /**
@@ -281,7 +293,7 @@ export class ConversationMonitor {
    * 刷新设备监听列表
    * 合并所有账号的 managed 设备
    */
-  private async refreshDevices(): Promise<void> {
+  private async refreshDevices(generation: number): Promise<void> {
     const accounts = await this.accountManager.getAccounts();
 
     // 构建当前 managed 设备的 key 集合
@@ -304,6 +316,8 @@ export class ConversationMonitor {
       }
     }
 
+    if (!this.isCurrent(generation)) return;
+
     // 移除不再 managed 的设备
     for (const key of this.devices.keys()) {
       if (!managedKeys.has(key)) {
@@ -324,30 +338,44 @@ export class ConversationMonitor {
         lastTimestampMs: 0,
         primed: false,
         isRunning: true,
+        retryDelayMs: 0,
+        nextPollAt: 0,
       });
       songloft.log.info(`[ConversationMonitor] Device added to monitoring: ${dev.deviceName} (${key})`);
     }
   }
 
-  /**
-   * 轮询所有设备的对话记录
-   */
-  private async pollAll(): Promise<void> {
-    if (!this.enabled) {
-      return;
-    }
+  private isCurrent(generation: number, dm?: DeviceMonitorState): boolean {
+    return this.enabled && this.generation === generation &&
+      (!dm || this.devices.get(this.makeKey(dm.accountId, dm.deviceId)) === dm);
+  }
 
-    for (const dm of this.devices.values()) {
-      if (!dm.isRunning) continue;
-      await this.pollDevice(dm);
-    }
+  /** 轮询所有设备，同一设备不重叠，不同设备互不阻塞。 */
+  private async pollAll(generation: number): Promise<void> {
+    if (!this.isCurrent(generation)) return;
+    // 每台设备独立推进，慢设备不阻塞其他音箱；同一设备最多一个任务。
+    await Promise.all(Array.from(this.devices.values(), async dm => {
+      const key = this.makeKey(dm.accountId, dm.deviceId);
+      if (!dm.isRunning || this.inFlight.has(key) || Date.now() < dm.nextPollAt) return;
+      this.inFlight.add(key);
+      try {
+        await this.pollDevice(dm, generation);
+      } finally {
+        this.inFlight.delete(key);
+      }
+    }));
+  }
+
+  private deferFailedPoll(dm: DeviceMonitorState): void {
+    dm.retryDelayMs = Math.min(30000, Math.max(this.pollInterval * 2, dm.retryDelayMs * 2));
+    dm.nextPollAt = Date.now() + dm.retryDelayMs;
   }
 
   /**
    * 轮询单个设备
    * 获取对话记录 → 时间戳去重 → 触发回调 → 推送 Webhook
    */
-  private async pollDevice(dm: DeviceMonitorState): Promise<void> {
+  private async pollDevice(dm: DeviceMonitorState, generation: number): Promise<void> {
     // 获取 MinaHTTPClient
     const client = this.accountManager.getMinaClient(dm.accountId) as MinaHTTPClient | null;
     if (!client) {
@@ -359,16 +387,24 @@ export class ConversationMonitor {
     try {
       askMessages = await client.getLatestAskFromXiaoai(dm.deviceId, dm.hardware, 5);
     } catch (e) {
+      if (!this.isCurrent(generation, dm)) return;
+      this.deferFailedPoll(dm);
       songloft.log.warn(`[ConversationMonitor] Failed to get conversations: ${dm.deviceId} ${String(e)}`);
       return;
     }
 
+    if (!this.isCurrent(generation, dm)) return;
+
     // 取记录失败：跳过本轮。既不动基线也不建基线——拿失败当「没有记录」去建基线，
     // 会让基线停在 0，等取记录恢复后整批历史对话被当成新消息重放
     if (askMessages === null) {
+      this.deferFailedPoll(dm);
       if (isDebugLog()) songloft.log.info(`[ConversationMonitor] pollDevice device=${dm.deviceId} fetch failed, skip round (primed=${dm.primed})`);
       return;
     }
+
+    dm.retryDelayMs = 0;
+    dm.nextPollAt = 0;
 
     // 打印返回的消息数量和内容摘要（稳态无消息时不打，避免每 tick 构造字符串+刷屏）
     // localNowMs 一并打出，便于目测本地时钟与服务端时间戳的偏移
@@ -432,10 +468,10 @@ export class ConversationMonitor {
     songloft.log.info(`[ConversationMonitor] New messages account=${dm.accountId} device=${dm.deviceId} count=${newMessages.length}`);
 
     // 触发所有内部回调
-    await this.notifyCallbacks(newMessages);
+    await this.notifyCallbacks(newMessages, () => this.isCurrent(generation, dm));
 
     // 向所有 Webhook 推送
-    await this.triggerWebhooks(dm.accountId, dm.deviceId, dm.deviceName, newMessages);
+    await this.triggerWebhooks(dm.accountId, dm.deviceId, dm.deviceName, newMessages, () => this.isCurrent(generation, dm));
   }
 
   /**
@@ -485,10 +521,11 @@ export class ConversationMonitor {
   /**
    * 触发所有已注册的内部回调
    */
-  private async notifyCallbacks(messages: ConversationMessage[]): Promise<void> {
+  private async notifyCallbacks(messages: ConversationMessage[], isCurrent: () => boolean): Promise<void> {
     for (const [name, cb] of this.callbacks.entries()) {
       try {
         for (const msg of messages) {
+          if (!isCurrent()) return;
           await cb(msg);
         }
       } catch (e) {
@@ -501,7 +538,8 @@ export class ConversationMonitor {
    * 触发 Webhook 推送
    * 向所有已注册的 Webhook URL 发送 POST 请求
    */
-  private async triggerWebhooks(accountId: string, deviceId: string, deviceName: string, messages: ConversationMessage[]): Promise<void> {
+  private async triggerWebhooks(accountId: string, deviceId: string, deviceName: string, messages: ConversationMessage[], isCurrent: () => boolean): Promise<void> {
+    if (!isCurrent()) return;
     const webhooks = await this.configManager.getWebhooks();
     if (webhooks.length === 0) {
       return;
@@ -515,6 +553,7 @@ export class ConversationMonitor {
     });
 
     for (const wh of webhooks) {
+      if (!isCurrent()) return;
       await this.sendWebhook(wh, payload);
     }
   }
