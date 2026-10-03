@@ -766,6 +766,8 @@ export class VoiceEngine {
       for (const keyword of item.cmd.keywords) {
         const idx = query.indexOf(keyword);
         if (idx >= 0) {
+          // 序号口令必须包含完整有效的序号，不能把“播放第一周”等名称当作跳播。
+          if (item.cmd.type === 'play_index' && parseSongIndex(query.slice(idx)) <= 0) continue;
           const kwLen = Array.from(keyword).length;
           if (kwLen > bestKeywordLen || (kwLen === bestKeywordLen && item.priority < bestPriority)) {
             bestKeywordLen = kwLen;
@@ -790,6 +792,8 @@ export class VoiceEngine {
     let bestInserted = Infinity;
 
     for (const item of enabledCommands) {
+      // “播放第”不能跨过“歌单/歌曲”等文字，否则会抢占名称中含“第N”的搜索口令。
+      if (item.cmd.type === 'play_index') continue;
       for (const keyword of item.cmd.keywords) {
         const kwRunes = Array.from(keyword);
         const m = fuzzySubseqMatch(qRunes, kwRunes, FUZZY_MAX_GAP);
@@ -831,7 +835,7 @@ export class VoiceEngine {
         await this.executePlayPlaylist(result.argument, accountId, deviceId);
         break;
       case 'play_index':
-        await this.executePlayIndex(query || `${result.keyword}${result.argument}`, accountId, deviceId);
+        await this.executePlayIndex(`${result.keyword}${result.argument}`, accountId, deviceId);
         break;
       case 'play_song':
         playedSong = await this.executePlaySong(result.argument, accountId, deviceId);

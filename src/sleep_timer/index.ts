@@ -230,14 +230,20 @@ export function parseSongsCount(text: string): number {
 
 /**
  * 从语音文本中解析"第 N 首"里的序号（1 起）。
- * 支持："第 300 首"、"第五十首"、"跳到第一百二十"，仅在文本包含"第"锚点时命中。
+ * 支持：“第 300 首”、“第五十首”、“跳到第一百二十”，仅在文本包含“第”锚点时命中。
+ * 序号后仅允许“首/首歌”、空白和句末标点，避免把“第一周/第一天”等名称识别为位置。
  * 与 parseSongsCount 区分语义：本函数用于跳播位置，后者用于"再听 N 首后停"。
  * @returns 序号（>=1）；未识别返回 0
  */
 export function parseSongIndex(text: string): number {
   const normalized = chineseToNumber(text);
-  const m = normalized.match(/第\s*(\d+)/);
-  if (m) return parseInt(m[1], 10);
+  const start = normalized.indexOf('第');
+  if (start < 0) return 0;
+  const m = normalized.slice(start).match(/^第\s*(\d+)\s*(?:首(?:\s*歌)?)?\s*[。！？,.!?]*\s*$/);
+  if (m) {
+    const index = Number(m[1]);
+    return Number.isSafeInteger(index) && index > 0 ? index : 0;
+  }
   return 0;
 }
 
