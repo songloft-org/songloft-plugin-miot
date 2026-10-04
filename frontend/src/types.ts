@@ -255,12 +255,12 @@ export interface ScheduledTask {
 }
 
 export interface ScheduleLog {
-  id?: string;
-  task_id?: string;
-  task_name?: string;
-  success?: boolean;
-  message?: string;
-  timestamp?: number | string;
+  task_id: string;
+  task_name: string;
+  action: string;
+  executed_at: string;
+  success: boolean;
+  message: string;
 }
 
 export interface LoginChallenge {
