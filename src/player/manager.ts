@@ -163,6 +163,11 @@ const LANDING_VERIFY_ATTEMPTS = 2;
  */
 const LANDING_FAILURE_CIRCUIT_BREAK = 3;
 
+/** 临时失败只跳过五分钟，网络或音源恢复后允许重新尝试（songloft-org/songloft#494）。 */
+export const UNPLAYABLE_SONG_TTL_MS = 5 * 60 * 1000;
+
+type SongFailureReason = 'prefetch' | 'landing' | 'early-stop';
+
 /**
  * 「外部停止 + 位置极早」→ 起播失败等价情形（#466）。
  * checkExternalStop 确认外部停止时若 position 落在起播早期窗口内，语义等同「刚下发的
@@ -315,7 +320,9 @@ export class PlaylistManager {
   private tailProbeStallStartedAtMs: number | null = null; // 连续未推进的墙钟起点
   private landingVerifyTimer: any = null; // 定时器ID（起播确认探测，见 LANDING_VERIFY_* 常量）
   private landingFailureCount: number = 0; // 连续起播失败次数（#466 熔断），任何一次确认成功即清零
-  private unplayableSongIds: Set<number> = new Set(); // 预取失败的歌曲 id，advanceToNext 遇到直接再跳
+  private unplayableSongs = new Map<number, { reason: SongFailureReason; expiresAt: number }>();
+  // 每首歌只接受最新预取的结果；起播、成功确认和手动清除会作废旧请求。
+  private prefetchRequests = new Map<number, object>();
   private totalSongs: number = 0;
   private playStartTimeMs: number = 0;  // 当前歌曲开始播放的时间戳(ms)
   private randomPlayed: Set<number> = new Set(); // 随机模式已播放索引
@@ -1066,6 +1073,51 @@ export class PlaylistManager {
   cleanup(): void {
     this.stopCheckTimer();
     this.stopResumePoll();
+    this.clearPlaybackFailures();
+  }
+
+  private pruneSongFailures(): void {
+    const now = Date.now();
+    for (const [songId, failure] of this.unplayableSongs) {
+      if (failure.expiresAt <= now) this.unplayableSongs.delete(songId);
+    }
+  }
+
+  private markSongUnplayable(songId: number, reason: SongFailureReason): void {
+    if (songId <= 0) return;
+    this.pruneSongFailures();
+    this.prefetchRequests.delete(songId);
+    this.unplayableSongs.set(songId, { reason, expiresAt: Date.now() + UNPLAYABLE_SONG_TTL_MS });
+    songloft.log.warn(`[PlaylistManager] Song temporarily unplayable id=${songId} reason=${reason} ttl=${UNPLAYABLE_SONG_TTL_MS}ms`);
+  }
+
+  private isSongUnplayable(songId: number): boolean {
+    const failure = this.unplayableSongs.get(songId);
+    if (!failure) return false;
+    if (failure.expiresAt <= Date.now()) {
+      this.unplayableSongs.delete(songId);
+      return false;
+    }
+    return true;
+  }
+
+  private clearSongFailure(songId: number): void {
+    this.unplayableSongs.delete(songId);
+    this.prefetchRequests.delete(songId);
+  }
+
+  private confirmSongPlayback(songId: number): void {
+    this.clearSongFailure(songId);
+    this.landingFailureCount = 0;
+  }
+
+  /** 清除临时失败标记并作废仍在等待的预取；不改变播放、队列或熔断计数。 */
+  clearPlaybackFailures(): number {
+    this.pruneSongFailures();
+    const cleared = this.unplayableSongs.size;
+    this.unplayableSongs.clear();
+    this.prefetchRequests.clear();
+    return cleared;
   }
 
   /**
@@ -1375,6 +1427,9 @@ export class PlaylistManager {
 
     const song = this.songs[this.currentIndex];
 
+    // 已进入实际起播，先作废这首歌的旧预取，避免稍后超时污染正在播放的歌曲。
+    this.prefetchRequests.delete(song.id);
+
     if (!opts?.skipAnnouncement) {
       const scope = (await this.configManager.getConfig()).play_announcement_scope || 'voice';
       if (scope === 'all' || this.announceOnSongChange) {
@@ -1430,6 +1485,7 @@ export class PlaylistManager {
         return false;
       }
       songloft.log.warn(`[PlaylistManager] playURL reported failure but device is playing our stream (position=${landedPositionSec}s), treating as success`);
+      this.confirmSongPlayback(song.id);
     }
 
     this.clearVoiceSuspend();
@@ -1520,7 +1576,7 @@ export class PlaylistManager {
 
     if (status === 1) {
       // 起播成功：清零连续失败计数（熔断阈值只累计连续失败）
-      this.landingFailureCount = 0;
+      this.confirmSongPlayback(songIdAtLanding);
       return;
     }
 
@@ -1538,7 +1594,7 @@ export class PlaylistManager {
     // 连续 LANDING_VERIFY_ATTEMPTS 次仍未起播：判定为起播失败，走跳歌
     songloft.log.warn(`[PlaylistManager] Landing verify failed after ${LANDING_VERIFY_ATTEMPTS} attempts: status=${status}, treating as unplayable and advancing`);
     // 记为「不可播放」：避免随机模式下 reserveNextIndex 再次抽中同一首、或用户切回时反复卡住
-    if (songIdAtLanding > 0) this.unplayableSongIds.add(songIdAtLanding);
+    this.markSongUnplayable(songIdAtLanding, 'landing');
     // 上报后端：#466。当前用 played 端点 event=landing_failed；后端后续可据此做临时降权
     // （例如全歌单播放时把这首放到末尾）。端点存在容错：后端未实现该 event 时忽略即可。
     if (songIdAtLanding > 0) {
@@ -1617,10 +1673,12 @@ export class PlaylistManager {
     const indexAtPush = this.currentIndex;
     const songIdAtPush = this.getCurrentSong()?.id ?? 0;
     const stateAtPush = this.state;
+    const generationAtPush = this.checkTimerGeneration;
 
     for (let i = 0; i < PUSH_VERIFY_ATTEMPTS; i++) {
       await new Promise(r => setTimeout(r, PUSH_VERIFY_DELAY_MS));
-      if (this.currentIndex !== indexAtPush || (this.getCurrentSong()?.id ?? 0) !== songIdAtPush) {
+      if (this.currentIndex !== indexAtPush || (this.getCurrentSong()?.id ?? 0) !== songIdAtPush ||
+          this.checkTimerGeneration !== generationAtPush) {
         return -1;
       }
       // 核实要等最多 ~6s（5 × 1.2s），期间用户可能按了停止/暂停。翻案会让 playCurrent 把
@@ -1631,6 +1689,12 @@ export class PlaylistManager {
       }
 
       const state = await this.minaService.getPlayState(this.accountId, this.deviceId);
+      // 回读本身也有异步窗口；过期的成功结果不能清掉新一轮起播的标记和失败计数。
+      if (this.currentIndex !== indexAtPush || (this.getCurrentSong()?.id ?? 0) !== songIdAtPush ||
+          this.checkTimerGeneration !== generationAtPush ||
+          (this.state !== stateAtPush && (this.state === 'stopped' || this.state === 'paused'))) {
+        return -1;
+      }
       // status<0 = 查询也失败：`play-url` 和 `getPlayState` 走同一云端，抖动时会一起不通
       // （songloft-org/songloft-player#45）。旧实现在这里立刻返回 -1，本轮抖动就再也翻不了案。
       // 改成「本轮无信号，继续下一轮」，让整段核实窗口都用来等云端恢复。
@@ -1681,35 +1745,39 @@ export class PlaylistManager {
     const songUrl = nextSong.url;
     const title = nextSong.title;
     const isLocal = nextSong.type === 'local';
+    const request = {};
+    if (nextSong.id > 0) this.prefetchRequests.set(nextSong.id, request);
 
     void (async () => {
-      // 与 playCurrent 共用同一个选项来源，保证预热的转码产物和真实播放 URL 命中同一缓存键。
-      const opts = await playbackOptionsFromConfig(this.configManager);
-      const forceMp3 = !!opts.forceMp3;
-      const volumeNormalize = !!opts.normalize;
-      // 本地歌曲已在服务端磁盘上：不开启转码选项时播放就是直接 ServeFile，无冷启动，预热无意义。
-      // 但已下载的网络歌曲（MOV/MKV 等视频容器）也属于 local 类型，开启统一 MP3 / 音量均衡后
-      // 播放要走 ffmpeg 转码（buildSongURL 对 local 同样追加 &format=mp3）；此时必须预热，
-      // 否则切歌时才实时转码、冷启动延迟（songloft-org/songloft#324）。
-      if (isLocal && !forceMp3 && !volumeNormalize) return;
-      const separator = songUrl.includes('?') ? '&' : '?';
-      let prefetchPath = songUrl + separator + 'prefetch=1' + (forceMp3 ? '&format=mp3' : '');
-      if (volumeNormalize) {
-        prefetchPath += '&normalize=1';
-        if (!forceMp3) {
-          prefetchPath += '&format=mp3';
-        }
-      }
       try {
+        // 与 playCurrent 共用同一个选项来源，保证预热的转码产物和真实播放 URL 命中同一缓存键。
+        const opts = await playbackOptionsFromConfig(this.configManager);
+        const forceMp3 = !!opts.forceMp3;
+        const volumeNormalize = !!opts.normalize;
+        // 本地歌曲已在服务端磁盘上：不开启转码选项时播放就是直接 ServeFile，无冷启动，预热无意义。
+        // 但已下载的网络歌曲（MOV/MKV 等视频容器）也属于 local 类型，开启统一 MP3 / 音量均衡后
+        // 播放要走 ffmpeg 转码（buildSongURL 对 local 同样追加 &format=mp3）；此时必须预热，
+        // 否则切歌时才实时转码、冷启动延迟（songloft-org/songloft#324）。
+        if (isLocal && !forceMp3 && !volumeNormalize) return;
+        const separator = songUrl.includes('?') ? '&' : '?';
+        let prefetchPath = songUrl + separator + 'prefetch=1' + (forceMp3 ? '&format=mp3' : '');
+        if (volumeNormalize) {
+          prefetchPath += '&normalize=1';
+          if (!forceMp3) {
+            prefetchPath += '&format=mp3';
+          }
+        }
         await callHostAPI('GET', prefetchPath, undefined, { timeoutMs: 5000 });
         songloft.log.info(`[PlaylistManager] Prefetch next song index=${nextIdx} title=${title}${forceMp3 ? ' (mp3)' : ''}`);
         // 预取成功清掉「不可播放」标记：URL 已能解析，之前的失败可能只是临时抖动（#466）
-        if (nextSong.id > 0) this.unplayableSongIds.delete(nextSong.id);
+        if (this.prefetchRequests.get(nextSong.id) === request) this.clearSongFailure(nextSong.id);
       } catch (e) {
         // 预取失败大概率意味着音源解析失败（后端 502），把这首标记为「不可播放」，
         // advanceToNext 遇到直接再跳，不占用起播确认的 18s 窗口（#466）。
-        if (nextSong.id > 0) this.unplayableSongIds.add(nextSong.id);
+        if (this.prefetchRequests.get(nextSong.id) === request) this.markSongUnplayable(nextSong.id, 'prefetch');
         songloft.log.warn(`[PlaylistManager] Prefetch failed songId=${nextSong.id} title=${title}: ${String(e)}`);
+      } finally {
+        if (this.prefetchRequests.get(nextSong.id) === request) this.prefetchRequests.delete(nextSong.id);
       }
     })();
   }
@@ -2146,7 +2214,7 @@ export class PlaylistManager {
             if (nearStart && this.stopPollMaxPosition < LANDING_EARLY_STOP_SEC) {
               // 真起播失败：从未推进出起播窗口就停了 → 跳歌 + TTS（#466 原逻辑）
               songloft.log.warn(`[PlaylistManager] External stop early (status=${status}, position=${position}s), treating as landing failure`);
-              if (song!.id > 0) this.unplayableSongIds.add(song!.id);
+              this.markSongUnplayable(song!.id, 'early-stop');
               await this.handleLandingFailure({ tts: true });
               return;
             }
@@ -2322,6 +2390,9 @@ export class PlaylistManager {
     }
     // 分组共用一个 PlaylistManager：这里的切歌会经 playCurrent 一次性下发给组内所有音箱，
     // 只有一份队列/随机数/定时器，天然全组同一首，无需组长选举或成员间同步。
+    const song = this.getCurrentSong();
+    // 结束也可能仅来自元数据定时器：清除旧标记，但连续失败只由设备确认成功来重置。
+    if (song) this.clearSongFailure(song.id);
     await this.advanceToNext();
   }
 
@@ -2361,13 +2432,15 @@ export class PlaylistManager {
 
     // 必须是 prefetchNextSong 预热过的那首（reserveNextIndex 已把两者锁到同一首），
     // 否则随机模式下播的永远是没预热的歌，开了音量均衡就要冷启动整首 loudnorm。
-    // 跳过已知不可播放的歌（预取失败留下的标记，#466）：直接再定一首，最多 songs.length 次；
-    // 全歌单都不可播就当作没有下一首，避免把音箱推给一堆必然失败的 URL。
+    // 跳过仍在冷却期的歌曲，最多扫描 songs.length 次。候选全部被标记时重试原定下一首，
+    // 让暂时抖动有恢复机会；真正持续起播失败仍由连续失败熔断保护（#494）。
     let nextIdx = this.reserveNextIndex();
+    const firstCandidate = nextIdx;
+    const randomPlayedBeforeSkips = this.playMode === 'random' &&
+      this.isSongUnplayable(this.songs[nextIdx]?.id ?? 0) ? new Set(this.randomPlayed) : null;
     let unplayableSkips = 0;
-    while (nextIdx >= 0 && this.unplayableSongIds.has(this.songs[nextIdx]?.id ?? 0)) {
-      if (unplayableSkips >= this.songs.length) {
-        songloft.log.warn(`[PlaylistManager] All ${this.songs.length} songs marked unplayable, stopping`);
+    while (nextIdx >= 0 && this.isSongUnplayable(this.songs[nextIdx]?.id ?? 0)) {
+      if (unplayableSkips >= this.songs.length || (this.playMode === 'single' && unplayableSkips > 0)) {
         nextIdx = -1;
         break;
       }
@@ -2377,6 +2450,12 @@ export class PlaylistManager {
       this.clearPendingNextIndex();
       nextIdx = this.reserveNextIndex();
       unplayableSkips++;
+    }
+    if (nextIdx < 0 && unplayableSkips > 0) {
+      songloft.log.warn(`[PlaylistManager] All next candidates temporarily unplayable, retrying index=${firstCandidate} after ${unplayableSkips} skips`);
+      nextIdx = firstCandidate;
+      if (randomPlayedBeforeSkips) this.randomPlayed = randomPlayedBeforeSkips;
+      this.clearPendingNextIndex();
     }
     if (nextIdx < 0) {
       songloft.log.info('[PlaylistManager] No next song, playback complete');
@@ -2838,6 +2917,13 @@ export class PlaylistManagerMap {
    */
   keys(): string[] {
     return Array.from(this.managers.keys());
+  }
+
+  /** 对每个独立设备或共享分组只清除一次，不创建新的播放管理器。 */
+  clearPlaybackFailures(): number {
+    let cleared = 0;
+    for (const manager of this.managers.values()) cleared += manager.clearPlaybackFailures();
+    return cleared;
   }
 
   /**

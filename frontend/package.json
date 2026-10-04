@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "test": "node tests/run.mjs",
+    "test": "node tests/run.mjs && node --test tests/*.test.mjs",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit"
   },

@@ -295,6 +295,7 @@ export async function resolvePlayerStatus(
  * POST /player/speed         → 设置播放倍速
  * POST /player/mode          → 设置播放模式
  * GET  /player/status        → 获取播放状态
+ * POST /player/failures/clear → 清除所有设备及分组的临时播放失败标记
  */
 export function registerPlaylistHandlers(
   router: Router,
@@ -302,6 +303,11 @@ export function registerPlaylistHandlers(
   minaService: MinaService,
   configManager: ConfigManager,
 ): void {
+
+  // POST /player/failures/clear - 只清除内存标记，不中断或重新启动播放。
+  router.post('/player/failures/clear', async (_req: HTTPRequest) => {
+    return jsonResponse({ cleared: playlistManagerMap.clearPlaybackFailures() });
+  });
 
   // GET /playlists - 获取歌单列表
   router.get('/playlists', async (req: HTTPRequest) => {

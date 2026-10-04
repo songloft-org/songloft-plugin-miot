@@ -8,10 +8,25 @@ import SlSelect from '../../ui/SlSelect.vue';
 import SlSwitch from '../../ui/SlSwitch.vue';
 import SlDisclosure from '../../ui/SlDisclosure.vue';
 import { messageOf, notify, saveConfig, state } from '../../store';
+import { post } from '../../api';
 import type { SelectOption } from '../../types';
 
 const transition = ref(String(state.config.song_transition_offset));
 const announcementDelay = ref(String(state.config.play_announcement_delay));
+const clearingFailures = ref(false);
+
+async function clearPlaybackFailures() {
+  if (clearingFailures.value) return;
+  clearingFailures.value = true;
+  try {
+    const { cleared } = await post<{ cleared: number }>('/player/failures/clear');
+    notify(cleared > 0 ? `已清除 ${cleared} 条播放失败标记，可重新播放` : '没有需要清除的播放失败标记', 'success');
+  } catch (error) {
+    notify(messageOf(error), 'error');
+  } finally {
+    clearingFailures.value = false;
+  }
+}
 const coverOptions: Array<SelectOption & { image: string }> = [
   { value: '1732418460076477549', label: 'LOFT·浮光海岸', image: 'https://p1.music.126.net/y06BHfRn9piijiVWfnP0-Q==/109951166970458072.jpg' },
   { value: '1674532961410650324', label: 'LOFT·海隅', image: 'https://p1.music.126.net/_zoAgg0syiZnUDov2H7Drw==/109951162812527373.jpg' },
@@ -51,6 +66,12 @@ function setSwitch(key: keyof typeof state.config, value: boolean) { void saveCo
 
   <SectionCard title="切歌过渡" icon="swap_horiz" description="负数提前切歌，正数推后切歌；0 为自然播完。范围 -30 到 30 秒。">
     <div class="form-body"><SlInput v-model="transition" type="number" aria-label="切歌偏移秒数" @change="saveNumber('song_transition_offset', transition, -30, 30)" /></div>
+  </SectionCard>
+
+  <SectionCard title="播放恢复" icon="refresh" description="播放失败的歌曲会暂时跳过，失败标记在 5 分钟后自动失效。网络恢复后，也可清除所有设备的失败标记，再重新播放。">
+    <div class="form-body">
+      <SlButton variant="outlined" :label="clearingFailures ? '正在清除…' : '清除播放失败标记'" icon="refresh" :disabled="clearingFailures" @click="clearPlaybackFailures" />
+    </div>
   </SectionCard>
 
   <SectionCard title="触屏歌词与封面" icon="lyrics">
