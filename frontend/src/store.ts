@@ -575,6 +575,7 @@ export async function refreshPlayerStatus(): Promise<void> {
   if (!state.currentAccountId || !state.currentDeviceId) return;
   if (statusRequestBusy) return;
   statusRequestBusy = true;
+  const generation = statusRequestGeneration;
   try {
     const status = await get<PlayerStatus>(
       `/player/status${query({
@@ -582,11 +583,13 @@ export async function refreshPlayerStatus(): Promise<void> {
         device_id: state.currentDeviceId,
       })}`,
     );
-    applyPlayerStatus(status);
+    if (generation === statusRequestGeneration) applyPlayerStatus(status);
   } catch (error) {
-    if (!state.statusConnected) console.warn('[miot] status refresh failed', messageOf(error));
+    if (generation === statusRequestGeneration && !state.statusConnected) {
+      console.warn('[miot] status refresh failed', messageOf(error));
+    }
   } finally {
-    statusRequestBusy = false;
+    if (generation === statusRequestGeneration) statusRequestBusy = false;
   }
 }
 
@@ -607,6 +610,8 @@ let statusOpenTimer: ReturnType<typeof setTimeout> | null = null;
 let statusAttempts = 0;
 let statusManualClose = false;
 let statusRequestBusy = false;
+// 恢复、切设备或卸载后，旧 HTTP 请求的结果和 finally 都不能影响新一轮请求。
+let statusRequestGeneration = 0;
 // 每次开连自增。一次断线可能同时打到 onerror 和 onclose，用它保证回收只做一遍，
 // 免得重连退避的 statusAttempts 被多加一次。
 let statusSocketGen = 0;
@@ -619,6 +624,24 @@ const STATUS_CLOSE_REASON = 'client';
 // 开连后这么久还没 onopen 就先把轮询顶上，别让「连不上」等于「没状态」。
 // 真连上时 onopen 会把轮询清掉。
 const STATUS_OPEN_TIMEOUT_MS = 8000;
+
+function resetStatusRequests(): void {
+  statusRequestGeneration += 1;
+  statusRequestBusy = false;
+}
+
+function resumeStatusStream(): void {
+  if (document.hidden || statusManualClose || !state.currentAccountId || !state.currentDeviceId) return;
+  // 后台断网可能留下 readyState=OPEN 的旧连接，且不触发 error/close。
+  // 恢复可见或网络恢复时主动换连接，HTTP 快照不必等待握手完成（songloft-org/songloft#493）。
+  if (statusReconnect) clearTimeout(statusReconnect);
+  statusReconnect = null;
+  statusAttempts = 0;
+  resetStatusRequests();
+  abandonStatusSocket(statusSocketGen, false);
+  openStatusSocket();
+  void refreshPlayerStatus();
+}
 
 function startStatusPolling() {
   if (statusPoll) return;
@@ -717,6 +740,8 @@ export function connectStatusStream(): void {
   disconnectStatusStream();
   statusManualClose = false;
   statusAttempts = 0;
+  document.addEventListener('visibilitychange', resumeStatusStream);
+  window.addEventListener('online', resumeStatusStream);
   openStatusSocket();
 }
 
@@ -729,6 +754,9 @@ export function requestStatusRefresh(): void {
 
 export function disconnectStatusStream(): void {
   statusManualClose = true;
+  document.removeEventListener('visibilitychange', resumeStatusStream);
+  window.removeEventListener('online', resumeStatusStream);
+  resetStatusRequests();
   if (statusReconnect) clearTimeout(statusReconnect);
   if (statusPoll) clearInterval(statusPoll);
   statusReconnect = null;
