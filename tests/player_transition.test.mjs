@@ -205,7 +205,7 @@ test('seek near the end does not count the seek offset as observed progress', as
 
 test('one-second polling requires six seconds of continuous tail stall', async () => {
   await withClock(async h => {
-    const p = player(async () => playing(285));
+    const p = player(async () => playing(298));
     p.manager.scheduleTailProbe(0);
     await h.advance(1);
     await h.advance(5999);
@@ -233,7 +233,7 @@ test('unknown status and failed queries break the continuous stall window', asyn
     let mode = 'playing';
     const p = player(async () => {
       if (mode === 'failed') throw new Error('timeout');
-      return mode === 'unknown' ? { status: -1, position: 0, duration: 0 } : playing(285);
+      return mode === 'unknown' ? { status: -1, position: 0, duration: 0 } : playing(298);
     });
     p.manager.scheduleTailProbe(0);
     await h.advance(5001);
@@ -383,3 +383,301 @@ for (const probe of ['checkExternalStop', 'verifyPlaybackLanded']) {
     });
   }
 }
+
+test('metadata deadline waits for an episode that is still twenty seconds behind', async () => {
+  await withClock(async h => {
+    const startedAt = Date.now();
+    const p = player(async () => ({
+      status: 1, position: Math.max(0, (Date.now() - startedAt) / 1000 - 20),
+      duration: 726, hasPosition: true,
+    }), { duration: 726 });
+    p.manager.startCheckTimer(726);
+    await h.advance(726000);
+    assert.equal(p.finished(), 0);
+    assert.ok(h.logs.some(l => l.includes('Timer deferred:') && l.includes('remaining=20.0s')));
+    await h.advance(19999);
+    assert.equal(p.finished(), 0);
+    await h.advance(1);
+    assert.equal(p.finished(), 1);
+    assert.equal(h.timers.size, 0);
+  });
+});
+
+for (const speed of [0.5, 1, 2]) {
+  test(`deadline uses stream position and seek at speed ${speed}`, async () => {
+    await withClock(async h => {
+      const deadlineAt = Date.now() + 100;
+      const p = player(async () => ({
+        status: 1, position: 5 + Math.max(0, Date.now() - deadlineAt) / 1000,
+        duration: 20 / speed, hasPosition: true,
+      }),
+        { seek: 280, speed });
+      p.manager.startCheckTimer(0.1);
+      await h.advance(100);
+      assert.equal(p.finished(), 0);
+      const remainingMs = (20 / speed - 5) * 1000;
+      await h.advance(remainingMs - 1);
+      assert.equal(p.finished(), 0);
+      await h.advance(1);
+      assert.equal(p.finished(), 1);
+      assert.equal(h.timers.size, 0);
+    });
+  });
+}
+
+test('a slightly longer device stream is allowed to finish without changing song metadata', async () => {
+  await withClock(async h => {
+    let position = 300;
+    const p = player(async () => ({ ...playing(position), duration: 305 }));
+    p.manager.startCheckTimer(0.1);
+    await h.advance(100);
+    assert.equal(p.finished(), 0);
+    assert.equal(p.manager.getCurrentSong().duration, 300);
+    position = 305;
+    await h.advance(5000);
+    assert.equal(p.finished(), 1);
+  });
+});
+
+test('tail buffering fifteen seconds before the end does not trigger early advance', async () => {
+  await withClock(async h => {
+    const p = player(async () => playing(285));
+    p.manager.scheduleTailProbe(0);
+    await h.advance(12001);
+    assert.equal(p.finished(), 0);
+    p.manager.stopCheckTimer();
+  });
+});
+
+test('a single stopped report at the tail does not cut an advancing stream', async () => {
+  await withClock(async h => {
+    let state = playing(298);
+    const p = player(async () => state);
+    p.manager.scheduleTailProbe(0);
+    await h.advance(1);
+    state = { ...playing(298), status: 2 };
+    await h.advance(1000);
+    assert.equal(p.finished(), 0);
+    state = playing(299);
+    await h.advance(1000);
+    assert.equal(p.finished(), 0);
+    assert.equal(p.manager.tailProbeStopMisses, 0);
+    p.manager.stopCheckTimer();
+  });
+});
+
+test('repeated stopped reports with advancing positions are not an ending', async () => {
+  await withClock(async h => {
+    let position = 296;
+    const p = player(async () => ({ ...playing(position++), status: 2 }));
+    p.manager.scheduleTailProbe(0);
+    await h.advance(3001);
+    assert.equal(p.finished(), 0);
+    p.manager.stopCheckTimer();
+  });
+});
+
+test('two stopped reports at a frozen end confirm natural completion', async () => {
+  await withClock(async h => {
+    let status = 1;
+    const p = player(async () => ({ ...playing(299), status }));
+    p.manager.scheduleTailProbe(0);
+    await h.advance(1);
+    status = 0;
+    await h.advance(1000);
+    assert.equal(p.finished(), 0);
+    await h.advance(1000);
+    assert.equal(p.finished(), 1);
+    assert.equal(h.timers.size, 0);
+  });
+});
+
+test('deadline recognizes a loop without postponing a whole episode', async () => {
+  await withClock(async h => {
+    const p = player(async () => playing(1));
+    p.manager.startCheckTimer(0.1);
+    p.manager.tailProbeMaxPosition = 299;
+    await h.advance(100);
+    assert.equal(p.finished(), 1);
+    assert.equal(h.timers.size, 0);
+  });
+});
+
+test('a frozen mid-tail position cannot defer the metadata deadline indefinitely', async () => {
+  await withClock(async h => {
+    const p = player(async () => playing(280));
+    p.manager.startCheckTimer(0.1);
+    await h.advance(100);
+    assert.equal(p.finished(), 0);
+    await h.advance(20000);
+    assert.equal(p.finished(), 1);
+    assert.equal(h.timers.size, 0);
+  });
+});
+
+test('negative transition offset preserves intentional early switching', async () => {
+  await withClock(async h => {
+    let queries = 0;
+    const p = player(async () => { queries++; return playing(290); });
+    p.manager.transitionOffset = -10;
+    p.manager.startCheckTimer(0.1);
+    await h.advance(1);
+    const queriesBeforeDeadline = queries;
+    await h.advance(99);
+    assert.equal(queries, queriesBeforeDeadline);
+    assert.equal(p.finished(), 1);
+  });
+});
+
+for (const state of [
+  { status: 1, position: 0, duration: 300, hasPosition: false },
+  { status: 1, position: NaN, duration: 300, hasPosition: true },
+  { status: 1, position: 100, duration: 500, hasPosition: true },
+]) {
+  test(`deadline falls back for unusable evidence ${JSON.stringify(state)}`, async () => {
+    await withClock(async h => {
+      const p = player(async () => state);
+      p.manager.startCheckTimer(0.1);
+      await h.advance(100);
+      assert.equal(p.finished(), 1);
+      assert.equal(h.timers.size, 0);
+    });
+  });
+}
+
+for (const reset of ['pause', 'same-song restart', 'timer calibration']) {
+  for (const rejected of [false, true]) {
+    test(`deadline ignores a stale ${rejected ? 'failed' : 'successful'} query after ${reset}`, async () => {
+      await withClock(async h => {
+        const slow = deferred();
+        const p = player(() => slow.promise);
+        const pending = p.manager.verifyTimerDeadline();
+        await flush();
+        if (reset === 'timer calibration') p.manager.startCheckTimer(30);
+        else p.manager.stopCheckTimer();
+        p.manager.state = reset === 'pause' ? 'paused' : 'playing';
+        const timers = [...h.timers.keys()];
+        if (rejected) slow.reject(new Error('old timeout'));
+        else slow.resolve(playing(280));
+        await pending;
+        assert.equal(p.finished(), 0);
+        assert.deepEqual([...h.timers.keys()], timers);
+        p.manager.stopCheckTimer();
+      });
+    });
+  }
+}
+
+test('tail and deadline share a slow query and advance only once', async () => {
+  await withClock(async h => {
+    const slow = deferred();
+    let queries = 0;
+    const p = player(() => { queries++; return slow.promise; });
+    p.manager.startCheckTimer(0.1);
+    await h.advance(100);
+    assert.equal(queries, 1);
+    slow.resolve(playing(300));
+    await flush();
+    assert.equal(p.finished(), 1);
+    assert.equal(h.timers.size, 0);
+  });
+});
+
+test('deadline query failure uses metadata and clears all pending probes', async () => {
+  await withClock(async h => {
+    const p = player(async () => { throw new Error('cloud unavailable'); });
+    p.manager.startCheckTimer(0.1);
+    await h.advance(100);
+    assert.equal(p.finished(), 1);
+    assert.equal(h.timers.size, 0);
+    assert.ok(h.logs.some(l => l.includes('Timer advancing: device query failed')));
+  });
+});
+
+test('deadline defers when a stopped report still advances in the same stream', async () => {
+  await withClock(async h => {
+    let state = playing(270);
+    const p = player(async () => state);
+    p.manager.startCheckTimer(0.1);
+    await h.advance(1);
+    state = { ...playing(271), status: 2 };
+    await h.advance(99);
+    assert.equal(p.finished(), 0);
+    assert.ok(h.logs.some(l => l.includes('Timer deferred:')));
+    p.manager.stopCheckTimer();
+  });
+});
+
+test('a positive transition offset is retained when postponing the deadline', async () => {
+  await withClock(async h => {
+    const p = player(async () => playing(280));
+    p.manager.transitionOffset = 5;
+    p.manager.startCheckTimer(0.1);
+    await h.advance(100);
+    assert.equal(p.finished(), 0);
+    assert.ok(h.logs.some(l => l.includes('Timer deferred:') && l.includes('remaining=25.0s')));
+    p.manager.stopCheckTimer();
+  });
+});
+
+test('a missing stream duration still allows measured position to postpone the deadline', async () => {
+  await withClock(async h => {
+    const p = player(async () => ({ ...playing(280), duration: 0 }));
+    p.manager.startCheckTimer(0.1);
+    await h.advance(100);
+    assert.equal(p.finished(), 0);
+    assert.ok(h.logs.some(l => l.includes('Timer deferred:')));
+    p.manager.stopCheckTimer();
+  });
+});
+
+test('a loop immediately after postponement retains the previous progress evidence', async () => {
+  await withClock(async h => {
+    let position = 280;
+    const p = player(async () => playing(position));
+    p.manager.startCheckTimer(0.1);
+    await h.advance(100);
+    assert.equal(p.finished(), 0);
+    position = 1;
+    await h.advance(5000);
+    assert.equal(p.finished(), 1);
+    assert.equal(h.timers.size, 0);
+  });
+});
+
+test('a slightly shorter stream that stops at its end advances promptly', async () => {
+  await withClock(async h => {
+    let status = 1;
+    const p = player(async () => ({ status, position: 289, duration: 290, hasPosition: true }));
+    p.manager.startCheckTimer(15);
+    await h.advance(1);
+    status = 0;
+    await h.advance(1000);
+    assert.equal(p.finished(), 0);
+    await h.advance(1000);
+    assert.equal(p.finished(), 1);
+    assert.equal(h.timers.size, 0);
+  });
+});
+
+test('a device that underestimates its stream length does not truncate advancing audio', async () => {
+  await withClock(async h => {
+    const p = player(async () => ({ ...playing(290), duration: 290 }));
+    p.manager.startCheckTimer(0.1);
+    await h.advance(100);
+    assert.equal(p.finished(), 0);
+    assert.ok(h.logs.some(l => l.includes('Timer deferred:') && l.includes('remaining=10.0s')));
+    p.manager.stopCheckTimer();
+  });
+});
+
+test('positive transition offset is not applied again after audio has already ended', async () => {
+  await withClock(async h => {
+    const p = player(async () => playing(300));
+    p.manager.transitionOffset = 5;
+    p.manager.startCheckTimer(0.1);
+    await h.advance(100);
+    assert.equal(p.finished(), 1);
+    assert.equal(h.timers.size, 0);
+  });
+});

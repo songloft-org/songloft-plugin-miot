@@ -122,7 +122,7 @@ const LOOP_DETECT_RESET_THRESHOLD_SEC = 3;
  * 而插件仍死等定时器到点，用户听到「一首播完又重播/停滞 1~2 秒才切歌」。靠调负 offset
  * 只能盲盖固定差值：小了盖不全、大了误切尾部（#481 用户实测 -2 仍有残留）。
  *
- * 修法：主定时器保留为「上界兜底」（无设备结束证据时仍按原来的元数据时长切），
+ * 主定时器到点也核对设备进度（#495）：设备仍未播完时延后，无有效进度时按元数据兜底。
  * 另在最后一段窗口内起一轮轻量探测，一旦读到设备**真实已结束**的证据就提前切歌，
  * 缩短已循环/停滞到切歌的窗口。复用 duration==0 兜底探测里已验证的「循环回零」判据，
  * 另补「设备已停」和「结尾停滞」两条，覆盖 #481 描述的两种表现（重播 / 停滞）。
@@ -136,8 +136,12 @@ const TAIL_PROBE_INTERVAL_MS = 1000;
 const TAIL_STALL_ADVANCE_MIN_SEC = 1;
 /** 持续停滞的最低墙钟时长：保留原来 3 秒 × 2 轮的等待，不能随轮询加速缩短 */
 const TAIL_STALL_CONFIRM_MS = 6000;
-/** 结尾停滞判定的前置条件：曲内位置必须已到「元数据结尾前这段」内，防止歌曲中段的 rebuffer 触发误切 */
-const TAIL_STALL_NEAR_END_SEC = 20;
+/** 仅容忍设备秒级取整；距结尾尚有十几秒的缓冲不能当作播完（#495）。 */
+const TAIL_STALL_NEAR_END_SEC = 2;
+/** 尾部 stopped/paused 需连续确认，且位置不能仍在推进。 */
+const TAIL_STOP_CONFIRM_COUNT = 2;
+
+type DevicePlayState = Awaited<ReturnType<MinaService['getPlayState']>>;
 
 /**
  * 起播确认探测参数（songloft-org/songloft#466）。
@@ -318,6 +322,9 @@ export class PlaylistManager {
   private tailProbeLastPosition: number = -1; // 尾部探测：上一轮流内位置，-1=无基线
   private tailProbeLastCheckedAtMs: number = 0;
   private tailProbeStallStartedAtMs: number | null = null; // 连续未推进的墙钟起点
+  private tailProbeStopMisses: number = 0;
+  private tailProbeQuery: Promise<DevicePlayState> | null = null; // 尾部探测与到点校验共享在途查询
+  private deadlineLastPosition: number = -1; // 上次延期位置，重复的冻结上报不能无限延期
   private landingVerifyTimer: any = null; // 定时器ID（起播确认探测，见 LANDING_VERIFY_* 常量）
   private landingFailureCount: number = 0; // 连续起播失败次数（#466 熔断），任何一次确认成功即清零
   private unplayableSongs = new Map<number, { reason: SongFailureReason; expiresAt: number }>();
@@ -1926,8 +1933,8 @@ export class PlaylistManager {
     this.checkTimer = setTimeout(() => {
       this.checkTimer = null;
       songloft.log.info('[PlaylistManager] Timer fired');
-      this.onSongFinished().catch(e => {
-        songloft.log.error('[PlaylistManager] onSongFinished error: ' + String(e));
+      this.verifyTimerDeadline().catch(e => {
+        songloft.log.error('[PlaylistManager] timer deadline error: ' + String(e));
       });
     }, delayMs);
 
@@ -1950,6 +1957,74 @@ export class PlaylistManager {
     // duration==0 由 scheduleDurationProbe 全程兜底，无需重复。
     const tailStartDelayMs = delayMs - TAIL_PROBE_WINDOW_SEC * 1000;
     this.scheduleTailProbe(tailStartDelayMs);
+  }
+
+  /** 尾部与主定时器同时到点时只查一次；清理定时器会使旧查询结果失效。 */
+  private getTailDeviceState(): Promise<DevicePlayState> {
+    if (this.tailProbeQuery) return this.tailProbeQuery;
+    const pending = this.minaService.getPlayState(this.accountId, this.deviceId).finally(() => {
+      if (this.tailProbeQuery === pending) this.tailProbeQuery = null;
+    });
+    this.tailProbeQuery = pending;
+    return pending;
+  }
+
+  /** 同一条流的设备时长用于识别真实尾部，兼容比元数据略短或略长的音频。 */
+  private getTailDuration(state: DevicePlayState): number {
+    const song = this.getCurrentSong();
+    if (!song) return 0;
+    // stopped/paused 也可能是状态误报，流长仍应参与尾部边界计算。
+    return Number.isFinite(state.duration) && this.matchDeviceStream({ ...state, status: 1 }) === 'ours'
+      ? state.duration * this.playbackSpeed + this.streamSeekOffsetSec
+      : song.duration;
+  }
+
+  /** 定时器到点不等于设备播完：核对实际位置后决定延期或使用原有时长兜底（#495）。 */
+  private async verifyTimerDeadline(): Promise<void> {
+    if (this.state !== 'playing') return;
+    const song = this.getCurrentSong();
+    if (!song) return;
+    const indexAtCheck = this.currentIndex;
+    const generationAtCheck = this.checkTimerGeneration;
+    const lastPosition = this.tailProbeLastPosition;
+    const maxPosition = Math.max(this.tailProbeMaxPosition, this.stopPollMaxPosition);
+    let reason = 'no device progress';
+
+    // 负偏移是用户显式要求提前切歌，不用设备结尾反过来覆盖这个配置。
+    if (this.transitionOffset >= 0) {
+      try {
+        const st = await this.getTailDeviceState();
+        if (this.state !== 'playing' || this.currentIndex !== indexAtCheck || this.checkTimerGeneration !== generationAtCheck) return;
+        const validPosition = st.hasPosition && Number.isFinite(st.position) && st.position >= 0;
+        const looped = maxPosition >= LOOP_DETECT_MIN_ADVANCE_SEC && st.position < LOOP_DETECT_RESET_THRESHOLD_SEC;
+        const advancing = lastPosition >= 0 && st.position > lastPosition;
+        const stillPlaying = st.status === 1 || (st.status >= 0 && advancing);
+        const progressedSinceDeadline = this.deadlineLastPosition < 0 || st.position > this.deadlineLastPosition;
+        const devicePosition = st.position * this.playbackSpeed + this.streamSeekOffsetSec;
+        // 仍在播放时取较长者：设备也可能低估流长，不能据此把音频硬截短。
+        const duration = Math.max(song.duration, this.getTailDuration(st));
+        const remaining = duration + this.transitionOffset - devicePosition;
+        if (validPosition && stillPlaying && !looped && progressedSinceDeadline &&
+          this.matchDeviceStream({ ...st, status: 1 }) !== 'foreign' && devicePosition < duration && remaining > 0) {
+          this.playStartTimeMs = Date.now() - devicePosition / this.playbackSpeed * 1000;
+          this.startCheckTimer(remaining / this.playbackSpeed);
+          this.deadlineLastPosition = st.position;
+          this.tailProbeMaxPosition = Math.max(maxPosition, st.position);
+          songloft.log.info(`[PlaylistManager] Timer deferred: devicePosition=${devicePosition.toFixed(1)}s remaining=${remaining.toFixed(1)}s speed=${this.playbackSpeed}`);
+          return;
+        }
+        reason = `status=${st.status} streamPosition=${st.position}s hasPosition=${st.hasPosition} remaining=${remaining.toFixed(1)}s looped=${looped} progressed=${progressedSinceDeadline}`;
+      } catch (e) {
+        reason = 'device query failed: ' + String(e);
+      }
+    } else {
+      reason = 'configured negative transition offset';
+    }
+
+    if (this.state !== 'playing' || this.currentIndex !== indexAtCheck || this.checkTimerGeneration !== generationAtCheck) return;
+    songloft.log.info('[PlaylistManager] Timer advancing: ' + reason);
+    this.stopCheckTimer();
+    await this.onSongFinished();
   }
 
   /**
@@ -2036,6 +2111,7 @@ export class PlaylistManager {
     this.tailProbeLastPosition = -1;
     this.tailProbeLastCheckedAtMs = 0;
     this.tailProbeStallStartedAtMs = null;
+    this.tailProbeStopMisses = 0;
     const delay = Math.max(1, Math.floor(tailStartDelayMs));
     this.tailProbeTimer = setTimeout(() => {
       this.tailProbeTimer = null;
@@ -2050,7 +2126,7 @@ export class PlaylistManager {
    * 缩短元数据时长比设备实际音频长导致的复播/停滞窗口（#481）。
    * 三条判据，命中任一即触发提前 onSongFinished：
    *   1. 循环回零：流内位置曾推进到阈值以上又落回近 0 → 音箱重拉同一 URL（自然播完）。
-   *   2. 设备已停：位置曾明显推进后 status!=1 → 设备放完自行停止。
+   *   2. 设备已停：结尾附近连续未在播放且位置不推进，单次状态误报不算播完。
    *   3. 结尾停滞：位置已到元数据结尾附近且持续至少 6 秒不推进。
    * 拿不到结束证据就继续下一轮，保留原有主定时器（checkTimer）兜底。
    */
@@ -2063,7 +2139,7 @@ export class PlaylistManager {
     const queryStartedAt = Date.now();
 
     try {
-      const st = await this.minaService.getPlayState(this.accountId, this.deviceId);
+      const st = await this.getTailDeviceState();
       // 探测期间状态已变化（暂停/切歌/停止）：交给那次操作处理，这里不再插手
       if (this.state !== 'playing' || this.currentIndex !== indexAtCheck || this.checkTimerGeneration !== generationAtCheck) return;
 
@@ -2077,7 +2153,7 @@ export class PlaylistManager {
         ? st.position * this.playbackSpeed + this.streamSeekOffsetSec
         : -1;
 
-      if (st.status === 1 && devicePos >= 0 && st.hasPosition) {
+      if (st.status >= 0 && Number.isFinite(devicePos) && devicePos >= 0 && st.hasPosition) {
         if (st.position > this.tailProbeMaxPosition) this.tailProbeMaxPosition = st.position;
 
         // 判据 1：循环回零（复用兜底探测同源阈值）
@@ -2087,9 +2163,20 @@ export class PlaylistManager {
         }
 
         // 判据 3：结尾停滞——已到元数据结尾附近且连续多轮位置不推进
-        const nearEnd = devicePos >= song.duration - TAIL_STALL_NEAR_END_SEC;
+        const nearEnd = devicePos >= this.getTailDuration(st) - TAIL_STALL_NEAR_END_SEC;
+        const advanced = this.tailProbeLastPosition >= 0
+          && st.position - this.tailProbeLastPosition >= TAIL_STALL_ADVANCE_MIN_SEC;
+        if (st.status === 1 || advanced) {
+          this.tailProbeStopMisses = 0;
+        } else {
+          this.tailProbeStopMisses++;
+          if (nearEnd && this.tailProbeStopMisses >= TAIL_STOP_CONFIRM_COUNT &&
+            this.tailProbeMaxPosition >= LOOP_DETECT_MIN_ADVANCE_SEC) {
+            this.triggerTailAdvance(`device stopped at tail (status=${st.status}, position=${devicePos.toFixed(1)}s)`, indexAtCheck);
+            return;
+          }
+        }
         if (nearEnd && this.tailProbeLastPosition >= 0) {
-          const advanced = st.position - this.tailProbeLastPosition >= TAIL_STALL_ADVANCE_MIN_SEC;
           if (advanced) {
             this.tailProbeStallStartedAtMs = null;
           } else {
@@ -2109,19 +2196,16 @@ export class PlaylistManager {
         this.tailProbeLastPosition = st.position;
         this.tailProbeLastCheckedAtMs = checkedAt;
       } else {
-        // 判据 2：设备已停。仅当此前位置明显推进过才认（否则是起播早期/网络抖动，交给主定时器与起播确认）
-        if (st.status >= 0 && st.status !== 1 && this.tailProbeMaxPosition >= LOOP_DETECT_MIN_ADVANCE_SEC) {
-          this.triggerTailAdvance(`device stopped (status=${st.status}, maxPos=${this.tailProbeMaxPosition.toFixed(1)}s)`, indexAtCheck);
-          return;
-        }
         // 未知状态/位置不能证明持续停滞；查询恢复后重新建立基线。
         this.tailProbeLastPosition = -1;
         this.tailProbeStallStartedAtMs = null;
+        this.tailProbeStopMisses = 0;
       }
     } catch (e) {
       if (this.checkTimerGeneration !== generationAtCheck) return;
       this.tailProbeLastPosition = -1;
       this.tailProbeStallStartedAtMs = null;
+      this.tailProbeStopMisses = 0;
       songloft.log.warn('[PlaylistManager] tail probe query failed: ' + String(e));
     }
 
@@ -2278,6 +2362,9 @@ export class PlaylistManager {
     this.tailProbeLastPosition = -1;
     this.tailProbeLastCheckedAtMs = 0;
     this.tailProbeStallStartedAtMs = null;
+    this.tailProbeStopMisses = 0;
+    this.tailProbeQuery = null;
+    this.deadlineLastPosition = -1;
     if (this.landingVerifyTimer !== null) {
       clearTimeout(this.landingVerifyTimer);
       this.landingVerifyTimer = null;
