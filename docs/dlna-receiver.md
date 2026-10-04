@@ -1,0 +1,15 @@
+# DLNA 接收器
+
+在插件的「设置 → 设备 → DLNA 接收器」中选择已启用管理的独立音箱、接收器名称和服务器局域网地址，开启后保存。默认关闭；首版不支持设备分组内的音箱。
+
+服务器地址须为手机、电脑和音箱都能访问的 HTTP IPv4 地址，例如 `http://192.168.1.10:58091`。子路径部署可填写 `http://192.168.1.10:58091/music`。使用支持 DLNA 的发送端应用搜索该名称，然后投放 MP3 音乐。手机本地文件须由发送端提供可访问的 HTTP 地址；发送端需保持在线。
+
+接收器通过 SSDP（UDP 多播 `239.255.255.250:1900`）发现。服务器须接入同一局域网并允许多播；Linux Docker 部署建议使用 host 网络。宿主需包含本功能的配套修改（HTTP 对端地址、UPnP 扩展方法及 UDP 地址复用）；旧宿主上设置页会提示升级。共享 1900 端口要求其它监听服务也允许地址复用，绑定失败会显示启动错误。
+
+支持 MP3 的 HTTP/HTTPS 地址；无 `.mp3` 后缀时需提供声明 `audio/mpeg` 的 DIDL-Lite 元数据。音箱直接拉取原地址，接收器不入库、不下载、不转码。支持播放、暂停、停止、音量、媒体/进度查询，以及 AVTransport、RenderingControl 和 ConnectionManager 的事件订阅。进度取自音箱报告，设备不报告时可能显示 0。若固件忽略暂停而必须停止，状态会显示「已停止」，下次播放从头开始。首版不提供 Seek、自动下一首、静音或 AirPlay。
+
+外部投放接管目标音箱时会停止原歌单的自动切歌及恢复探测；用户主动播放新歌单时结束该接管。关闭接收器会停止仍由它控制的播放、撤销发现广播并释放 socket、定时器和订阅；不会自动恢复原歌单。
+
+`GET/PUT /api/v1/jsplugin/miot/receiver/config` 是需要 JWT 的管理端点，返回强类型配置及运行状态。配置字段为 `enabled`、`name`、`base_url`、`account_id`、`device_id`。`/api/v1/jsplugin/miot/dlna/*` 是免 JWT 的局域网协议端点，校验宿主传入的 TCP 对端地址；不应通过公网反代公开这些路径。事件回调仅允许 HTTP IPv4 地址，且 IP 必须等于订阅请求的 TCP 对端，不跟随回调重定向。
+
+验证命令：后端 `npx tsc --noEmit`、`node --test tests/dlna_receiver.test.mjs tests/player_failures.test.mjs tests/player_transition.test.mjs`；前端 `npm run typecheck`、`npm test`、`npm run build`。真实发送端和音箱的网络可达性、固件暂停行为仍需实机验证。

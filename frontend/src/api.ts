@@ -25,7 +25,7 @@ function pluginApi() {
 }
 
 async function browserRequest<T>(
-  method: 'GET' | 'POST' | 'DELETE',
+  method: 'GET' | 'POST' | 'PUT' | 'DELETE',
   path: string,
   body?: unknown,
 ): Promise<T> {
@@ -94,6 +94,10 @@ export async function post<T>(path: string, body: unknown = {}): Promise<T> {
   const api = pluginApi();
   if (api?.apiPost) return decodePayload<T>(await api.apiPost(path, body), 0, true);
   return browserRequest<T>('POST', path, body);
+}
+
+export async function put<T>(path: string, body: unknown): Promise<T> {
+  return browserRequest<T>('PUT', path, body);
 }
 
 export async function postEnvelope<T>(path: string, body: unknown = {}): Promise<T> {

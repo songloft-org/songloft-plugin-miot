@@ -19,8 +19,10 @@
     "playlists.write",
     "inter-plugin",
     "command",
+    "net",
     "websocket"
   ],
+  "publicPaths": ["/dlna"],
   "updateUrl": "https://raw.githubusercontent.com/songloft-org/songloft-plugin-miot/main/plugin.json",
   "download_url": "https://github.com/songloft-org/songloft-plugin-miot/releases/download/v2026.10.3/miot.jsplugin.zip",
   "entryHash": "e64dda62664930ce266427951261c570802e705ed8cc55748f04bd3e77182856",

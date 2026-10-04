@@ -162,6 +162,89 @@ async function continuePlaying(engine) {
   });
 }
 
+test('DLNA ownership blocks timer/status-based playlist recovery until an explicit new playback', async () => {
+  await withClock(async h => {
+    const { manager, pushes } = player();
+    manager.resetAutoNextTimer(0);
+    let released = 0;
+    assert.equal(await manager.beginExternalPlayback(() => { released++; }), true);
+    manager.handleExternalResume(20);
+    manager.resetAutoNextTimer(20);
+    assert.equal(await manager.resumePlayback(), false);
+    await h.advance(3600000);
+    assert.equal(manager.getStatus().state, 'stopped');
+    assert.equal(pushes.length, 0);
+    assert.equal(h.timers.size, 0);
+    assert.equal(await manager.playAtIndex(1), true);
+    assert.equal(released, 1);
+    assert.equal(manager.isExternalPlayback(), false);
+    assert.equal(pushes.length, 1);
+    manager.cleanup();
+  });
+});
+
+test('DLNA acquisition drains an already in-flight playlist push before handing over', async () => {
+  await withClock(async h => {
+    const pending = deferred();
+    const { manager } = player({ service: { playURL: () => pending.promise } });
+    const oldPlay = manager.playAtIndex(0);
+    await flush();
+    let acquired = false;
+    const takeover = manager.beginExternalPlayback(() => {}).then(result => { acquired = result; });
+    await flush();
+    assert.equal(acquired, false);
+    pending.resolve(true);
+    await oldPlay;
+    await takeover;
+    assert.equal(acquired, true);
+    assert.equal(manager.getStatus().state, 'stopped');
+    assert.equal(h.timers.size, 0);
+  });
+});
+
+test('new playlist push waits for an in-flight DLNA operation before replacing its URL', async () => {
+  await withClock(async () => {
+    const { manager, pushes } = player();
+    await manager.beginExternalPlayback(() => {});
+    const pending = deferred();
+    const external = manager.runExternalPlayback(() => pending.promise);
+    const newPlay = manager.playAtIndex(1);
+    await flush();
+    assert.equal(pushes.length, 0);
+    pending.resolve(true);
+    await external;
+    assert.equal(await newPlay, true);
+    assert.equal(pushes.length, 1);
+    manager.cleanup();
+  });
+});
+
+for (const [method, serviceMethod, result] of [
+  ['pause', 'pausePlayVerified', 'paused'],
+  ['stop', 'stopPlay', true],
+  ['resumePlayback', 'resumePlay', true],
+]) {
+  test(`DLNA acquisition drains an in-flight ${method} without restarting playlist timers`, async () => {
+    await withClock(async h => {
+      const pending = deferred();
+      const { manager } = player({ service: { [serviceMethod]: () => pending.promise } });
+      const control = manager[method]();
+      await flush();
+      let acquired = false;
+      const takeover = manager.beginExternalPlayback(() => { }).then(ok => { acquired = ok; });
+      await flush();
+      assert.equal(acquired, false);
+      pending.resolve(result);
+      const controlResult = await control;
+      await takeover;
+      assert.equal(acquired, true);
+      if (method === 'resumePlayback') assert.equal(controlResult, false);
+      assert.equal(manager.getStatus().state, 'stopped');
+      assert.equal(h.timers.size, 0);
+    });
+  });
+}
+
 for (const waitMs of [3600000, 12 * 3600000]) {
   test(`voice resume restores automatic next after stopping for ${waitMs / 3600000} hours`, async () => {
     await withClock(async h => {

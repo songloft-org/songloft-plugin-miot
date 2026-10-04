@@ -8,6 +8,7 @@ import SlInput from '../../ui/SlInput.vue';
 import SlSelect from '../../ui/SlSelect.vue';
 import SlSwitch from '../../ui/SlSwitch.vue';
 import SlDisclosure from '../../ui/SlDisclosure.vue';
+import DLNAReceiverSettings from './DLNAReceiverSettings.vue';
 import { postEnvelope } from '../../api';
 import { navigation } from '../../runtime';
 import { deviceId, deviceName, confirmAction, deleteGroup, loadAccountsAndDevices, loadGroups, messageOf, saveConfig, saveGroup, state, toggleManaged, notify } from '../../store';
@@ -251,6 +252,8 @@ async function toggleMusicApi(hardware: string, enabled: boolean): Promise<void>
   <SectionCard title="设备分组" icon="speaker_group" description="组内设备共享队列、播放模式和控制操作；一台设备只能属于一个组。">
     <div class="form-body"><SlButton variant="filled" block label="新建分组" icon="add" @click="openGroup()" /><div v-if="groupEditor" class="sub-panel"><div class="field"><label class="field-label">分组名称</label><SlInput v-model="groupName" placeholder="例如 客厅 + 卧室" aria-label="分组名称" /></div><label class="field-label">选择至少两台已管理设备</label><div v-for="item in managed" :key="`${item.accountId}:${deviceId(item.device)}`" class="device-check-row"><SlCheckbox :model-value="selectedMembers.includes(`${item.accountId}:${deviceId(item.device)}`)" @update:model-value="(value) => value ? selectedMembers.push(`${item.accountId}:${deviceId(item.device)}`) : selectedMembers = selectedMembers.filter((key) => key !== `${item.accountId}:${deviceId(item.device)}`)" /><div class="device-check-copy"><strong>{{ deviceName(item.device) }}</strong><small>{{ item.accountId }}</small></div></div><div class="field-actions"><SlButton variant="text" label="取消" @click="closeGroup" /><SlButton variant="filled" label="保存" icon="save" @click="saveCurrentGroup" /></div></div><div v-if="!state.groups.length && !groupEditor" class="empty-state">暂无分组</div><div v-for="group in state.groups" :key="group.id" class="list-item"><div class="list-item-copy"><strong class="list-item-title">{{ group.name }}</strong><span class="list-item-subtitle">{{ group.members.length }} 台设备</span></div><SlButton variant="icon" icon="edit" title="编辑分组" @click="openGroup(group)" /><SlButton variant="icon" icon="delete" title="删除分组" @click="removeGroup(group.id)" /></div></div>
   </SectionCard>
+
+  <DLNAReceiverSettings />
 
   <SlDisclosure title="高级设备兼容" icon="speaker" description="按设备型号调整 Music API 与指示灯行为。">
     <div class="form-body">

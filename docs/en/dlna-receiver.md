@@ -1,0 +1,15 @@
+# DLNA receiver
+
+In the plugin's Settings → Devices → DLNA receiver, choose a managed standalone speaker, a receiver name, and the server's LAN URL, then enable and save. The receiver defaults to disabled. Speakers belonging to device groups are not supported in this first version.
+
+Use an HTTP IPv4 URL reachable by the phone, computer, and speaker, such as `http://192.168.1.10:58091`. Subpath deployments may use `http://192.168.1.10:58091/music`. Search for the receiver name in a DLNA-capable sending app and cast MP3 music. For local phone files, the sending app must provide an accessible HTTP URL and remain online.
+
+Discovery uses SSDP multicast on UDP `239.255.255.250:1900`. The server must be on the same LAN with multicast allowed; host networking is recommended for Linux Docker deployments. The host must include the accompanying HTTP peer address, UPnP extension method, and UDP address reuse changes. The settings page prompts for an upgrade on older hosts. Sharing port 1900 requires other listeners to allow address reuse too; binding failures appear as startup errors.
+
+HTTP/HTTPS MP3 URLs are supported. URLs without a `.mp3` suffix require DIDL-Lite metadata declaring `audio/mpeg`. The speaker fetches the original URL directly; the receiver does not import, download, or transcode media. Supported features include play, pause, stop, volume, media/position queries, and AVTransport, RenderingControl, and ConnectionManager event subscriptions. Position comes from the speaker and may remain zero if its firmware does not report it. When firmware ignores pause and requires a stop, the state becomes stopped and subsequent playback starts from the beginning. Seek, automatic next track, mute, and AirPlay are outside this first version.
+
+External casting takes ownership of the selected speaker, disabling the previous playlist's automatic advancement and recovery polling. Starting a new playlist ends that ownership. Disabling the receiver stops playback it still owns, withdraws discovery advertisements, and releases sockets, timers, and subscriptions. It does not automatically resume the previous playlist.
+
+`GET/PUT /api/v1/jsplugin/miot/receiver/config` is a JWT-protected management endpoint returning typed configuration and runtime status. Configuration fields are `enabled`, `name`, `base_url`, `account_id`, and `device_id`. `/api/v1/jsplugin/miot/dlna/*` contains public LAN protocol endpoints that validate the TCP peer address supplied by the host. Do not expose these paths through a public reverse proxy. Event callbacks must use HTTP IPv4 URLs with the same IP as the subscribing TCP peer, and redirects are disabled.
+
+Validation commands: backend `npx tsc --noEmit` and `node --test tests/dlna_receiver.test.mjs tests/player_failures.test.mjs tests/player_transition.test.mjs`; frontend `npm run typecheck`, `npm test`, and `npm run build`. Reachability from real sending devices and speakers, and firmware pause behavior, still require hardware validation.
