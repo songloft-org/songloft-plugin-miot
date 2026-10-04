@@ -64,6 +64,7 @@ function createEngine(commands = defaults.getDefaultVoiceCommands()) {
   engine.executePlayIndexNumber = async index => { actions.push({ type: 'play_index', index }); };
   engine.executeNext = async () => { actions.push({ type: 'next' }); };
   engine.executeStop = async () => { actions.push({ type: 'stop' }); };
+  engine.executeResume = async () => { actions.push({ type: 'resume' }); };
   engine.executeSetVolume = async () => { actions.push({ type: 'set_volume' }); };
   engine.executeSetPlayMode = async () => { actions.push({ type: 'set_play_mode' }); };
   engine.executeSleepTimer = async () => { actions.push({ type: 'sleep_timer' }); };
@@ -161,6 +162,45 @@ test('search commands retain fuzzy matching', async () => {
   const { engine, actions } = createEngine();
   await handleQuery(engine, '我今天想听晴天');
   assert.deepEqual(actions, [{ type: 'play_song', name: '晴天' }]);
+});
+
+for (const query of ['继续播放', '恢复播放', '继续', '接着播', '接着放', 'resume']) {
+  test(`resume commands execute through the voice and test entries: ${query}`, async () => {
+    const { engine, actions } = createEngine();
+    await handleQuery(engine, query);
+    assert.deepEqual(actions, [{ type: 'resume' }]);
+    const result = await engine.testCommand(query, 'speaker');
+    assert.equal(result.commandType, 'resume');
+    assert.deepEqual(actions[1], { type: 'resume' });
+  });
+}
+
+test('custom resume keywords remain supported', async () => {
+  const commands = defaults.getDefaultVoiceCommands();
+  commands.find(command => command.type === 'resume').keywords = ['接着听音乐'];
+  const { engine, actions } = createEngine(commands);
+  await handleQuery(engine, '接着听音乐');
+  await handleQuery(engine, '继续播放');
+  assert.deepEqual(actions, [{ type: 'resume' }]);
+});
+
+test('disabled resume commands do not execute', async () => {
+  const commands = defaults.getDefaultVoiceCommands();
+  commands.find(command => command.type === 'resume').enabled = false;
+  const { engine, actions } = createEngine(commands);
+  await handleQuery(engine, '继续播放');
+  assert.deepEqual(actions, []);
+  assert.equal((await engine.testCommand('继续播放', 'speaker')).matched, false);
+});
+
+test('resume is handled before memory and AI fallback', async () => {
+  const { engine, actions } = createEngine();
+  const fallbacks = [];
+  engine.configManager.getConfig = async () => { fallbacks.push('memory'); return { voice_memory_enabled: false }; };
+  engine.configManager.getAIConfig = async () => { fallbacks.push('AI'); return { enabled: false }; };
+  await handleQuery(engine, '继续播放');
+  assert.deepEqual(actions, [{ type: 'resume' }]);
+  assert.deepEqual(fallbacks, []);
 });
 
 for (const [query, type] of [

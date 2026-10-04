@@ -38,6 +38,19 @@ const { registerPlaylistHandlers } = loadSource('../src/handlers/playlist.ts', {
   '../utils/http': http,
   '../utils/favorites': {},
 });
+const defaults = loadSource('../src/voicecmd/defaults.ts', {});
+const sleepTimer = loadSource('../src/sleep_timer/index.ts', {});
+const { VoiceEngine } = loadSource('../src/voicecmd/engine.ts', {
+  '../player/manager': players,
+  './ai_analyzer': {},
+  './online_searcher': {},
+  '../handlers/playlist': {},
+  '../utils/http': http,
+  '../utils/favorites': {},
+  '../memory': {},
+  '../sleep_timer': sleepTimer,
+  './defaults': defaults,
+});
 
 function deferred() {
   let resolve;
@@ -124,6 +137,103 @@ function player({ mode = 'loop', config = {}, service = {} } = {}) {
   manager.state = 'playing';
   return { manager, pushes, tts };
 }
+
+function resumeEngine(manager) {
+  const engine = Object.create(VoiceEngine.prototype);
+  engine.enabled = true;
+  engine.resumeTimer = null;
+  engine.configManager = {
+    getVoiceCommands: async () => defaults.getDefaultVoiceCommands(),
+    getConfig: async () => ({ voice_memory_enabled: false }),
+    getAIConfig: async () => ({ enabled: false }),
+    getDevices: async () => [{ device_id: 'speaker' }],
+  };
+  engine.accountManager = { getAccounts: async () => [{ id: 'account' }] };
+  engine.memoryService = { setMaxRecords: async () => { } };
+  engine.playlistManagerMap = { get: () => manager };
+  engine.minaService = manager.minaService;
+  return engine;
+}
+
+async function continuePlaying(engine) {
+  await engine.handleMessage({
+    device_id: 'speaker',
+    message: { response: { answer: [{ question: '继续播放' }] } },
+  });
+}
+
+for (const waitMs of [3600000, 12 * 3600000]) {
+  test(`voice resume restores automatic next after stopping for ${waitMs / 3600000} hours`, async () => {
+    await withClock(async h => {
+      let playingSince = null;
+      const pushed = [];
+      const { manager } = player({
+        service: {
+          getPlayState: async () => ({
+            status: playingSince === null ? 2 : 1,
+            position: playingSince === null ? 0 : (Date.now() - playingSince) / 1000,
+            duration: 300,
+            hasPosition: true,
+          }),
+          playURL: async (_account, _device, url) => {
+            pushed.push(url);
+            playingSince = Date.now();
+            return true;
+          },
+        }
+      });
+      const engine = resumeEngine(manager);
+      await manager.stop();
+      await h.advance(waitMs);
+      assert.ok(h.logs.some(message => message.includes('Resume poll timed out')));
+      assert.equal(h.timers.size, 0);
+      await continuePlaying(engine);
+      assert.equal(manager.getStatus().state, 'playing');
+      assert.equal(manager.getCurrentSong().id, 16);
+      assert.equal(pushed.length, 1);
+      assert.ok(pushed[0].includes('/songs/16/play'));
+      await h.advance(300000);
+      assert.equal(manager.getCurrentSong().id, 17);
+      assert.equal(pushed.length, 2);
+      assert.ok(pushed[1].includes('/songs/17/play'));
+      assert.ok(h.hostCalls.some(([method, path]) => method === 'POST' && path === '/api/v1/songs/16/played?source=miot'));
+      manager.cleanup();
+    });
+  });
+}
+
+test('voice resume preserves paused position and restores automatic next', async () => {
+  await withClock(async h => {
+    let resumeSince = null;
+    let resumes = 0;
+    const { manager, pushes } = player({
+      service: {
+        pausePlayVerified: async () => 'paused',
+        resumePlay: async () => { resumes++; resumeSince = Date.now(); return true; },
+        getPlayState: async () => ({
+          status: 1,
+          position: 60 + (Date.now() - resumeSince) / 1000,
+          duration: 300,
+          hasPosition: true,
+        }),
+      }
+    });
+    const engine = resumeEngine(manager);
+    manager.playStartTimeMs = Date.now() - 60000;
+    await manager.pause();
+    await h.advance(3600000);
+    await continuePlaying(engine);
+    assert.equal(manager.getStatus().state, 'playing');
+    assert.equal(manager.getPosition(), 60);
+    assert.equal(resumes, 1);
+    assert.equal(pushes.length, 0);
+    await h.advance(240000);
+    assert.equal(manager.getCurrentSong().id, 17);
+    assert.equal(pushes.length, 1);
+    assert.ok(pushes[0].includes('/songs/17/play'));
+    manager.cleanup();
+  });
+});
 
 test('temporary failures expire exactly at five minutes and invalid ids are ignored', async () => {
   await withClock(async h => {
