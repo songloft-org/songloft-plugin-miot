@@ -270,11 +270,11 @@ export class DLNAReceiver {
     if (match[2] === '.xml' && (req.method === 'GET' || req.method === 'HEAD')) return scpd(service);
     if (match[2] === '/event') return this.subscribe(req, service);
     if (match[2] !== '/control' || req.method !== 'POST') return { statusCode: 405, body: '' };
+    const actionHeader = header(req, 'SOAPAction').replace(/^"|"$/g, '');
+    const [type, action] = actionHeader.split('#');
     try {
       return await this.serial(async () => {
         if (!this.accepting) throw new UPnPError(501, 'Receiver disabled');
-        const actionHeader = header(req, 'SOAPAction').replace(/^"|"$/g, '');
-        const [type, action] = actionHeader.split('#');
         if (type !== TYPES[service] || !Object.prototype.hasOwnProperty.call(SCHEMAS[service].actions, action)) throw new UPnPError(401, 'Invalid Action');
         let args: Record<string, string>;
         try {
@@ -295,9 +295,27 @@ export class DLNAReceiver {
         let values;
         try { values = await this.action(service, action, args); }
         finally { if (before !== this.eventBody(service)) this.publish(); }
+        if (service === 'AVTransport' && (action === 'SetAVTransportURI' || action === 'Play')) this.lastError = '';
         return soapResult(service, action, values);
       });
-    } catch (e) { return e instanceof UPnPError ? soapFault(e.code, e.message) : soapFault(501, 'Action Failed'); }
+    } catch (e) {
+      const fault = e instanceof UPnPError ? e : new UPnPError(501, 'Action Failed');
+      const actionName = /^[A-Za-z][A-Za-z0-9_]{0,63}$/.test(action || '') ? action : '(invalid)';
+      songloft.log.warn('[DLNA] SOAP fault ' + JSON.stringify({ service, action: actionName, code: fault.code, reason: fault.message }));
+      if (service === 'AVTransport' && ['SetAVTransportURI', 'Play', 'Pause', 'Stop'].includes(actionName)) {
+        const reasons: Record<number, string> = {
+          401: '不支持该操作', 402: '请求参数或媒体元数据无效', 501: '音箱操作失败',
+          701: '没有可播放的媒体或当前状态不允许该操作',
+          714: '仅支持 MP3；无 .mp3 后缀的地址需提供 audio/mpeg 元数据',
+          716: '媒体地址无效或音箱无法访问', 717: '仅支持正常播放速度', 718: '播放实例无效',
+        };
+        // Preserve the rejected URI's cause when a sender immediately follows it with Play.
+        if (!(action === 'Play' && fault.message === 'No media present' && this.lastError)) {
+          this.lastError = `${actionName} 失败（UPnP ${fault.code}）：${reasons[fault.code] || fault.message}`;
+        }
+      }
+      return soapFault(fault.code, fault.message);
+    }
   }
   private json(body: unknown, statusCode = 200): HTTPResponse {
     return { statusCode, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) };

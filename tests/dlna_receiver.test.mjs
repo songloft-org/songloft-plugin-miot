@@ -26,7 +26,7 @@ const flush = async () => { for (let i = 0;i < 30;i++) await Promise.resolve(); 
 async function harness(run) {
   const originals = { songloft: globalThis.songloft, fetch: globalThis.fetch, crypto: Object.getOwnPropertyDescriptor(globalThis, 'crypto'), now: Date.now, setTimeout, clearTimeout };
   let now = 100000, nextTimer = 0, nextSocket = 0, receive, released, external = false;
-  const timers = new Map(), storage = new Map(), packets = [], calls = [], notifications = [], closed = [];
+  const timers = new Map(), storage = new Map(), packets = [], calls = [], notifications = [], closed = [], warnings = [];
   const service = {
     stopPlay: async () => { calls.push(['stop']); return true; },
     playURL: async (...args) => { calls.push(['play', ...args]); return true; },
@@ -49,7 +49,7 @@ async function harness(run) {
       udpJoinMulticast: async () => { }, onData: (_id, handler) => { receive = handler; },
       udpSend: async (_id, data, address) => { packets.push({ data, address }); },
       udpClose: async id => { closed.push(id); },
-    }, log: { warn() { }, info() { } },
+    }, log: { warn(message) { warnings.push(message); }, info() { } },
   };
   Object.defineProperty(globalThis, 'crypto', { configurable: true, value: { randomBytes } });
   globalThis.fetch = async (url, options) => { notifications.push({ url, ...options }); return { ok: true }; };
@@ -69,7 +69,7 @@ async function harness(run) {
     }
     now = end; await flush();
   };
-  try { await run({ receiver, req, soap, advance, packets, calls, notifications, closed, timers, storage, service, configs, manager, search: message => receive({ data: btoa(message), remoteAddr: '192.168.1.3:54321' }) }); }
+  try { await run({ receiver, req, soap, advance, packets, calls, notifications, closed, warnings, timers, storage, service, configs, manager, search: message => receive({ data: btoa(message), remoteAddr: '192.168.1.3:54321' }) }); }
   finally {
     await receiver.close();
     globalThis.songloft = originals.songloft; globalThis.fetch = originals.fetch;
@@ -88,7 +88,7 @@ test('discovery describes all services, answers M-SEARCH and closes sockets/time
   assert.equal(h.packets.length, 6);
   const doc = await h.req('GET', '/dlna/device.xml');
   assert.equal(doc.statusCode, 200);
-  assert.match(doc.body, /http:\/\/192\.168\.1\.2:58091\/music\/api\/v1\/jsplugin\/miot\/dlna\/AVTransport\/control/);
+  assert.match(doc.body, /<controlURL>\/music\/api\/v1\/jsplugin\/miot\/dlna\/AVTransport\/control<\/controlURL>/);
   assert.match(doc.body, /MediaRenderer:1/);
   for (const name of Object.keys(TYPES)) {
     const scpd = parseXML((await h.req('GET', `/dlna/${name}.xml`)).body);
@@ -103,6 +103,90 @@ test('discovery describes all services, answers M-SEARCH and closes sockets/time
   assert.equal(h.timers.size, 0);
   assert.equal(h.closed.length, 1);
   assert.equal(h.packets.filter(p => p.data.includes('ssdp:byebye')).length, 6);
+}));
+
+for (const prefix of ['', '/music']) {
+  test(`advertised service paths work with URL resolution and origin concatenation at ${prefix || '/'}`, async () => harness(async h => {
+    const origin = 'http://192.168.1.2:58091';
+    await h.receiver.configure({ ...config, base_url: origin + prefix });
+    const endpoint = prefix + '/api/v1/jsplugin/miot';
+    const location = origin + endpoint + '/dlna/device.xml';
+    assert.ok(h.packets.some(p => p.data.includes('LOCATION: ' + location + '\r\n')));
+    const doc = parseXML((await h.req('GET', '/dlna/device.xml')).body);
+    const services = child(child(doc, 'device'), 'serviceList').children;
+    for (const service of services) {
+      const name = child(service, 'serviceId').text.split(':').at(-1);
+      for (const [field, suffix] of [['SCPDURL', '.xml'], ['controlURL', '/control'], ['eventSubURL', '/event']]) {
+        const advertised = child(service, field).text;
+        assert.equal(advertised, endpoint + '/dlna/' + name + suffix);
+        const resolved = new URL(advertised, location).href;
+        assert.equal(origin + advertised, resolved);
+        const path = new URL(resolved).pathname.slice(endpoint.length);
+        if (field === 'SCPDURL') {
+          assert.equal((await h.req('GET', path)).statusCode, 200);
+        } else if (field === 'eventSubURL') {
+          const sub = await h.req('SUBSCRIBE', path, { NT: 'upnp:event', CALLBACK: '<http://192.168.1.3:8080/event>' });
+          assert.equal(sub.statusCode, 200);
+          assert.equal((await h.req('UNSUBSCRIBE', path, { SID: sub.headers.SID })).statusCode, 200);
+        } else if (name === 'AVTransport') {
+          for (const [action, args] of [
+            ['SetAVTransportURI', { InstanceID: '0', CurrentURI: 'http://source/demo.mp3', CurrentURIMetaData: '' }],
+            ['Play', { InstanceID: '0', Speed: '1' }],
+          ]) {
+            const body = `<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/"><s:Body><u:${action} xmlns:u="${TYPES[name]}">${Object.entries(args).map(([k, v]) => `<${k}>${escapeXML(v)}</${k}>`).join('')}</u:${action}></s:Body></s:Envelope>`;
+            assert.equal((await h.req('POST', path, { SOAPAction: `"${TYPES[name]}#${action}"` }, body)).statusCode, 200);
+          }
+          assert.ok(h.calls.some(c => c[0] === 'play' && c[3] === 'http://source/demo.mp3'));
+        }
+      }
+    }
+  }));
+}
+
+test('SOAP faults report diagnostics and preserve rejected media errors until a successful retry', async () => harness(async h => {
+  await h.receiver.configure(config);
+  const rejected = await h.soap('SetAVTransportURI', { InstanceID: '0', CurrentURI: 'http://source/song.flac?access_token=private-token', CurrentURIMetaData: '' });
+  assert.equal(rejected.statusCode, 500);
+  assert.match(rejected.body, /<errorCode>714<\/errorCode>/);
+  const status = JSON.parse((await h.req('GET', '/receiver/config')).body);
+  assert.match(status.error, /SetAVTransportURI.*714.*MP3.*audio\/mpeg/);
+  assert.match(h.warnings[0], /"action":"SetAVTransportURI","code":714,"reason":"Only MP3 audio supported"/);
+  const play = await h.soap('Play', { InstanceID: '0', Speed: '1' });
+  assert.match(play.body, /<errorCode>701<\/errorCode>/);
+  assert.match(h.warnings[1], /"action":"Play","code":701,"reason":"No media present"/);
+  assert.equal(h.receiver.status().error, status.error);
+  assert.equal((await h.soap('GetTransportInfo', { InstanceID: '0' })).statusCode, 200);
+  await h.soap('Seek', { InstanceID: '0' });
+  await h.soap('Stop', { InstanceID: '0' });
+  assert.equal(h.receiver.status().error, status.error);
+  assert.equal(h.calls.length, 0);
+  assert.doesNotMatch(h.warnings.join('\n') + status.error, /private-token|access_token/);
+  const accepted = await h.soap('SetAVTransportURI', { InstanceID: '0', CurrentURI: 'http://source/song.mp3', CurrentURIMetaData: '' });
+  assert.equal(accepted.statusCode, 200);
+  assert.equal(h.receiver.status().error, '');
+  h.service.playURL = async () => false;
+  const failed = await h.soap('Play', { InstanceID: '0', Speed: '1' });
+  assert.match(failed.body, /<errorCode>501<\/errorCode>/);
+  assert.match(h.receiver.status().error, /Play.*501.*音箱操作失败/);
+  h.service.playURL = async () => true;
+  assert.equal((await h.soap('Play', { InstanceID: '0', Speed: '1' })).statusCode, 200);
+  assert.equal(h.receiver.status().error, '');
+}));
+
+test('malformed SOAP and unexpected speaker failures expose bounded fault diagnostics', async () => harness(async h => {
+  await h.receiver.configure(config);
+  const invalid = await h.soap('SetAVTransportURI', { InstanceID: '0', CurrentURI: 'http://source/a.mp3' });
+  assert.match(invalid.body, /<errorCode>402<\/errorCode>/);
+  assert.match(h.receiver.status().error, /SetAVTransportURI.*402/);
+  assert.match(h.warnings[0], /"code":402,"reason":"Invalid Args"/);
+  await h.req('POST', '/dlna/AVTransport/control', { SOAPAction: 'bad#\nprivate-token' });
+  assert.match(h.warnings.at(-1), /"action":"\(invalid\)","code":401/);
+  await h.soap('SetAVTransportURI', { InstanceID: '0', CurrentURI: 'http://source/a.mp3', CurrentURIMetaData: '' });
+  h.service.playURL = async () => { throw new Error('upstream URL contains private-token'); };
+  const failed = await h.soap('Play', { InstanceID: '0', Speed: '1' });
+  assert.match(failed.body, /<errorCode>501<\/errorCode>/);
+  assert.match(h.warnings.at(-1), /"action":"Play","code":501,"reason":"Action Failed"/);
+  assert.doesNotMatch(failed.body + h.warnings.join('\n') + h.receiver.status().error, /private-token/);
 }));
 
 test('SOAP routes actual MP3 URL and controls to the selected speaker without importing songs', async () => harness(async h => {

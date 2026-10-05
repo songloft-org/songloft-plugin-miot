@@ -81,7 +81,9 @@ export function scpd(service: ServiceName) {
 }
 
 export function description(name: string, uuid: string, base: string) {
-  const services = Object.entries(TYPES).map(([key, type]) => `<service><serviceType>${type}</serviceType><serviceId>urn:upnp-org:serviceId:${key}</serviceId><SCPDURL>${escapeXML(base + ROOT + '/' + key + '.xml')}</SCPDURL><controlURL>${escapeXML(base + ROOT + '/' + key + '/control')}</controlURL><eventSubURL>${escapeXML(base + ROOT + '/' + key + '/event')}</eventSubURL></service>`).join('');
+  // Some senders prepend the server origin even to absolute URLs. Keep the deployment path.
+  const basePath = base.replace(/^https?:\/\/[^/]+/i, '');
+  const services = Object.entries(TYPES).map(([key, type]) => `<service><serviceType>${type}</serviceType><serviceId>urn:upnp-org:serviceId:${key}</serviceId><SCPDURL>${escapeXML(basePath + ROOT + '/' + key + '.xml')}</SCPDURL><controlURL>${escapeXML(basePath + ROOT + '/' + key + '/control')}</controlURL><eventSubURL>${escapeXML(basePath + ROOT + '/' + key + '/event')}</eventSubURL></service>`).join('');
   return xmlResponse(`<root xmlns="urn:schemas-upnp-org:device-1-0"><specVersion><major>1</major><minor>0</minor></specVersion><device><deviceType>${DEVICE}</deviceType><friendlyName>${escapeXML(name)}</friendlyName><manufacturer>Songloft</manufacturer><modelName>MIoT DLNA Receiver</modelName><UDN>${uuid}</UDN><serviceList>${services}</serviceList></device></root>`);
 }
 
