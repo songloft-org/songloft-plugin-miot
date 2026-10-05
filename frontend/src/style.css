@@ -360,8 +360,9 @@ h1, h2, h3, p { margin: 0; }
 
 .page-view { height: 100vh; min-height: 100vh; background: var(--md-surface); overflow: hidden; }
 /* 顶部栏向下偏移安全区，内容也要预留同样的高度，避免遮住二级页面首行。 */
-.settings-page { height: 100dvh; min-height: 0; padding-top: calc(56px + var(--sl-safe-top, 0px)); overflow: hidden; background: var(--md-surface); }
-.settings-scroll-body { height: calc(100dvh - 56px - var(--sl-safe-top, 0px)); min-height: 0; overflow: hidden; }
+/* 与播放器一致：旧浏览器忽略 dvh 时仍须有确定高度，才能让内层滚动而非被外层裁切。 */
+.settings-page { height: 100vh; height: 100dvh; min-height: 0; padding-top: calc(56px + var(--sl-safe-top, 0px)); overflow: hidden; background: var(--md-surface); }
+.settings-scroll-body { height: calc(100vh - 56px - var(--sl-safe-top, 0px)); height: calc(100dvh - 56px - var(--sl-safe-top, 0px)); min-height: 0; overflow: hidden; }
 .settings-shell { height: 100%; }
 .settings-layout { max-width: 1200px; height: 100%; min-height: 0; margin: 0 auto; display: flex; align-items: stretch; gap: 0; }
 .settings-nav { width: var(--miot-nav-width); height: 100%; flex: 0 0 var(--miot-nav-width); overflow-y: auto; overscroll-behavior: contain; padding: 8px; border-right: 1px solid var(--md-outline-variant); scrollbar-width: none; }
