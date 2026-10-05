@@ -5,6 +5,7 @@ export interface XMLNode {
   attrs: Record<string, string>;
   children: XMLNode[];
   text: string;
+  innerXML: string;
 }
 
 export function escapeXML(value: unknown): string {
@@ -26,17 +27,21 @@ function decodeXML(value: string): string {
 
 export function parseXML(xml: string): XMLNode {
   if (xml.length > 65536 || /<!DOCTYPE|<!ENTITY/i.test(xml)) throw new Error('XML too large or contains DTD');
-  const root: XMLNode = { name: '', local: '', attrs: {}, children: [], text: '' };
+  const root: XMLNode = { name: '', local: '', attrs: {}, children: [], text: '', innerXML: '' };
   const stack = [root];
+  const contentStarts = new WeakMap<XMLNode, number>();
   const tokens = xml.match(/<!--[\s\S]*?-->|<\?[\s\S]*?\?>|<!\[CDATA\[[\s\S]*?\]\]>|<[^>]*>|[^<]+/g) || [];
   if (tokens.join('') !== xml) throw new Error('Invalid XML');
-  let nodes = 0;
+  let nodes = 0, offset = 0;
   for (const token of tokens) {
+    const tokenStart = offset;
+    offset += token.length;
     const current = stack[stack.length - 1];
     if (token.startsWith('<!--') || token.startsWith('<?')) continue;
     if (token.startsWith('<![CDATA[')) { current.text += token.slice(9, -3); continue; }
     if (token.startsWith('</')) {
       if (stack.length < 2 || token !== `</${current.name}>`) throw new Error('Mismatched XML tag');
+      current.innerXML = xml.slice(contentStarts.get(current)!, tokenStart);
       stack.pop();
     } else if (token.startsWith('<')) {
       const match = token.match(/^<([A-Za-z_][\w.:-]*)([\s\S]*?)(\/?)>$/);
@@ -48,9 +53,9 @@ export function parseXML(xml: string): XMLNode {
         return '';
       });
       if (remaining.trim()) throw new Error('Invalid XML attribute');
-      const node: XMLNode = { name: match[1], local: match[1].split(':').pop()!, attrs, children: [], text: '' };
+      const node: XMLNode = { name: match[1], local: match[1].split(':').pop()!, attrs, children: [], text: '', innerXML: '' };
       current.children.push(node);
-      if (!match[3]) stack.push(node);
+      if (!match[3]) { contentStarts.set(node, offset); stack.push(node); }
     } else {
       if (/&(?!amp;|lt;|gt;|quot;|apos;|#\d+;|#x[\da-f]+;)/i.test(token)) throw new Error('Invalid XML entity');
       current.text += decodeXML(token);

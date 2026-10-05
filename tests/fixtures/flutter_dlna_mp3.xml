@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8" standalone="yes"?>
+<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/" s:encodingStyle="http://schemas.xmlsoap.org/soap/encoding/">
+    <s:Body>
+        <u:SetAVTransportURI xmlns:u="urn:schemas-upnp-org:service:AVTransport:1">
+            <InstanceID>0</InstanceID>
+            <CurrentURI>http://192.168.2.2:58091/api/v1/songs/1/play?access_token=example&amp;quality=original</CurrentURI>
+            <CurrentURIMetaData>
+              <DIDL-Lite xmlns="urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:upnp="urn:schemas-upnp-org:metadata-1-0/upnp/" xmlns:dlna="urn:schemas-dlna-org:metadata-1-0/">
+                <item id="id" parentID="0" restricted="0"><dc:title>中文 &amp; &lt;曲名&gt; &quot;引号&quot;</dc:title><upnp:artist>unknow</upnp:artist><dc:date>2026-10-05 11:22:33.540</dc:date><upnp:class>object.item.audioItem</upnp:class><res protocolInfo="http-get:*:audio/mp3:*">http://192.168.2.2:58091/api/v1/songs/1/play?access_token=example&amp;quality=original</res></item>
+              </DIDL-Lite>
+            </CurrentURIMetaData>
+        </u:SetAVTransportURI>
+    </s:Body>
+</s:Envelope>

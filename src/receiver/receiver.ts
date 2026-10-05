@@ -284,8 +284,16 @@ export class DLNAReceiver {
           if (root.local !== 'Envelope' || !node || node.local !== action || body?.children.length !== 1) throw new Error('Invalid SOAP');
           args = Object.create(null);
           for (const arg of node.children) {
-            if (arg.local in args || arg.children.length) throw new Error('Invalid argument');
-            args[arg.local] = arg.text;
+            if (arg.local in args) throw new Error('Invalid argument');
+            if (arg.children.length) {
+              // dlna_dart sends DIDL-Lite as inline XML instead of an escaped string.
+              if (service !== 'AVTransport' || action !== 'SetAVTransportURI' || arg.local !== 'CurrentURIMetaData'
+                || arg.children.length !== 1 || arg.children[0].local !== 'DIDL-Lite' || arg.text.trim()) throw new Error('Invalid argument');
+              // Keep the original XML to preserve namespaces and entity encoding.
+              args[arg.local] = arg.innerXML.trim();
+            } else {
+              args[arg.local] = arg.text;
+            }
           }
           const inputs = SCHEMAS[service].actions[action].filter(a => a[1] === 'in');
           if (Object.keys(args).length !== inputs.length || inputs.some(a => !(a[0] in args))) throw new Error('Invalid arguments');
