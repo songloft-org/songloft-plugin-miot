@@ -257,13 +257,13 @@ async function resolvePlayerStatusOnce(
       if (parsed.play_song_detail) {
         const d = parsed.play_song_detail;
         if (typeof d.position === 'number' && Number.isFinite(d.position) && d.position >= 0) {
-          devicePosition = Math.floor(d.position / 1000);
+          devicePosition = d.position / 1000;
           // seek/倍速流对设备是「从 0 开始的新流」，设备给的是流内偏移：
           // 乘以 speed 还原成曲内秒，再加 seekOffset 得曲内绝对位置。
           realPosition = devicePosition * speed + seekOffset;
         }
-        if (typeof d.duration === 'number') {
-          deviceStreamDuration = Math.floor(d.duration / 1000);
+        if (typeof d.duration === 'number' && Number.isFinite(d.duration) && d.duration > 0) {
+          deviceStreamDuration = d.duration / 1000;
           realDuration = deviceStreamDuration;
         }
       }

@@ -408,11 +408,12 @@ export class MinaService {
         if (typeof parsed.status === 'number') status = parsed.status;
         if (parsed.play_song_detail && typeof parsed.play_song_detail.position === 'number'
           && Number.isFinite(parsed.play_song_detail.position) && parsed.play_song_detail.position >= 0) {
-          position = Math.floor(parsed.play_song_detail.position / 1000);
+          position = parsed.play_song_detail.position / 1000;
           hasPosition = true;
         }
-        if (parsed.play_song_detail && typeof parsed.play_song_detail.duration === 'number') {
-          duration = Math.floor(parsed.play_song_detail.duration / 1000);
+        if (parsed.play_song_detail && typeof parsed.play_song_detail.duration === 'number'
+          && Number.isFinite(parsed.play_song_detail.duration) && parsed.play_song_detail.duration > 0) {
+          duration = parsed.play_song_detail.duration / 1000;
         }
       } catch {}
     }

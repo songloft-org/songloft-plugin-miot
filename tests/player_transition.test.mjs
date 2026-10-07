@@ -110,6 +110,191 @@ function player(readState, { duration = 300, seek = 0, speed = 1 } = {}) {
 
 const playing = position => ({ status: 1, position, duration: 300, hasPosition: true });
 
+test('device state preserves millisecond position and stream duration', async () => {
+  await withClock(async () => {
+    const service = new MinaService({}, {});
+    service.getPlayerStatus = async () => ({
+      data: {
+        info: JSON.stringify({
+          status: 1, play_song_detail: { position: 202375, duration: 203760 },
+        })
+      }
+    });
+    assert.deepEqual(await service.getPlayState('account', 'speaker'), {
+      status: 1, position: 202.375, duration: 203.76, hasPosition: true,
+    });
+  });
+});
+
+test('tail progress calibrates the deadline before a fractional song loops', async () => {
+  await withClock(async h => {
+    const start = Date.now();
+    const duration = 203.76;
+    const p = player(async () => ({
+      status: 1, hasPosition: true, duration,
+      position: Math.min(duration, 202 + (Date.now() - start - 1) / 1000),
+    }), { duration });
+    p.manager.startCheckTimer(10);
+    await h.advance(1001);
+    assert.equal(p.finished(), 0);
+    assert.ok(h.logs.some(l => l.includes('Tail timer calibrated')));
+    await h.advance(758);
+    assert.equal(p.finished(), 0);
+    await h.advance(2);
+    assert.equal(p.finished(), 1);
+    assert.equal(h.timers.size, 0);
+  });
+});
+
+test('slow tail queries bring the check forward but cannot prove the song finished', async () => {
+  await withClock(async h => {
+    let calls = 0;
+    const slow = deferred();
+    const p = player(() => {
+      calls++;
+      if (calls === 1) return Promise.resolve({ ...playing(200), duration: 203.76 });
+      if (calls === 2) return slow.promise;
+      return Promise.resolve({ ...playing(203), duration: 203.76 });
+    }, { duration: 203.76 });
+    p.manager.startCheckTimer(10);
+    await h.advance(1001);
+    await h.advance(400);
+    slow.resolve({ ...playing(201.4), duration: 203.76 });
+    await flush();
+    assert.ok(Math.abs(p.manager.checkTimerDeadlineMs - (100000 + 3361)) <= 1);
+    await h.advance(1961);
+    assert.equal(p.finished(), 0);
+    assert.ok(h.logs.some(l => l.includes('Timer deferred:')));
+    p.manager.stopCheckTimer();
+  });
+});
+
+for (const signal of ['query failed', 'status unknown', 'position missing', 'foreign media', 'frozen']) {
+  test(`early calibrated checks retain the original fallback when ${signal}`, async () => {
+    await withClock(async h => {
+      let position = 295;
+      let useFailure = false;
+      const p = player(async () => {
+        if (!useFailure) return playing(position);
+        if (signal === 'query failed') throw new Error('timeout');
+        if (signal === 'status unknown') return { ...playing(0), status: -1 };
+        if (signal === 'position missing') return { ...playing(0), hasPosition: false };
+        if (signal === 'foreign media') return { ...playing(300), duration: 500 };
+        return playing(position);
+      });
+      p.manager.startCheckTimer(15);
+      const fallback = p.manager.checkTimerFallbackDeadlineMs;
+      await h.advance(1);
+      position = 296;
+      await h.advance(1000);
+      assert.ok(p.manager.checkTimerDeadlineMs < fallback);
+      useFailure = true;
+      await h.advance(8000);
+      assert.equal(p.finished(), 0);
+      assert.equal(p.manager.checkTimerFallbackDeadlineMs, fallback);
+      assert.equal(p.manager.checkTimerDeadlineMs, fallback);
+      await h.advance(5999);
+      assert.equal(p.finished(), 1);
+      assert.equal(h.timers.size, 0);
+    });
+  });
+}
+
+test('a calibrated deadline defers during a short tail buffer and resumes without truncation', async () => {
+  await withClock(async h => {
+    const start = Date.now();
+    const p = player(async () => playing(295 + (Math.min(1001, Date.now() - start) +
+      Math.max(0, Date.now() - start - 3501)) / 1000));
+    p.manager.startCheckTimer(15);
+    await h.advance(1001);
+    assert.ok(p.manager.checkTimerDeadlineMs < start + 15000);
+    await h.advance(4999);
+    assert.equal(p.finished(), 0);
+    await h.advance(1500);
+    assert.equal(p.finished(), 1);
+    assert.equal(h.timers.size, 0);
+  });
+});
+
+for (const speed of [0.5, 1, 2]) {
+  test(`tail calibration converts seek and stream time at speed ${speed}`, async () => {
+    await withClock(async h => {
+      const start = Date.now();
+      const p = player(async () => ({
+        status: 1, hasPosition: true, duration: 10 / speed,
+        position: 5 / speed + (Date.now() - start - 15000) / 1000,
+      }), { duration: 300, seek: 290, speed });
+      p.manager.startCheckTimer(30);
+      await h.advance(16001);
+      assert.equal(p.finished(), 0);
+      assert.ok(h.logs.some(l => l.includes('Tail timer calibrated')));
+      assert.ok(Math.abs(p.manager.checkTimerDeadlineMs - (115000 + 5000 / speed)) <= 1);
+      p.manager.stopCheckTimer();
+    });
+  });
+}
+
+for (const sample of [
+  { ...playing(290.5), hasPosition: false },
+  { ...playing(290.5), duration: 500 },
+  playing(290), playing(280), playing(299),
+]) {
+  test(`tail calibration rejects unusable or discontinuous progress ${JSON.stringify(sample)}`, async () => {
+    await withClock(async h => {
+      let state = playing(290);
+      const p = player(async () => state);
+      p.manager.startCheckTimer(15);
+      await h.advance(1);
+      const deadline = p.manager.checkTimerDeadlineMs;
+      state = sample;
+      await h.advance(1000);
+      assert.equal(p.manager.checkTimerDeadlineMs, deadline);
+      assert.equal(p.finished(), 0);
+      p.manager.stopCheckTimer();
+    });
+  });
+}
+
+test('a frozen fractional position cannot look like advancing audio', async () => {
+  await withClock(async h => {
+    const p = player(async () => playing(298.375));
+    p.manager.scheduleTailProbe(0);
+    await h.advance(6000);
+    assert.equal(p.finished(), 0);
+    await h.advance(1);
+    assert.equal(p.finished(), 1);
+  });
+});
+
+test('subsecond progress prevents a false six-second stall', async () => {
+  await withClock(async h => {
+    const start = Date.now();
+    const p = player(async () => playing(298 + (Date.now() - start) / 10000));
+    p.manager.scheduleTailProbe(0);
+    await h.advance(7001);
+    assert.equal(p.finished(), 0);
+    p.manager.stopCheckTimer();
+  });
+});
+
+for (const mode of ['negative offset', 'voice suspended']) {
+  test(`tail calibration preserves ${mode}`, async () => {
+    await withClock(async h => {
+      let position = 295;
+      const p = player(async () => playing(position));
+      p.manager.startCheckTimer(15);
+      if (mode === 'negative offset') p.manager.transitionOffset = -2;
+      else p.manager.voiceSuspendedAt = Date.now();
+      await h.advance(1);
+      const deadline = p.manager.checkTimerDeadlineMs;
+      position++;
+      await h.advance(1000);
+      assert.equal(p.manager.checkTimerDeadlineMs, deadline);
+      p.manager.stopCheckTimer();
+    });
+  });
+}
+
 for (const hardware of ['L15A', 'unlisted-model']) {
   test(`replacement waits for pause and stop before pushing URL (${hardware})`, async () => {
     await withClock(async () => {
@@ -179,7 +364,7 @@ test('tail polling starts in the last 15 seconds and repeats after one second', 
 test('loop detection uses stream position after seek and speed conversion', async () => {
   await withClock(async h => {
     let position = 40;
-    const p = player(async () => playing(position), { seek: 200, speed: 2 });
+    const p = player(async () => ({ ...playing(position), duration: 50 }), { seek: 200, speed: 2 });
     p.manager.scheduleTailProbe(0);
     await h.advance(1);
     position = 1;
@@ -192,11 +377,11 @@ test('loop detection uses stream position after seek and speed conversion', asyn
 
 test('seek near the end does not count the seek offset as observed progress', async () => {
   await withClock(async h => {
-    let state = playing(0);
+    let state = { ...playing(0), duration: 10 };
     const p = player(async () => state, { seek: 290 });
     p.manager.scheduleTailProbe(0);
     await h.advance(1);
-    state = { status: 0, position: 0, duration: 300 };
+    state = { status: 0, position: 0, duration: 10, hasPosition: true };
     await h.advance(1000);
     assert.equal(p.finished(), 0);
     p.manager.stopCheckTimer();
@@ -219,7 +404,7 @@ test('one-second polling requires six seconds of continuous tail stall', async (
 test('normal half-speed playback never accumulates a tail stall', async () => {
   await withClock(async h => {
     let position = 0;
-    const p = player(async () => playing(position++), { seek: 285, speed: 0.5 });
+    const p = player(async () => ({ ...playing(position++), duration: 30 }), { seek: 285, speed: 0.5 });
     p.manager.scheduleTailProbe(0);
     await h.advance(8001);
     assert.equal(p.finished(), 0);

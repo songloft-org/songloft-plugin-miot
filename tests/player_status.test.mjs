@@ -103,6 +103,22 @@ test('cached samples only extrapolate display position and never reset the timer
   });
 });
 
+test('fresh and cached status preserve fractional progress after seek and speed conversion', async () => {
+  await withStatus(async h => {
+    h.manager.getPlaybackSpeed = () => 0.5;
+    h.manager.getStreamSeekOffsetSec = () => 100;
+    h.setPosition(110);
+    h.setSample({ status: 1, play_song_detail: { position: 5375, duration: 399520 } });
+    const status = await h.resolve();
+    assert.equal(status.position, 102.6875);
+    assert.deepEqual(h.resets, [102.6875]);
+    h.advance(250);
+    assert.equal((await h.resolve()).position, 102.8125);
+    assert.equal(h.calls(), 1);
+    assert.deepEqual(h.resets, [102.6875]);
+  });
+});
+
 test('fresh but frozen progress cannot repeatedly postpone the timer', async () => {
   await withStatus(async h => {
     await h.resolve();
