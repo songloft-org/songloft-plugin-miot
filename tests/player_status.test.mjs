@@ -67,6 +67,7 @@ async function withStatus(run) {
     getPosition: () => localPosition,
     getStreamSeekOffsetSec: () => 0,
     getPlaybackSpeed: () => 1,
+    getPlaybackRevision: () => 0,
     isVoiceSuspended: () => false,
     matchDeviceStream: () => 'ours',
     canCalibrateAutoNextTimer: () => true,
@@ -78,6 +79,11 @@ async function withStatus(run) {
   try {
     await run({
       resolve, resets, manager, handlers,
+      refresh: async () => {
+        const initial = await resolve();
+        await flush();
+        return handlers.getDeviceStatusCache('account', 'speaker') ? resolve() : initial;
+      },
       calls: () => calls,
       advance: ms => { now += ms; },
       setPosition: value => { localPosition = value; },
@@ -85,6 +91,7 @@ async function withStatus(run) {
       setRequest: value => { readSample = value; },
     });
   } finally {
+    await flush();
     Date.now = original.now;
     globalThis.songloft = original.songloft;
   }
@@ -92,7 +99,7 @@ async function withStatus(run) {
 
 test('cached samples only extrapolate display position and never reset the timer again', async () => {
   await withStatus(async h => {
-    assert.equal((await h.resolve()).position, 5);
+    assert.equal((await h.refresh()).position, 5);
     assert.deepEqual(h.resets, [5]);
     for (let i = 1; i <= 3; i++) {
       h.advance(1000);
@@ -109,7 +116,7 @@ test('fresh and cached status preserve fractional progress after seek and speed 
     h.manager.getStreamSeekOffsetSec = () => 100;
     h.setPosition(110);
     h.setSample({ status: 1, play_song_detail: { position: 5375, duration: 399520 } });
-    const status = await h.resolve();
+    const status = await h.refresh();
     assert.equal(status.position, 102.6875);
     assert.deepEqual(h.resets, [102.6875]);
     h.advance(250);
@@ -121,14 +128,14 @@ test('fresh and cached status preserve fractional progress after seek and speed 
 
 test('fresh but frozen progress cannot repeatedly postpone the timer', async () => {
   await withStatus(async h => {
-    await h.resolve();
-    h.advance(4000);
-    await h.resolve();
+    await h.refresh();
+    h.advance(5000);
+    await h.refresh();
     assert.equal(h.calls(), 2);
     assert.deepEqual(h.resets, [5]);
-    h.advance(4000);
+    h.advance(5000);
     h.setSample({ status: 1, play_song_detail: { position: 10000, duration: 300000 } });
-    await h.resolve();
+    await h.refresh();
     assert.deepEqual(h.resets, [5, 10]);
   });
 });
@@ -137,7 +144,7 @@ for (const detail of [undefined, { position: NaN }, { position: -1000 }, { posit
   test(`unusable device progress cannot rewind the timer: ${JSON.stringify(detail)}`, async () => {
     await withStatus(async h => {
       h.setSample({ status: 1, play_song_detail: detail });
-      await h.resolve();
+      await h.refresh();
       assert.deepEqual(h.resets, []);
     });
   });
@@ -146,7 +153,7 @@ for (const detail of [undefined, { position: NaN }, { position: -1000 }, { posit
 test('playing foreign media cannot calibrate the current song timer', async () => {
   await withStatus(async h => {
     h.manager.matchDeviceStream = () => 'foreign';
-    await h.resolve();
+    await h.refresh();
     assert.deepEqual(h.resets, []);
   });
 });
@@ -158,28 +165,33 @@ test('concurrent status requests share both the query and one timer calibration'
     const pending = Array.from({ length: 20 }, () => h.resolve());
     await flush();
     assert.equal(h.calls(), 1);
-    request.resolve({ data: { info: JSON.stringify({ status: 1, play_song_detail: { position: 5000, duration: 300000 } }) } });
     const results = await Promise.all(pending);
-    assert.ok(results.every(result => result === results[0]));
+    assert.ok(results.every(result => result.position === 20));
+    assert.deepEqual(h.resets, []);
+    request.resolve({ data: { info: JSON.stringify({ status: 1, play_song_detail: { position: 5000, duration: 300000 } }) } });
+    await flush();
     assert.deepEqual(h.resets, [5]);
   });
 });
 
-test('slow response keeps the cache valid for four seconds after completion', async () => {
+test('slow response does not block local progress and caches the completed sample for five seconds', async () => {
   await withStatus(async h => {
     const request = deferred();
     h.setRequest(() => request.promise);
     const pending = h.resolve();
     await flush();
+    assert.equal((await pending).position, 20);
     h.advance(10000);
+    h.setPosition(30);
+    assert.equal((await h.resolve()).position, 30);
     request.resolve({ data: { info: JSON.stringify({ status: 1, play_song_detail: { position: 5000, duration: 300000 } }) } });
-    await pending;
-    h.advance(3999);
-    await h.resolve();
+    await flush();
+    h.advance(4999);
+    await h.refresh();
     assert.equal(h.calls(), 1);
     assert.deepEqual(h.resets, [5]);
     h.advance(1);
-    await h.resolve();
+    await h.refresh();
     assert.equal(h.calls(), 2);
   });
 });
@@ -188,12 +200,44 @@ test('a failed status request releases its in-flight slot for recovery', async (
   await withStatus(async h => {
     h.setRequest(async () => { throw new Error('timeout'); });
     await h.resolve();
+    await flush();
     assert.deepEqual(h.resets, []);
-    h.advance(4000);
+    h.advance(5000);
     h.setRequest(async () => ({ data: { info: JSON.stringify({ status: 1, play_song_detail: { position: 5000 } }) } }));
-    await h.resolve();
+    await h.refresh();
     assert.equal(h.calls(), 2);
     assert.deepEqual(h.resets, [5]);
+  });
+});
+
+for (const action of ['pause', 'next', 'optimistic update']) {
+  test(`a slow old sample cannot overwrite ${action}`, async () => {
+    await withStatus(async h => {
+      const request = deferred();
+      let revision = 0;
+      h.manager.getPlaybackRevision = () => revision;
+      h.setRequest(() => request.promise);
+      assert.equal((await h.resolve()).position, 20);
+      if (action === 'optimistic update') {
+        h.handlers.updateDeviceStatusCache('account', 'speaker', { state: 'paused', position: 20 });
+      } else {
+        revision++;
+      }
+      request.resolve({ data: { info: JSON.stringify({ status: 1, volume: 99, play_song_detail: { position: 5000 } }) } });
+      await flush();
+      assert.deepEqual(h.resets, []);
+      const cache = h.handlers.getDeviceStatusCache('account', 'speaker');
+      if (action === 'optimistic update') assert.equal(cache.state, 'paused');
+      else assert.equal(cache, undefined);
+    });
+  });
+}
+
+test('a shared old sample is extrapolated for display but cannot rewind the timer', async () => {
+  await withStatus(async h => {
+    h.setRequest(async () => ({ sampledAt: 97000, data: { info: JSON.stringify({ status: 1, play_song_detail: { position: 5000 } }) } }));
+    assert.equal((await h.refresh()).position, 8);
+    assert.deepEqual(h.resets, []);
   });
 });
 

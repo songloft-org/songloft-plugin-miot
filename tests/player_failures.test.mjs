@@ -512,6 +512,26 @@ test('bounded fallback keeps three consecutive landing failures and TTS circuit 
   });
 });
 
+test('unavailable landing samples never skip or blacklist the playing song', async () => {
+  await withClock(async h => {
+    let status = -1;
+    const { manager } = player({ service: { getPlayState: async () => ({ status, position: 0, duration: 300 }) } });
+    let failures = 0;
+    manager.handleLandingFailure = async () => { failures++; };
+    manager.scheduleLandingVerify();
+    await h.advance(60000);
+    assert.equal(failures, 0);
+    assert.equal(manager.isSongUnplayable(16), false);
+    assert.equal(manager.currentIndex, 0);
+    assert.equal(manager.state, 'playing');
+    status = 0;
+    await h.advance(16000);
+    assert.equal(failures, 1);
+    assert.equal(manager.isSongUnplayable(16), true);
+    manager.cleanup();
+  });
+});
+
 test('early external stop records an expiring failure, not a permanent blacklist', async () => {
   await withClock(async h => {
     const { manager } = player({

@@ -32,6 +32,35 @@ const PAUSE_VERIFY_ATTEMPTS = 2;
 /** 每次回读前的等待时间（ms），给设备状态上报留缓冲 */
 const PAUSE_VERIFY_DELAY_MS = 700;
 
+const UBUS_TIMEOUT_MS = 5000;
+const STATUS_INTERVAL_MS = 5000;
+const STATUS_FAILURE_DELAYS_MS = [5000, 60000, 300000, 600000];
+
+export interface StatusQueryOptions {
+  /** 控制操作后的有限次数回读，绕过后台节流；仍不能复用操作前的采样。 */
+  verify?: boolean;
+}
+
+interface StatusQuery {
+  revision: number;
+  failures: number;
+  nextAt: number;
+  sample?: { revision: number; result: UbusResponse; at: number };
+  inflight?: { revision: number; promise: Promise<UbusResponse | null> };
+}
+
+interface UbusTask {
+  status: boolean;
+  run: () => Promise<UbusResponse | null>;
+  resolve: (value: UbusResponse | null) => void;
+  reject: (reason: unknown) => void;
+}
+
+interface UbusQueue {
+  running: boolean;
+  tasks: UbusTask[];
+}
+
 export interface PlayMetadata {
   title: string;
   artist?: string;
@@ -45,7 +74,8 @@ export class MinaHTTPClient {
   private tokenInfo: XiaomiTokenInfo;
   private userAgent: string;
   private onTokenExpired?: () => Promise<boolean>;
-  private ubusQueues: Map<string, Promise<void>> = new Map();
+  private ubusQueues = new Map<string, UbusQueue>();
+  private statusQueries = new Map<string, StatusQuery>();
 
   constructor(tokenInfo: XiaomiTokenInfo, onTokenExpired?: () => Promise<boolean>) {
     this.tokenInfo = tokenInfo;
@@ -437,7 +467,7 @@ export class MinaHTTPClient {
    * @returns 1=playing 2=paused 0=stopped，-1 表示未知（请求失败或响应无法解析）
    */
   async readPlayStatus(deviceId: string): Promise<number> {
-    const raw = await this.getPlayerStatus(deviceId);
+    const raw = await this.getPlayerStatus(deviceId, { verify: true });
     const info = (raw?.data as any)?.info;
     if (typeof info !== 'string') return -1;
     try {
@@ -463,7 +493,7 @@ export class MinaHTTPClient {
    * 获取音量
    */
   async getVolume(deviceId: string): Promise<number> {
-    const result = await this.getPlayerStatus(deviceId);
+    const result = await this.getPlayerStatus(deviceId, { verify: true });
     if (result && typeof result.data === 'object' && result.data !== null) {
       const data = result.data as Record<string, unknown>;
       const info = data['info'];
@@ -584,8 +614,55 @@ export class MinaHTTPClient {
   /**
    * 获取播放器状态
    */
-  async getPlayerStatus(deviceId: string): Promise<UbusResponse | null> {
-    return this.ubusRequest(deviceId, 'player_get_play_status', 'mediaplayer', {});
+  async getPlayerStatus(deviceId: string, options: StatusQueryOptions = {}): Promise<UbusResponse | null> {
+    const query = this.getStatusQuery(deviceId);
+    if (query.inflight?.revision === query.revision) return query.inflight.promise;
+    if (!options.verify && Date.now() < query.nextAt) {
+      return query.sample?.revision === query.revision && Date.now() - query.sample.at < STATUS_INTERVAL_MS
+        ? query.sample.result : null;
+    }
+
+    const revision = query.revision;
+    const promise = this.enqueueUbus(deviceId, true, async () => {
+      // 控制指令优先执行。旧的后台查询在出队时作废，不再给云端补发历史请求。
+      if (revision !== query.revision || (!options.verify && Date.now() < query.nextAt)) return null;
+      let result: UbusResponse | null = null;
+      try {
+        result = await this.doUbusRequest(deviceId, 'player_get_play_status', 'mediaplayer', {}, isDebugLog() ? 'status' : '');
+        const data = result?.data as { info?: string } | undefined;
+        const info = JSON.parse(data?.info || '{}');
+        if (typeof info.status !== 'number' || !Number.isFinite(info.status) || info.status < 0) result = null;
+      } catch {
+        result = null;
+      }
+      // 在途查询期间用户操作过设备：结果属于旧媒体上下文，不能参与任何校准。
+      if (revision !== query.revision) return null;
+      if (result) {
+        result = { ...result, sampledAt: Date.now() };
+        query.sample = { revision, result, at: Date.now() };
+      } else {
+        query.sample = undefined;
+      }
+      query.failures = result ? 0 : query.failures + 1;
+      const delay = result ? STATUS_INTERVAL_MS
+        : STATUS_FAILURE_DELAYS_MS[Math.min(query.failures - 1, STATUS_FAILURE_DELAYS_MS.length - 1)];
+      query.nextAt = Date.now() + delay;
+      if (!result) songloft.log.warn(`[MinaClient] status unavailable device=${deviceId} failures=${query.failures} retryInMs=${delay}`);
+      return result;
+    }).finally(() => {
+      if (query.inflight?.promise === promise) query.inflight = undefined;
+    });
+    query.inflight = { revision, promise };
+    return promise;
+  }
+
+  private getStatusQuery(deviceId: string): StatusQuery {
+    let query = this.statusQueries.get(deviceId);
+    if (!query) {
+      query = { revision: 0, failures: 0, nextAt: 0 };
+      this.statusQueries.set(deviceId, query);
+    }
+    return query;
   }
 
   /**
@@ -641,26 +718,40 @@ export class MinaHTTPClient {
    * 执行 UBus 请求
    */
   async ubusRequest(deviceId: string, method: string, path: string, message: Record<string, unknown>, logLabel = ''): Promise<UbusResponse | null> {
-    const previous = this.ubusQueues.get(deviceId);
-    let release: () => void = () => {};
-    const current = new Promise<void>(resolve => { release = resolve; });
-    const queued = (previous || Promise.resolve()).catch(() => {}).then(() => current);
-    this.ubusQueues.set(deviceId, queued);
+    if (method === 'player_get_play_status') return this.getPlayerStatus(deviceId);
+    this.getStatusQuery(deviceId).revision++;
+    return this.enqueueUbus(deviceId, false, () => this.doUbusRequest(deviceId, method, path, message, logLabel));
+  }
 
-    if (previous) {
-      if (logLabel) {
-        songloft.log.info(`[MinaClient] ${logLabel} waiting for previous ubus request device=${deviceId}`);
-      }
-      await previous.catch(() => {});
+  private enqueueUbus(deviceId: string, status: boolean, run: UbusTask['run']): Promise<UbusResponse | null> {
+    let queue = this.ubusQueues.get(deviceId);
+    if (!queue) {
+      queue = { running: false, tasks: [] };
+      this.ubusQueues.set(deviceId, queue);
     }
+    const pending = new Promise<UbusResponse | null>((resolve, reject) => {
+      queue.tasks.push({ status, run, resolve, reject });
+    });
+    void this.drainUbus(deviceId, queue);
+    return pending;
+  }
 
+  private async drainUbus(deviceId: string, queue: UbusQueue): Promise<void> {
+    if (queue.running) return;
+    queue.running = true;
     try {
-      return await this.doUbusRequest(deviceId, method, path, message, logLabel);
-    } finally {
-      release();
-      if (this.ubusQueues.get(deviceId) === queued) {
-        this.ubusQueues.delete(deviceId);
+      while (queue.tasks.length) {
+        const controlIndex = queue.tasks.findIndex(task => !task.status);
+        const [task] = queue.tasks.splice(controlIndex < 0 ? 0 : controlIndex, 1);
+        try {
+          task.resolve(await task.run());
+        } catch (error) {
+          task.reject(error);
+        }
       }
+    } finally {
+      queue.running = false;
+      if (this.ubusQueues.get(deviceId) === queue) this.ubusQueues.delete(deviceId);
     }
   }
 
@@ -684,7 +775,7 @@ export class MinaHTTPClient {
       songloft.log.info(`[MinaClient] ${logLabel} ubus request device=${deviceId} path=${path} method=${method} request_id=${requestId} message=${this.summarizeUbusMessageForLog(message)}`);
     }
 
-    const result = await this.doPostRequest<UbusResponse>(apiUrl, body, logLabel);
+    const result = await this.doPostRequest<UbusResponse>(apiUrl, body, logLabel, undefined, UBUS_TIMEOUT_MS);
 
     // 如果401并且有回调，尝试刷新
     if (result === null) {
@@ -803,12 +894,13 @@ export class MinaHTTPClient {
   /**
    * 执行 POST 请求（带401重试）
    */
-  private async doPostRequest<T>(url: string, body: string, logLabel = '', transformResponseText?: (text: string) => string): Promise<T | null> {
+  private async doPostRequest<T>(url: string, body: string, logLabel = '', transformResponseText?: (text: string) => string, timeoutMs?: number): Promise<T | null> {
     const headers: Record<string, string> = {
       'User-Agent': this.userAgent,
       'Content-Type': 'application/x-www-form-urlencoded',
       'Cookie': this.buildApiCookies(),
     };
+    if (timeoutMs !== undefined) headers['X-Fetch-Timeout-Ms'] = String(timeoutMs);
 
     let response: any;
     try {
@@ -865,6 +957,8 @@ export class MinaHTTPClient {
         return null;
       }
     }
+
+    if (response.status < 200 || response.status >= 300) return null;
 
     try {
       const text = response.text() as string;

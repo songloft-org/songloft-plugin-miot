@@ -110,6 +110,112 @@ function player(readState, { duration = 300, seek = 0, speed = 1 } = {}) {
 
 const playing = position => ({ status: 1, position, duration: 300, hasPosition: true });
 
+test('a hung cloud query delays the metadata fallback by at most one second', async () => {
+  await withClock(async h => {
+    const slow = deferred();
+    const p = player(() => slow.promise);
+    p.manager.startCheckTimer(0.1);
+    await h.advance(1099);
+    assert.equal(p.finished(), 0);
+    await h.advance(1);
+    assert.equal(p.finished(), 1);
+    assert.equal(h.timers.size, 0);
+    slow.resolve(playing(280));
+    await flush();
+    assert.equal(p.finished(), 1);
+    assert.equal(h.timers.size, 0);
+  });
+});
+
+test('timed-out early calibration preserves the original metadata fallback', async () => {
+  await withClock(async h => {
+    const slow = deferred();
+    const p = player(() => slow.promise);
+    p.manager.startCheckTimer(5);
+    p.manager.scheduleDeadlineCheck(100);
+    await h.advance(4999);
+    assert.equal(p.finished(), 0);
+    await h.advance(1001);
+    assert.equal(p.finished(), 1);
+    slow.resolve(playing(300));
+    await flush();
+    assert.equal(p.finished(), 1);
+  });
+});
+
+test('stopping during a deadline wait cancels its local timeout and ignores the late response', async () => {
+  await withClock(async h => {
+    const slow = deferred();
+    const p = player(() => slow.promise);
+    p.manager.startCheckTimer(0.1);
+    await h.advance(100);
+    p.manager.stopCheckTimer();
+    p.manager.state = 'paused';
+    assert.equal(h.timers.size, 0);
+    await h.advance(1000);
+    assert.equal(p.finished(), 0);
+    slow.resolve(playing(300));
+    await flush();
+    assert.equal(p.finished(), 0);
+  });
+});
+
+test('repeated cached stopped samples cannot count as two confirmations', async () => {
+  await withClock(async h => {
+    let sampledAt = Date.now();
+    const p = player(async () => ({ ...playing(298), status: 0, sampledAt }));
+    p.manager.scheduleTailProbe(0);
+    await h.advance(4001);
+    assert.equal(p.finished(), 0);
+    assert.equal(p.manager.tailProbeStopMisses, 1);
+    sampledAt = Date.now();
+    await h.advance(1000);
+    assert.equal(p.finished(), 1);
+    assert.equal(h.timers.size, 0);
+  });
+});
+
+test('cached samples cannot accumulate six seconds of tail stall without fresh device evidence', async () => {
+  await withClock(async h => {
+    let sampledAt = Date.now();
+    const p = player(async () => ({ ...playing(298), sampledAt }));
+    p.manager.scheduleTailProbe(0);
+    await h.advance(6001);
+    assert.equal(p.finished(), 0);
+    sampledAt = Date.now();
+    await h.advance(1000);
+    assert.equal(p.finished(), 1);
+  });
+});
+
+test('delayed consumption of a cached sample cannot lengthen its observed stall', async () => {
+  await withClock(async h => {
+    const firstSampleAt = Date.now();
+    let sampledAt = firstSampleAt;
+    const p = player(async () => ({ ...playing(298), sampledAt }));
+    p.manager.scheduleTailProbe(0);
+    await h.advance(6001);
+    sampledAt = firstSampleAt + 5000;
+    await h.advance(1000);
+    assert.equal(p.finished(), 0);
+    sampledAt = Date.now();
+    await h.advance(1000);
+    assert.equal(p.finished(), 1);
+  });
+});
+
+test('unknown-duration playback never invents a metadata deadline during cloud failure', async () => {
+  await withClock(async h => {
+    const p = player(async () => ({ status: -1, position: 0, duration: 0, hasPosition: false }), { duration: 0 });
+    p.manager.scheduleDurationProbe();
+    await h.advance(60000);
+    assert.equal(p.finished(), 0);
+    assert.equal(p.manager.checkTimer, null);
+    p.manager.stopCheckTimer();
+    assert.equal(h.timers.size, 0);
+  });
+});
+
 test('device state preserves millisecond position and stream duration', async () => {
   await withClock(async () => {
     const service = new MinaService({}, {});

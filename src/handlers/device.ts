@@ -279,16 +279,16 @@ export function registerDeviceHandlers(
   //   2. 绝对真实：穿透一切业务逻辑掩盖，如实反馈硬件底层状态。
   //
   // 【集成指南 (Integration Guide)】：给第三方插件开发者的务实建议
-  // 
+  //
   // 1. 状态降级处理 (State Degradation)：
   //    - `state` 可能返回 "unknown"（如网络抖动、云端 502）。消费端切勿在遇到 unknown 时销毁核心上下文，应保持轮询直至恢复。
-  // 
+  //
   // 2. 音量空值处理 (Nullable Volume)：
   //    - `volume` 为 0-100 的整数，或者在无法获取时返回 `null`（而非 -1）。
   //    - 强烈建议消费端使用可选链/空值合并语法：`const v = data.volume ?? lastKnown;`
-  // 
+  //
   // 3. 轮询频率节流 (Polling Throttling)：
-  //    - 接口底层设有 4 秒的物理查询缓存。
+  //    - 接口底层设有 5 秒的物理查询缓存，云端查询统一节流并在失败后退避。
   //    - 最佳实践：轮询频率（Interval）建议设置在 1000ms ~ 2000ms。过度高频轮询只会命中缓存，无法获得更高精度的状态。
   //    - 缓存命中时，`position` 字段会自动基于系统时钟进行毫秒级外推，保证进度条平滑。
   //
@@ -305,7 +305,7 @@ export function registerDeviceHandlers(
         return jsonResponse({ success: false, error: 'account_id and device_id are required' });
       }
 
-      // 检查 4 秒物理缓存，防止高频轮询刷爆云端 API
+      // 检查 5 秒物理缓存，防止高频轮询刷爆云端 API
       const cached = getDeviceStatusCache(account_id, device_id);
       const now = Date.now();
       
@@ -374,7 +374,13 @@ export function registerDeviceHandlers(
       // 同步给宿主内部缓存（与旧接口共享同一个缓存池）。本端点定位是「物理探针」，
       // 响应里的 position 保持设备裸值不加 seek 偏移；positionFromDevice 让共享缓存的
       // 另一个消费者（resolvePlayerStatus）知道该值需要补偏移才是曲内绝对位置。
-      updateDeviceStatusCache(account_id, device_id, { state, position, positionFromDevice, volume: volume ?? undefined });
+      // 无信号不写入物理缓存；晚到采样不能覆盖操作后主动更新的状态。
+      if (typeof info === 'string' && state !== 'unknown' && getDeviceStatusCache(account_id, device_id) === cached) {
+        updateDeviceStatusCache(account_id, device_id, {
+          state, position, positionFromDevice, volume: volume ?? undefined,
+          timestamp: typeof raw.sampledAt === 'number' ? raw.sampledAt : Date.now(),
+        });
+      }
 
       return jsonResponse({
         success: true,

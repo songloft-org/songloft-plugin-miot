@@ -54,11 +54,12 @@ interface DeviceStatusCache {
   // 时长覆盖（本地元数据更可靠），这里保留设备原值，用于判断音箱在放的是不是我们推的流
   // （PlaylistManager.matchDeviceStream，songloft-org/songloft-plugin-miot#96）。
   streamDuration: number;
+  playbackRevision?: number;
 }
 const deviceStatusCache: Map<string, DeviceStatusCache> = new Map();
 const deviceStatusInflight: Map<string, Promise<any>> = new Map();
-const playerStatusInflight = new Map<string, Promise<Record<string, any>>>();
-export const DEVICE_STATUS_TTL = 4000; // 4秒缓存，略短于前端5秒轮询间隔
+const playerStatusInflight = new Map<string, Promise<void>>();
+export const DEVICE_STATUS_TTL = 5000; // 与 Mina 后台查询的五秒间隔一致
 
 /** 主动更新设备状态缓存（供外部调用，如 playURL 成功后刷新） */
 export function updateDeviceStatusCache(accountId: string, deviceId: string, data: Partial<DeviceStatusCache> & { lockVolume?: boolean }): void {
@@ -69,7 +70,7 @@ export function updateDeviceStatusCache(accountId: string, deviceId: string, dat
     state: data.state ?? existing?.state ?? 'idle',
     position: data.position ?? existing?.position ?? 0,
     duration: data.duration ?? existing?.duration ?? 0,
-    timestamp: Date.now(),
+    timestamp: data.timestamp ?? Date.now(),
     volumeLockedUntil: data.lockVolume ? Date.now() + 10000 : (existing?.volumeLockedUntil ?? 0),
     // 外部写入（播放/暂停/停止动作后的乐观刷新）给的都是本地推算位置，不是设备实测
     positionFromDevice: data.positionFromDevice ?? false,
@@ -181,27 +182,46 @@ export async function resolvePlayerStatus(
   account_id: string,
   device_id: string,
 ): Promise<Record<string, any>> {
+  const manager = await playlistManagerMap.getOrCreate(account_id, device_id);
   const key = account_id + ':' + device_id;
-  const existing = playerStatusInflight.get(key);
-  if (existing) return existing;
-  // 不仅共用 HTTP 请求，也只处理一次采样和定时器校准。
-  const pending = resolvePlayerStatusOnce(playlistManagerMap, minaService, account_id, device_id).finally(() => {
-    if (playerStatusInflight.get(key) === pending) playerStatusInflight.delete(key);
-  });
-  playerStatusInflight.set(key, pending);
-  return pending;
+  const localStatus = manager.getStatus();
+  const cached = deviceStatusCache.get(key);
+  const fresh = cached && Date.now() - cached.timestamp < DEVICE_STATUS_TTL &&
+    (cached.playbackRevision === undefined || cached.playbackRevision === manager.getPlaybackRevision());
+  if (!fresh && !playerStatusInflight.has(key)) {
+    // 仅云端采样在后台等待；每次 HTTP / WS tick 都立即取得当前本地状态。
+    const pending = refreshPlayerStatus(manager, minaService, account_id, device_id).finally(() => {
+      if (playerStatusInflight.get(key) === pending) playerStatusInflight.delete(key);
+    });
+    playerStatusInflight.set(key, pending);
+    void pending.catch(e => songloft.log.warn('[player/status] background refresh failed: ' + String(e)));
+  }
+  if (!fresh) return { ...localStatus, volume: cached?.volume ?? -1 };
+
+  const duration = localStatus.duration > 0 ? localStatus.duration : cached.duration;
+  const speed = manager.getPlaybackSpeed();
+  const position = cached.positionFromDevice
+    ? cached.position * speed + manager.getStreamSeekOffsetSec() : cached.position;
+  const elapsed = cached.state === 'playing' ? (Date.now() - cached.timestamp) / 1000 * speed : 0;
+  const extrapolated = duration > 0 ? Math.min(position + elapsed, duration) : position + elapsed;
+  return {
+    ...localStatus,
+    state: resolveReportState(localStatus.state, cached.state),
+    position: resolveReportPosition(localStatus.state, cached.state, localStatus.position, extrapolated),
+    duration,
+    volume: cached.volume,
+  };
 }
 
-async function resolvePlayerStatusOnce(
-  playlistManagerMap: PlaylistManagerMap,
+async function refreshPlayerStatus(
+  manager: PlaylistManager,
   minaService: MinaService,
   account_id: string,
   device_id: string,
-): Promise<Record<string, any>> {
-  const manager = await playlistManagerMap.getOrCreate(account_id, device_id);
+): Promise<void> {
   const localStatus = manager.getStatus();
+  const revision = manager.getPlaybackRevision();
   const cacheKey = account_id + ':' + device_id;
-  const now = Date.now();
 
   // 带 seek 的续播流对设备是「从 0 开始的新流」，它上报的 position 只是流内偏移；
   // 加上偏移才是曲内绝对位置。不补的话续播后进度条会掉回 0（songloft-org/songloft-plugin-miot#60）。
@@ -210,29 +230,7 @@ async function resolvePlayerStatusOnce(
   const seekOffset = manager.getStreamSeekOffsetSec();
   const speed = manager.getPlaybackSpeed();
 
-  // 检查设备状态缓存（4秒内直接复用，避免多调用方重复查询设备）
   const cached = deviceStatusCache.get(cacheKey);
-  if (cached && (now - cached.timestamp) < DEVICE_STATUS_TTL) {
-    const duration = localStatus.duration > 0 ? localStatus.duration : cached.duration;
-    // 设备实测的流内偏移要 × speed + seekOffset 才是曲内绝对位置；非设备实测值（乐观写入）已是绝对位置。
-    const cachedAbsPosition = cached.positionFromDevice ? cached.position * speed + seekOffset : cached.position;
-
-    // 播放中时用缓存位置 + 已过墙钟时间推算当前位置，避免返回过时进度。
-    // 倍速下墙钟 1 秒 = speed 曲内秒，故 elapsed 也要 × speed。
-    let position = cachedAbsPosition;
-    if (cached.state === 'playing' && duration > 0) {
-      const elapsed = (now - cached.timestamp) / 1000;
-      position = Math.min(cachedAbsPosition + elapsed * speed, duration);
-    }
-
-    // 缓存只用于展示，不拿旧采样反复回拨切歌定时器。
-
-    // 本地已 stop 时，不让设备残留的播放状态覆盖，避免前端进度条跳动
-    const reportState = resolveReportState(localStatus.state, cached.state);
-    const reportPosition = resolveReportPosition(localStatus.state, cached.state, localStatus.position, position);
-
-    return { ...localStatus, state: reportState, position: reportPosition, duration, volume: cached.volume };
-  }
 
   // 缓存过期，从设备获取真实播放状态
   let volume = cached?.volume ?? -1;
@@ -241,35 +239,38 @@ async function resolvePlayerStatusOnce(
   let realState = localStatus.state;
   let devicePosition = -1; // 设备 play_song_detail 上报的流内位置，-1 = 未上报
   let deviceStreamDuration = 0; // 设备上报的当前媒体流长（秒），0 = 未上报；不被本地时长覆盖
+  let sampledAt = Date.now();
   try {
     const raw = await getOrFetchDeviceStatus(account_id, device_id, () => minaService.getPlayerStatus(account_id, device_id));
+    if (manager.getPlaybackRevision() !== revision || deviceStatusCache.get(cacheKey) !== cached) return;
     const info = raw?.data?.info;
-    if (typeof info === 'string') {
-      const parsed = JSON.parse(info);
-      if (typeof parsed.volume === 'number') {
-        if (!cached?.volumeLockedUntil || Date.now() > cached.volumeLockedUntil) {
-          volume = parsed.volume;
-        }
+    if (typeof info !== 'string') return;
+    sampledAt = typeof raw.sampledAt === 'number' ? raw.sampledAt : Date.now();
+    const parsed = JSON.parse(info);
+    if (typeof parsed.volume === 'number') {
+      if (!cached?.volumeLockedUntil || Date.now() > cached.volumeLockedUntil) {
+        volume = parsed.volume;
       }
-      if (parsed.status === 1) realState = 'playing';
-      else if (parsed.status === 2) realState = 'paused';
-      else if (parsed.status === 0) realState = 'stopped';
-      if (parsed.play_song_detail) {
-        const d = parsed.play_song_detail;
-        if (typeof d.position === 'number' && Number.isFinite(d.position) && d.position >= 0) {
-          devicePosition = d.position / 1000;
-          // seek/倍速流对设备是「从 0 开始的新流」，设备给的是流内偏移：
-          // 乘以 speed 还原成曲内秒，再加 seekOffset 得曲内绝对位置。
-          realPosition = devicePosition * speed + seekOffset;
-        }
-        if (typeof d.duration === 'number' && Number.isFinite(d.duration) && d.duration > 0) {
-          deviceStreamDuration = d.duration / 1000;
-          realDuration = deviceStreamDuration;
-        }
+    }
+    if (parsed.status === 1) realState = 'playing';
+    else if (parsed.status === 2) realState = 'paused';
+    else if (parsed.status === 0) realState = 'stopped';
+    if (parsed.play_song_detail) {
+      const d = parsed.play_song_detail;
+      if (typeof d.position === 'number' && Number.isFinite(d.position) && d.position >= 0) {
+        devicePosition = d.position / 1000;
+        // seek/倍速流对设备是「从 0 开始的新流」，设备给的是流内偏移：
+        // 乘以 speed 还原成曲内秒，再加 seekOffset 得曲内绝对位置。
+        realPosition = devicePosition * speed + seekOffset;
+      }
+      if (typeof d.duration === 'number' && Number.isFinite(d.duration) && d.duration > 0) {
+        deviceStreamDuration = d.duration / 1000;
+        realDuration = deviceStreamDuration;
       }
     }
   } catch (e: any) {
     songloft.log.warn('[player/status] getPlayerStatus failed: ' + String(e));
+    return;
   }
 
   // 本地歌曲 duration（来自文件元数据）比设备报告的更可靠，
@@ -285,21 +286,20 @@ async function resolvePlayerStatusOnce(
     state: realState,
     position: devicePosition >= 0 ? devicePosition : realPosition,
     duration: realDuration,
-    timestamp: Date.now(),
+    timestamp: sampledAt,
     volumeLockedUntil: cached?.volumeLockedUntil ?? 0,
     positionFromDevice: devicePosition >= 0,
     streamDuration: deviceStreamDuration,
   });
 
   const progressAdvanced = !cached?.positionFromDevice || devicePosition > cached.position;
-  syncManagerFromDeviceState(manager, localStatus.state, realState, realPosition,
-    devicePosition > 0, deviceStreamDuration, progressAdvanced);
-
-  // 本地已 stop 时，不让设备残留的播放状态覆盖
-  const reportState = resolveReportState(localStatus.state, realState);
-  const reportPosition = resolveReportPosition(localStatus.state, realState, localStatus.position, realPosition);
-
-  return { ...localStatus, state: reportState, position: reportPosition, duration: realDuration, volume };
+  // Mina 的共享缓存可能由其他探针采集；较旧的采样只能展示，不把取缓存的延迟当成缓冲。
+  if (Date.now() - sampledAt <= 1000) {
+    syncManagerFromDeviceState(manager, localStatus.state, realState, realPosition,
+      devicePosition > 0, deviceStreamDuration, progressAdvanced);
+  }
+  const refreshed = deviceStatusCache.get(cacheKey);
+  if (refreshed) refreshed.playbackRevision = manager.getPlaybackRevision();
 }
 
 /**

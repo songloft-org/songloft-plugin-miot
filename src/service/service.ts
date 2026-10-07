@@ -8,7 +8,7 @@ import { AccountManager } from '../account/manager';
 import { ConfigManager } from '../config/manager';
 import { MinaAuth } from '../mina/auth';
 import { MinaHTTPClient } from '../mina/client';
-import type { PlayMetadata } from '../mina/client';
+import type { PlayMetadata, StatusQueryOptions } from '../mina/client';
 import { getTTSCommand, XIAOMI_IO_SID, LoginState } from '../mina/constants';
 import type { DeviceConfig, MinaDevice } from '../types';
 
@@ -365,7 +365,7 @@ export class MinaService {
    * 获取设备播放状态
    * @returns 播放状态对象，失败返回 null
    */
-  async getPlayerStatus(accountId: string, deviceId: string): Promise<any> {
+  async getPlayerStatus(accountId: string, deviceId: string, options: StatusQueryOptions = {}): Promise<any> {
     const client = this.getClient(accountId);
     if (!client) {
       songloft.log.warn('[MinaService] getPlayerStatus: no client for account: ' + accountId);
@@ -373,7 +373,7 @@ export class MinaService {
     }
 
     try {
-      return await client.getPlayerStatus(deviceId);
+      return await client.getPlayerStatus(deviceId, options);
     } catch (e) {
       songloft.log.error('[MinaService] getPlayerStatus failed: ' + String(e));
       return null;
@@ -395,8 +395,8 @@ export class MinaService {
    * 我们推的那条流：status=1 只说明音箱在响，小爱接管播它自己的内容时同样是 1
    * （见 PlaylistManager.matchDeviceStream，songloft-org/songloft-plugin-miot#96）。
    */
-  async getPlayState(accountId: string, deviceId: string): Promise<{ status: number; position: number; duration: number; hasPosition: boolean; }> {
-    const raw = await this.getPlayerStatus(accountId, deviceId);
+  async getPlayState(accountId: string, deviceId: string, options: StatusQueryOptions = {}): Promise<{ status: number; position: number; duration: number; hasPosition: boolean; sampledAt?: number; }> {
+    const raw = await this.getPlayerStatus(accountId, deviceId, options);
     let status = -1;
     let position = 0;
     let duration = 0;
@@ -417,7 +417,10 @@ export class MinaService {
         }
       } catch {}
     }
-    return { status, position, duration, hasPosition };
+    return {
+      status, position, duration, hasPosition,
+      ...(typeof raw?.sampledAt === 'number' ? { sampledAt: raw.sampledAt } : {})
+    };
   }
 
   // ===== 内部辅助方法 =====

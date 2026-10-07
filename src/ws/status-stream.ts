@@ -6,8 +6,8 @@
 //   - 无订阅者时不启循环，避免无人观看时 24/7 空拉云端
 //   - 状态与 HTTP 端点共用 `resolvePlayerStatus`，两条链路结果不漂移
 //
-// 真实打云端的频率仍由 playlist.ts 的 4s 设备缓存 + in-flight 去重收敛，
-// WS 不额外增加对云端的压力，仅消除前端↔插件的每秒请求开销。
+// 云端采样由 Mina 客户端统一去重、五秒节流和失败退避；状态融合在后台刷新，
+// 每秒推送本地计时进度，云端慢请求不会卡住推送。
 
 import { parseQuery } from '@songloft/plugin-sdk';
 import type { WebSocketRequest, InboundWebSocket } from '@songloft/plugin-sdk';
