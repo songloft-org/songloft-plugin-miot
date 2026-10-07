@@ -26,6 +26,7 @@ interface DevicePusher {
   timer: ReturnType<typeof setInterval> | null;
   sockets: Set<InboundWebSocket>;
   lastFrame: string; // 上次推送的帧 JSON，用于 diff（无变化不重复推）
+  inFlight: Promise<void> | null;
 }
 
 let playlistManagerMap: PlaylistManagerMap | null = null;
@@ -46,6 +47,23 @@ function deviceKey(accountId: string, deviceId: string): string {
 
 /** 拉取一次融合状态并推送给该设备的所有订阅者；force=false 时无变化不推 */
 async function pushOnce(accountId: string, deviceId: string, pusher: DevicePusher, force: boolean): Promise<void> {
+  if (pusher.inFlight) {
+    if (!force) return;
+    await pusher.inFlight;
+    // 新连接仍需首帧，即使查询结果与上次完全相同。
+    if (force) await pushOnce(accountId, deviceId, pusher, true);
+    return;
+  }
+  const pending = pushStatus(accountId, deviceId, pusher, force);
+  pusher.inFlight = pending;
+  try {
+    await pending;
+  } finally {
+    if (pusher.inFlight === pending) pusher.inFlight = null;
+  }
+}
+
+async function pushStatus(accountId: string, deviceId: string, pusher: DevicePusher, force: boolean): Promise<void> {
   if (!playlistManagerMap || !minaService || pusher.sockets.size === 0) return;
 
   let data: Record<string, any>;
@@ -83,7 +101,7 @@ export async function handleStatusWebSocket(req: WebSocketRequest, socket: Inbou
   const key = deviceKey(accountId, deviceId);
   let pusher = pushers.get(key);
   if (!pusher) {
-    pusher = { timer: null, sockets: new Set(), lastFrame: '' };
+    pusher = { timer: null, sockets: new Set(), lastFrame: '', inFlight: null };
     pushers.set(key, pusher);
   }
   pusher.sockets.add(socket);
@@ -119,7 +137,7 @@ export async function handleStatusWebSocket(req: WebSocketRequest, socket: Inbou
   await pushOnce(accountId, deviceId, pusher, true);
 
   // 启动后台推送循环（同设备仅一个）
-  if (!pusher.timer) {
+  if (pushers.get(key) === pusher && pusher.sockets.size > 0 && !pusher.timer) {
     pusher.timer = setInterval(() => {
       const p = pushers.get(key);
       if (!p) return;

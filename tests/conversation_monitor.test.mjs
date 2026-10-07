@@ -28,8 +28,8 @@ async function flush() {
 
 async function withMonitor(run) {
   const original = {
-    setInterval: globalThis.setInterval,
-    clearInterval: globalThis.clearInterval,
+    setTimeout: globalThis.setTimeout,
+    clearTimeout: globalThis.clearTimeout,
     songloft: globalThis.songloft,
     fetch: globalThis.fetch,
     now: Date.now,
@@ -43,8 +43,8 @@ async function withMonitor(run) {
   let request = async () => [];
   let getConfig = async () => ({ conversation_poll_interval: 1 });
   globalThis.songloft = { log: { info() { }, warn() { }, error() { } } };
-  globalThis.setInterval = fn => { timers.set(++timerId, fn); return timerId; };
-  globalThis.clearInterval = id => timers.delete(id);
+  globalThis.setTimeout = (fn, delay) => { timers.set(++timerId, { fn, at: now + delay }); return timerId; };
+  globalThis.clearTimeout = id => timers.delete(id);
   Date.now = () => now;
   globalThis.fetch = async url => { webhooks.push(url); };
   const accounts = {
@@ -56,19 +56,36 @@ async function withMonitor(run) {
     getConfig: () => getConfig(),
     getWebhooks: async () => [{ id: 'hook', url: 'https://example.test/hook' }],
   });
+  const advance = async ms => {
+    const target = now + ms;
+    let fired = 0;
+    while (true) {
+      await flush();
+      const next = [...timers.entries()].filter(([, t]) => t.at <= target).sort((a, b) => a[1].at - b[1].at)[0];
+      if (!next) break;
+      assert.ok(++fired < 1000, 'timer must not spin without waiting');
+      const [id, timer] = next;
+      timers.delete(id);
+      now = timer.at;
+      timer.fn();
+    }
+    now = target;
+    await flush();
+  };
   try {
     await run({
       monitor, calls, timers, webhooks,
       setRequest: fn => { request = fn; },
       setConfig: fn => { getConfig = fn; },
       setDevices: value => { devices = value; },
-      advance: ms => { now += ms; },
-      tick: async () => { for (const fn of [...timers.values()]) fn(); await flush(); },
+      advance,
+      tick: () => advance(0),
+      nextDelay: () => Math.min(...[...timers.values()].map(t => t.at - now)),
     });
   } finally {
     monitor.stop();
-    globalThis.setInterval = original.setInterval;
-    globalThis.clearInterval = original.clearInterval;
+    globalThis.setTimeout = original.setTimeout;
+    globalThis.clearTimeout = original.clearTimeout;
     globalThis.songloft = original.songloft;
     globalThis.fetch = original.fetch;
     Date.now = original.now;
@@ -82,36 +99,109 @@ test('slow device has one request while other devices keep polling', async () =>
     await h.monitor.start();
     h.calls.length = 0;
     const slow = deferred();
-    h.setRequest(id => id === 'a' ? slow.promise : Promise.resolve([]));
-    for (let i = 0; i < 10; i++) { h.advance(1000); await h.tick(); }
+    let timestamp = 0;
+    h.setRequest(id => id === 'a' ? slow.promise : Promise.resolve([message(++timestamp)]));
+    await h.advance(10000);
     assert.equal(h.calls.filter(id => id === 'a').length, 1);
     assert.equal(h.calls.filter(id => id === 'b').length, 10);
     slow.resolve([]);
     await flush();
-    await h.tick();
+    await h.advance(1999);
+    assert.equal(h.calls.filter(id => id === 'a').length, 1);
+    await h.advance(1);
     assert.equal(h.calls.filter(id => id === 'a').length, 2);
   });
 });
 
-test('failed polls back off to 30 seconds and successful empty response resets delay', async () => {
+test('a slow due device cannot delay another device whose deadline arrives later', async () => {
+  await withMonitor(async h => {
+    h.setConfig(async () => ({ conversation_poll_interval: 2 }));
+    await h.monitor.start();
+    h.setRequest(async id => id === 'a' ? [message(1)] : []);
+    await h.advance(2000); // a is due at 4s; idle b is due at 6s.
+    const slow = deferred();
+    h.setRequest(id => id === 'a' ? slow.promise : Promise.resolve([]));
+    await h.advance(2000);
+    const count = h.calls.filter(id => id === 'b').length;
+    await h.advance(1999);
+    assert.equal(h.calls.filter(id => id === 'b').length, count);
+    await h.advance(1);
+    assert.equal(h.calls.filter(id => id === 'b').length, count + 1);
+    assert.equal(h.calls.filter(id => id === 'a').length, 3);
+    slow.resolve([]);
+    await flush();
+  });
+});
+
+for (const response of ['empty', 'unchanged']) {
+  test(`${response} successful polls back off from 2 to 4 to 5 seconds, then new messages reset the delay`, async () => {
+    await withMonitor(async h => {
+      h.setDevices(['a']);
+      h.setConfig(async () => ({}));
+      h.setRequest(async () => response === 'empty' ? [] : [message(10)]);
+      await h.monitor.start();
+      assert.equal(h.nextDelay(), 2000);
+      for (const delay of [2000, 4000, 5000, 5000]) {
+        const count = h.calls.length;
+        await h.advance(delay - 1);
+        assert.equal(h.calls.length, count);
+        await h.advance(1);
+        assert.equal(h.calls.length, count + 1);
+      }
+      assert.equal(h.monitor.getMessages().length, 0);
+      h.setRequest(async () => [message(11)]);
+      await h.advance(5000);
+      assert.equal(h.monitor.getMessages().length, 1);
+      assert.equal(h.webhooks.length, 1);
+      assert.equal(h.nextDelay(), 2000);
+    });
+  });
+}
+
+for (const interval of [1, 5, 10, 30]) {
+  test(`saved ${interval}-second interval is retained and idle backoff never shortens it`, async () => {
+    await withMonitor(async h => {
+      h.setDevices(['a']);
+      h.setConfig(async () => ({ conversation_poll_interval: interval }));
+      await h.monitor.start();
+      assert.equal(h.nextDelay(), interval * 1000);
+      await h.advance(interval * 1000);
+      assert.equal(h.nextDelay(), Math.min(Math.max(5000, interval * 1000), interval * 2000));
+    });
+  });
+}
+
+for (const interval of ['invalid', NaN, Infinity]) {
+  test(`invalid interval ${interval} uses a finite 2-second default`, async () => {
+    await withMonitor(async h => {
+      h.setConfig(async () => ({ conversation_poll_interval: interval }));
+      await h.monitor.start();
+      assert.equal(h.nextDelay(), 2000);
+    });
+  });
+}
+
+test('failed polls back off to 30 seconds and new messages reset both delays', async () => {
   await withMonitor(async h => {
     h.setDevices(['a']);
     await h.monitor.start();
     h.calls.length = 0;
     h.setRequest(async () => null);
-    await h.tick();
+    await h.advance(1000);
     let count = 1;
     for (const delay of [2000, 4000, 8000, 16000, 30000, 30000]) {
-      h.advance(delay - 1); await h.tick();
+      await h.advance(delay - 1);
       assert.equal(h.calls.length, count);
-      h.advance(1); await h.tick();
+      await h.advance(1);
       assert.equal(h.calls.length, ++count);
     }
-    h.setRequest(async () => []);
-    h.advance(30000); await h.tick();
+    h.setRequest(async () => [message(1)]);
+    await h.advance(30000);
     assert.equal(h.calls.length, ++count);
-    h.advance(1000); await h.tick();
-    assert.equal(h.calls.length, ++count);
+    assert.equal(h.nextDelay(), 1000);
+    h.setRequest(async () => null);
+    await h.advance(1000);
+    assert.equal(h.nextDelay(), 2000);
   });
 });
 
@@ -121,12 +211,31 @@ test('thrown requests back off and release the device for recovery', async () =>
     await h.monitor.start();
     h.calls.length = 0;
     h.setRequest(async () => { throw new Error('timeout'); });
-    await h.tick();
-    h.advance(1000); await h.tick();
+    await h.advance(1000);
+    await h.advance(1999);
     assert.equal(h.calls.length, 1);
     h.setRequest(async () => []);
-    h.advance(1000); await h.tick();
+    await h.advance(1);
     assert.equal(h.calls.length, 2);
+  });
+});
+
+test('a slow successful request waits the configured interval after completion', async () => {
+  await withMonitor(async h => {
+    h.setDevices(['a']);
+    await h.monitor.start();
+    const slow = deferred();
+    h.setRequest(() => slow.promise);
+    await h.advance(1000);
+    await h.advance(9000);
+    const count = h.calls.length;
+    slow.resolve([message(1)]);
+    await flush();
+    assert.equal(h.nextDelay(), 1000);
+    await h.advance(999);
+    assert.equal(h.calls.length, count);
+    await h.advance(1);
+    assert.equal(h.calls.length, count + 1);
   });
 });
 
@@ -138,21 +247,22 @@ test('restart waits for old device request to settle and discards its messages',
     h.monitor.registerCallback('test', () => { delivered++; });
     const slow = deferred();
     h.setRequest(() => slow.promise);
-    await h.tick();
+    await h.advance(1000);
     const count = h.calls.length;
     h.monitor.stop();
     await h.monitor.start();
-    await h.tick();
+    await h.advance(1000);
     assert.equal(h.calls.length, count);
-    slow.resolve([message(1)]); await flush();
+    slow.resolve([message(1)]);
+    await flush();
     assert.equal(delivered, 0);
     assert.equal(h.monitor.getMessages().length, 0);
     assert.equal(h.webhooks.length, 0);
     h.setRequest(async () => [message(2)]);
-    await h.tick(); // establish new baseline without replaying history
+    await h.tick();
     assert.equal(delivered, 0);
     h.setRequest(async () => [message(3)]);
-    await h.tick();
+    await h.advance(1000);
     assert.equal(delivered, 1);
     assert.equal(h.webhooks.length, 1);
   });
@@ -194,11 +304,12 @@ test('removed device results are discarded, including after re-adding same devic
     await h.monitor.start();
     const slow = deferred();
     h.setRequest(() => slow.promise);
-    await h.tick();
+    await h.advance(1000);
     h.setDevices([]); await h.monitor.refresh();
+    assert.equal(h.timers.size, 0);
     h.setDevices(['a']); await h.monitor.refresh();
     const count = h.calls.length;
-    await h.tick();
+    await h.advance(1000);
     assert.equal(h.calls.length, count);
     slow.resolve([message(1)]); await flush();
     assert.equal(h.monitor.getMessages().length, 0);
@@ -217,7 +328,7 @@ test('stopping inside a callback prevents later callbacks and webhooks', async (
     h.monitor.registerCallback('stop', () => h.monitor.stop());
     h.monitor.registerCallback('later', () => { later++; });
     h.setRequest(async () => [message(1), message(2)]);
-    await h.tick();
+    await h.advance(1000);
     assert.equal(later, 0);
     assert.equal(h.webhooks.length, 0);
     assert.equal(h.timers.size, 0);
@@ -233,13 +344,13 @@ test('failed initial fetch does not establish a baseline or replay old messages 
     let delivered = 0;
     h.monitor.registerCallback('test', () => { delivered++; });
     h.setRequest(async () => [message(10)]);
-    h.advance(2000); await h.tick();
+    await h.advance(2000);
     assert.equal((await h.monitor.getStatus()).devices[0].last_timestamp_ms, 10);
     assert.equal(delivered, 0);
-    h.advance(1000); await h.tick();
+    await h.advance(1000);
     assert.equal(delivered, 0);
     h.setRequest(async () => [message(11)]);
-    h.advance(1000); await h.tick();
+    await h.advance(2000);
     assert.equal(delivered, 1);
   });
 });
@@ -254,13 +365,29 @@ test('old initial fetch cannot prime a restarted session or replace its timer', 
     assert.equal(h.calls.length, 1);
     h.monitor.stop();
     await h.monitor.start();
-    const timerIds = [...h.timers.keys()];
+    assert.equal(h.timers.size, 0);
     slow.resolve([message(10)]);
     await oldStart;
-    assert.deepEqual([...h.timers.keys()], timerIds);
     assert.equal((await h.monitor.getStatus()).devices[0].primed, false);
     h.setRequest(async () => []);
     await h.tick();
+    assert.equal(h.timers.size, 1);
     assert.equal((await h.monitor.getStatus()).devices[0].primed, true);
+  });
+});
+
+test('starting an enabled monitor with all devices in flight does not reset its session', async () => {
+  await withMonitor(async h => {
+    h.setDevices(['a']);
+    await h.monitor.start();
+    const slow = deferred();
+    h.setRequest(() => slow.promise);
+    await h.advance(1000);
+    assert.equal(h.timers.size, 0);
+    await h.monitor.start();
+    assert.equal((await h.monitor.getStatus()).devices[0].primed, true);
+    slow.resolve([]);
+    await flush();
+    assert.equal(h.timers.size, 1);
   });
 });

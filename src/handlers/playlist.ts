@@ -57,6 +57,7 @@ interface DeviceStatusCache {
 }
 const deviceStatusCache: Map<string, DeviceStatusCache> = new Map();
 const deviceStatusInflight: Map<string, Promise<any>> = new Map();
+const playerStatusInflight = new Map<string, Promise<Record<string, any>>>();
 export const DEVICE_STATUS_TTL = 4000; // 4秒缓存，略短于前端5秒轮询间隔
 
 /** 主动更新设备状态缓存（供外部调用，如 playURL 成功后刷新） */
@@ -107,6 +108,7 @@ function syncManagerFromDeviceState(
   devicePosition: number,
   deviceReportsProgress: boolean,
   deviceStreamDuration: number,
+  deviceProgressAdvanced: boolean,
 ): void {
   // 小爱在 URL/MUSIC 播放模式下会偶发把正常播放的流上报成 paused/stopped。
   // 读状态接口不能因此清掉本地自动切歌定时器；只有设备确认在播放时才用它校准恢复。
@@ -134,7 +136,9 @@ function syncManagerFromDeviceState(
     // 歌曲接近结束后设备可能重拉同一首并上报小进度，此时不能回拨定时器，
     // 否则自动下一首会被无限推迟。
     const localPosition = manager.getPosition();
-    if (localPosition - devicePosition >= 5 && manager.canCalibrateAutoNextTimer(devicePosition)) {
+    if (deviceReportsProgress && deviceProgressAdvanced && localPosition - devicePosition >= 5 &&
+      manager.matchDeviceStream({ status: 1, duration: deviceStreamDuration }) !== 'foreign' &&
+      manager.canCalibrateAutoNextTimer(devicePosition)) {
       manager.resetAutoNextTimer(devicePosition);
     }
   } else if (localState === 'stopped' && deviceState === 'playing' && deviceReportsProgress) {
@@ -177,6 +181,23 @@ export async function resolvePlayerStatus(
   account_id: string,
   device_id: string,
 ): Promise<Record<string, any>> {
+  const key = account_id + ':' + device_id;
+  const existing = playerStatusInflight.get(key);
+  if (existing) return existing;
+  // 不仅共用 HTTP 请求，也只处理一次采样和定时器校准。
+  const pending = resolvePlayerStatusOnce(playlistManagerMap, minaService, account_id, device_id).finally(() => {
+    if (playerStatusInflight.get(key) === pending) playerStatusInflight.delete(key);
+  });
+  playerStatusInflight.set(key, pending);
+  return pending;
+}
+
+async function resolvePlayerStatusOnce(
+  playlistManagerMap: PlaylistManagerMap,
+  minaService: MinaService,
+  account_id: string,
+  device_id: string,
+): Promise<Record<string, any>> {
   const manager = await playlistManagerMap.getOrCreate(account_id, device_id);
   const localStatus = manager.getStatus();
   const cacheKey = account_id + ':' + device_id;
@@ -204,10 +225,7 @@ export async function resolvePlayerStatus(
       position = Math.min(cachedAbsPosition + elapsed * speed, duration);
     }
 
-    // 用被查询设备的物理进度校准共享切歌定时器。分组下无论查询哪个成员都可校准
-    // （成员播放同一首、进度相近，校准收敛）；已有的近末尾/重拉守卫防止异常重置。
-    syncManagerFromDeviceState(manager, localStatus.state, cached.state, cachedAbsPosition,
-      cached.positionFromDevice && cached.position > 0, cached.streamDuration);
+    // 缓存只用于展示，不拿旧采样反复回拨切歌定时器。
 
     // 本地已 stop 时，不让设备残留的播放状态覆盖，避免前端进度条跳动
     const reportState = resolveReportState(localStatus.state, cached.state);
@@ -238,7 +256,7 @@ export async function resolvePlayerStatus(
       else if (parsed.status === 0) realState = 'stopped';
       if (parsed.play_song_detail) {
         const d = parsed.play_song_detail;
-        if (typeof d.position === 'number') {
+        if (typeof d.position === 'number' && Number.isFinite(d.position) && d.position >= 0) {
           devicePosition = Math.floor(d.position / 1000);
           // seek/倍速流对设备是「从 0 开始的新流」，设备给的是流内偏移：
           // 乘以 speed 还原成曲内秒，再加 seekOffset 得曲内绝对位置。
@@ -267,13 +285,15 @@ export async function resolvePlayerStatus(
     state: realState,
     position: devicePosition >= 0 ? devicePosition : realPosition,
     duration: realDuration,
-    timestamp: now,
+    timestamp: Date.now(),
     volumeLockedUntil: cached?.volumeLockedUntil ?? 0,
     positionFromDevice: devicePosition >= 0,
     streamDuration: deviceStreamDuration,
   });
 
-  syncManagerFromDeviceState(manager, localStatus.state, realState, realPosition, devicePosition > 0, deviceStreamDuration);
+  const progressAdvanced = !cached?.positionFromDevice || devicePosition > cached.position;
+  syncManagerFromDeviceState(manager, localStatus.state, realState, realPosition,
+    devicePosition > 0, deviceStreamDuration, progressAdvanced);
 
   // 本地已 stop 时，不让设备残留的播放状态覆盖
   const reportState = resolveReportState(localStatus.state, realState);

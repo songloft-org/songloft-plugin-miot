@@ -27,7 +27,7 @@ const defaultConfig: MiotConfig = {
   server_host_status: 'empty',
   suggested_addresses: [],
   conversation_monitor_enabled: false,
-  conversation_poll_interval: 1,
+  conversation_poll_interval: 2,
   debug_log_enabled: false,
   voice_command_enabled: false,
   voice_memory_enabled: true,

@@ -734,7 +734,11 @@ async function deleteMemoryRecord(id?: string): Promise<void> {
     </SettingRow>
     <div class="form-body">
       <div class="field-grid">
-        <div class="field"><label class="field-label">轮询间隔（秒）</label><SlInput :model-value="pollInterval" type="number" @update:model-value="pollInterval = $event" @change="saveNumber('conversation_poll_interval', pollInterval, 1, 30)" /></div>
+        <div class="field">
+          <label class="field-label">轮询间隔（秒）</label>
+          <SlInput :model-value="pollInterval" type="number" @update:model-value="pollInterval = $event" @change="saveNumber('conversation_poll_interval', pollInterval, 1, 30)" />
+          <p class="field-help">默认 2 秒，可设 1～30 秒。无新对话时逐步延长到 5 秒，所设间隔超过 5 秒时保持该值；收到新对话后恢复所设间隔。</p>
+        </div>
         <div class="field setting-field-control"><label class="field-label">调试日志</label><SlSwitch :model-value="state.config.debug_log_enabled" @update:model-value="setSwitch('debug_log_enabled', $event)" /></div>
       </div>
       <div v-if="state.config.conversation_monitor_enabled" class="status-panel status-panel-inset">

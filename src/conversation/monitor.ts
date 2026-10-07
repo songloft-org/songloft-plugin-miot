@@ -44,6 +44,8 @@ interface DeviceMonitorState {
   isRunning: boolean;
   /** 连续失败时的退避间隔；成功后归零。 */
   retryDelayMs: number;
+  /** 成功但没有新对话时的退避间隔；新消息到达后归零。 */
+  idleDelayMs: number;
   nextPollAt: number;
 }
 
@@ -84,7 +86,8 @@ export class ConversationMonitor {
 
   /** 轮询定时器 */
   private pollTimer: any = null;
-  private pollInterval: number = 1000; // 默认1秒，从配置读取
+  private pollingReady = false;
+  private pollInterval: number = 2000; // 默认2秒，从配置读取
 
   /** 设备监听状态: "accountId:deviceId" → DeviceMonitorState */
   private devices: Map<string, DeviceMonitorState> = new Map();
@@ -118,7 +121,7 @@ export class ConversationMonitor {
    */
   async start(): Promise<void> {
     if (this.startPromise) return this.startPromise;
-    if (this.enabled && this.pollTimer !== null) return;
+    if (this.enabled && this.pollingReady) return;
 
     this.enabled = true;
     const generation = ++this.generation;
@@ -138,7 +141,9 @@ export class ConversationMonitor {
       // getConfig 可能耗时，其间若被 stop()，则放弃启动
       if (!this.isCurrent(generation)) return;
 
-      const intervalSec = Math.max(1, Math.min(30, config.conversation_poll_interval ?? 1));
+      const configuredInterval = Number(config.conversation_poll_interval ?? 2);
+      const intervalSec = Number.isFinite(configuredInterval)
+        ? Math.max(1, Math.min(30, configuredInterval)) : 2;
       this.pollInterval = intervalSec * 1000;
 
       // 等待设备列表刷新完成，确保 getStatus() 能读到真实设备数
@@ -170,14 +175,8 @@ export class ConversationMonitor {
       // 建基线期间可能被 stop()
       if (!this.isCurrent(generation)) return;
 
-      if (this.pollTimer !== null) {
-        clearInterval(this.pollTimer);
-      }
-      this.pollTimer = setInterval(() => {
-        this.pollAll(generation).catch(e => {
-          songloft.log.error('[ConversationMonitor] pollAll error: ' + String(e));
-        });
-      }, this.pollInterval);
+      this.pollingReady = true;
+      this.schedulePoll(generation);
     } catch (e) {
       songloft.log.error('[ConversationMonitor] start error: ' + String(e));
     }
@@ -192,11 +191,12 @@ export class ConversationMonitor {
     }
 
     this.enabled = false;
+    this.pollingReady = false;
     this.generation++;
     this.startPromise = null;
 
     if (this.pollTimer !== null) {
-      clearInterval(this.pollTimer);
+      clearTimeout(this.pollTimer);
       this.pollTimer = null;
     }
 
@@ -215,6 +215,7 @@ export class ConversationMonitor {
       return;
     }
     await this.refreshDevices(this.generation);
+    this.schedulePoll(this.generation);
   }
 
   /**
@@ -339,6 +340,7 @@ export class ConversationMonitor {
         primed: false,
         isRunning: true,
         retryDelayMs: 0,
+        idleDelayMs: 0,
         nextPollAt: 0,
       });
       songloft.log.info(`[ConversationMonitor] Device added to monitoring: ${dev.deviceName} (${key})`);
@@ -350,11 +352,33 @@ export class ConversationMonitor {
       (!dm || this.devices.get(this.makeKey(dm.accountId, dm.deviceId)) === dm);
   }
 
+  /** 按最早到期设备安排一次唤醒，避免固定 tick 把 5 秒退避取整成 6 秒。 */
+  private schedulePoll(generation: number): void {
+    if (!this.pollingReady || !this.isCurrent(generation)) return;
+    if (this.pollTimer !== null) {
+      clearTimeout(this.pollTimer);
+      this.pollTimer = null;
+    }
+    let nextPollAt = Infinity;
+    for (const dm of this.devices.values()) {
+      if (dm.isRunning && !this.inFlight.has(this.makeKey(dm.accountId, dm.deviceId))) {
+        nextPollAt = Math.min(nextPollAt, dm.nextPollAt);
+      }
+    }
+    if (!Number.isFinite(nextPollAt)) return;
+    this.pollTimer = setTimeout(() => {
+      this.pollTimer = null;
+      this.pollAll(generation).catch(e => {
+        songloft.log.error('[ConversationMonitor] pollAll error: ' + String(e));
+      });
+    }, Math.max(0, nextPollAt - Date.now()));
+  }
+
   /** 轮询所有设备，同一设备不重叠，不同设备互不阻塞。 */
   private async pollAll(generation: number): Promise<void> {
     if (!this.isCurrent(generation)) return;
     // 每台设备独立推进，慢设备不阻塞其他音箱；同一设备最多一个任务。
-    await Promise.all(Array.from(this.devices.values(), async dm => {
+    const requests = Array.from(this.devices.values(), async dm => {
       const key = this.makeKey(dm.accountId, dm.deviceId);
       if (!dm.isRunning || this.inFlight.has(key) || Date.now() < dm.nextPollAt) return;
       this.inFlight.add(key);
@@ -362,13 +386,25 @@ export class ConversationMonitor {
         await this.pollDevice(dm, generation);
       } finally {
         this.inFlight.delete(key);
+        // 旧请求结束也可唤醒重启后等待该设备的会话，但不复用旧请求的结果。
+        this.schedulePoll(this.generation);
       }
-    }));
+    });
+    // 当前到期设备可能都很慢，其他尚未到期设备仍要准时被唤醒。
+    this.schedulePoll(generation);
+    await Promise.all(requests);
   }
 
   private deferFailedPoll(dm: DeviceMonitorState): void {
     dm.retryDelayMs = Math.min(30000, Math.max(this.pollInterval * 2, dm.retryDelayMs * 2));
     dm.nextPollAt = Date.now() + dm.retryDelayMs;
+  }
+
+  private deferIdlePoll(dm: DeviceMonitorState): void {
+    // 用户主动设置的大间隔仍是下限，退避不能反而提高请求频率。
+    const maxIdleDelayMs = Math.max(5000, this.pollInterval);
+    dm.idleDelayMs = Math.min(maxIdleDelayMs, Math.max(this.pollInterval * 2, dm.idleDelayMs * 2));
+    dm.nextPollAt = Date.now() + dm.idleDelayMs;
   }
 
   /**
@@ -379,6 +415,7 @@ export class ConversationMonitor {
     // 获取 MinaHTTPClient
     const client = this.accountManager.getMinaClient(dm.accountId) as MinaHTTPClient | null;
     if (!client) {
+      this.deferFailedPoll(dm);
       return;
     }
 
@@ -404,7 +441,8 @@ export class ConversationMonitor {
     }
 
     dm.retryDelayMs = 0;
-    dm.nextPollAt = 0;
+    // 从请求完成计间隔，慢请求结束后也不会立刻再发下一次。
+    dm.nextPollAt = Date.now() + this.pollInterval;
 
     // 打印返回的消息数量和内容摘要（稳态无消息时不打，避免每 tick 构造字符串+刷屏）
     // localNowMs 一并打出，便于目测本地时钟与服务端时间戳的偏移
@@ -424,6 +462,7 @@ export class ConversationMonitor {
     }
 
     if (askMessages.length === 0) {
+      this.deferIdlePoll(dm);
       return;
     }
 
@@ -451,8 +490,11 @@ export class ConversationMonitor {
     if (isDebugLog()) songloft.log.info(`[ConversationMonitor] pollDevice device=${dm.deviceId} after filter: ${newMessages.length} new (lastTimestampMs=${dm.lastTimestampMs})`);
 
     if (newMessages.length === 0) {
+      this.deferIdlePoll(dm);
       return;
     }
+
+    dm.idleDelayMs = 0;
 
     // 更新最后时间戳
     dm.lastTimestampMs = maxTimestamp;
@@ -472,6 +514,7 @@ export class ConversationMonitor {
 
     // 向所有 Webhook 推送
     await this.triggerWebhooks(dm.accountId, dm.deviceId, dm.deviceName, newMessages, () => this.isCurrent(generation, dm));
+    if (this.isCurrent(generation, dm)) dm.nextPollAt = Date.now() + this.pollInterval;
   }
 
   /**

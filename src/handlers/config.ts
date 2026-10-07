@@ -114,7 +114,7 @@ export function registerConfigHandlers(
           play_announcement_wait_mode: config.play_announcement_wait_mode || 'auto',
           play_announcement_delay: config.play_announcement_delay ?? 3,
           play_announcement_scope: config.play_announcement_scope || 'voice',
-          conversation_poll_interval: config.conversation_poll_interval ?? 1,
+          conversation_poll_interval: config.conversation_poll_interval ?? 2,
           debug_log_enabled: !!config.debug_log_enabled,
           smart_resume_timeout: config.smart_resume_timeout ?? 30,
           max_song_index: config.max_song_index ?? 10000,
@@ -309,7 +309,9 @@ export function registerConfigHandlers(
 
       // 更新 conversation_poll_interval（联动 Monitor 重启）
       if (body.conversation_poll_interval !== undefined) {
-        const val = Math.max(1, Math.min(30, Number(body.conversation_poll_interval) || 1));
+        const requestedInterval = Number(body.conversation_poll_interval);
+        const val = Number.isFinite(requestedInterval)
+          ? Math.max(1, Math.min(30, requestedInterval)) : 2;
         config.conversation_poll_interval = val;
         // 仅在监听器本次未被显式关闭时才重启（避免与上面的 stop 冲突）
         if (config.conversation_monitor_enabled && monitorAction !== 'stop') {

@@ -91,7 +91,7 @@ function defaultPluginConfig(): PluginConfig {
     play_announcement_wait_mode: 'auto',
     play_announcement_delay: 3,
     play_announcement_scope: 'voice',
-    conversation_poll_interval: 1,
+    conversation_poll_interval: 2,
     debug_log_enabled: false,
     smart_resume_timeout: 30,
     max_song_index: 10000,
