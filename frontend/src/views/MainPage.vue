@@ -16,7 +16,6 @@ import { navigation, openPage } from '../runtime';
 import { confirmAction, currentDevice, deviceName, lastPlayedSong, messageOf, playlistLabel, playSong, refreshAll, removeSongFromPlaylist, resumePlaylist, selectPlaylist, state, visibleSongs } from '../store';
 import type { SelectOption, Song } from '../types';
 
-const search = ref('');
 const playlistOptions = computed<SelectOption[]>(() => state.playlists.map((p) => ({ value: String(p.id), label: playlistLabel(p), searchText: p.name })));
 const noServerHint = computed(() => !state.config.server_host || state.config.server_host_status === 'loopback');
 // 有进度记录 + 有设备才给「继续播放」。歌曲列表未必已加载完（歌名靠它取），
@@ -400,8 +399,8 @@ onUnmounted(() => {
 
     <div v-if="state.selectedPlaylistId" class="search-bar">
       <SlIcon name="search" :size="20" />
-      <SlInput :model-value="search" aria-label="搜索歌曲" placeholder="搜索歌曲、艺术家或专辑" @update:model-value="(v) => { search = v; state.songSearch = v; }" />
-      <SlButton v-if="search" variant="icon" icon="close" title="清除搜索" @click="search = ''; state.songSearch = ''" />
+      <SlInput :model-value="state.songSearch" aria-label="搜索歌曲" placeholder="搜索歌曲、艺术家或专辑" @update:model-value="(v) => { state.songSearch = v; }" />
+      <SlButton v-if="state.songSearch" variant="icon" icon="close" title="清除搜索" @click="state.songSearch = ''" />
       <SlButton variant="icon" icon="my_location" title="定位当前播放" @click="locateCurrentSong" />
     </div>
 
