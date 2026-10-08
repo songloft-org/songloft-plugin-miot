@@ -15,6 +15,12 @@ npm run build       # produce dist/miot.jsplugin.zip
 npm run validate    # verify plugin.json hashes
 ```
 
+### 胶囊迷你播放器材质
+
+播放器保留宿主玻璃填充的 RGB，亮色不透明度至少 96%、暗色至少 92%，宿主更实心的填充继续保留。手机和宽屏共用独立背景模糊层，按钮和文字保持清晰；不支持模糊、减少透明度或增强对比度时使用实心填充。主题、宿主偏好与浏览器偏好变化会实时更新，缺少新偏好的 Flutter/旧宿主消息仍可使用。
+
+填充保护与对比度回归见 `frontend/tests/player_material.test.mjs`，覆盖默认 Flutter/Lynx 亮暗色与黑白背景，不保证任意自定义主题色板都满足对比度。运行 `cd frontend && npm run typecheck && npm run build && npm test`；测试使用构建产物，因此需先构建。
+
 ## Description
 
 智能音箱设备控制示例插件。本仓库仅提供与宿主 SDK 对接的脚手架代码，**不附带任何第三方设备协议实现或账号体系**，使用者需自行负责接入合规性。

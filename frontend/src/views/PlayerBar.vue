@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useSongCover } from '../covers';
+import { usePlayerMaterial } from '../playerMaterial';
 import { notifyHostFavorite, openPage } from '../runtime';
 import { currentDevice, notify, playerCommand, seekPlayer, setPlayMode, setVolume, state } from '../store';
 import { get, messageOf, post, query } from '../api';
@@ -19,6 +20,7 @@ import PlayerVolumePopup from './PlayerVolumePopup.vue';
 // DesktopPlayer / AppCapsulePlayer.dense。插件过去用单一 760 档，600~760 这段
 // 在手机和大屏之间反复横跳，和主程序对不上。
 const viewportWidth = ref(window.innerWidth);
+const playerMaterial = usePlayerMaterial();
 const isWide = computed(() => viewportWidth.value >= 600);
 // 胶囊 / 标准两种导航形态由宿主下发；运行时切主题要能跟着变。
 const isCapsule = ref(document.documentElement.getAttribute('data-navigation-style') === 'capsule');
@@ -320,6 +322,7 @@ async function cancelSleepTimer(): Promise<void> {
     v-if="showBar"
     class="player-bar-shell"
     :class="`player-bar-${density}`"
+    :style="playerMaterial"
     title="打开全屏播放器"
     @click="onBarSurfaceClick"
   >

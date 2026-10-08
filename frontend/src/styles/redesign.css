@@ -668,7 +668,7 @@ body { text-rendering: optimizeLegibility; }
 .player-bar-tools { min-width: 0; justify-self: stretch; justify-content: flex-end; }
 .player-bar-tools > .player-popup-anchor,
 .player-bar-tools > .sl-button-icon { width: 38px; height: 38px; flex: 0 0 auto; }
-.player-tool-muted { color: var(--md-on-surface-variant); opacity: .5; }
+.player-tool-muted { color: var(--md-on-surface-variant); }
 .player-bar .sl-button:hover:not(:disabled) { box-shadow: none; background: var(--md-surface-container-high); }
 
 /* Full player mirrors the host player: blurred cover ambience, centered top bar,
@@ -856,15 +856,12 @@ html[data-navigation-style='capsule'] .player-bar-shell {
   overflow: hidden;
   border: .5px solid var(--sl-theme-glass-border);
   border-radius: calc(var(--capsule-height) / 2);
-  background: var(--sl-theme-glass-fill);
-  /* 顶部内高光：与主程序 GlassSurface / 静态玻璃同款。终点必须是同色透明，
-     写成 transparent 会从白 60% 插值到透明黑，中途的灰落在半透玻璃上就是顶边
-     那条压暗的"重阴影"。 */
-  background-image: linear-gradient(180deg, var(--sl-theme-glass-highlight, rgba(255, 255, 255, .6)) 0%, rgba(255, 255, 255, 0) 30%);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, .102);
+  background: transparent;
+  /* Edge-only highlight keeps full-face washes away from small text. */
+  box-shadow: inset 0 1px 0 var(--miot-player-highlight, rgba(255, 255, 255, .15)), 0 2px 8px rgba(0, 0, 0, .102);
 }
 
-/* 手机档（<600，主程序 AppCapsulePlayer.compact）：59 = 11 热区 + 48 行；静态玻璃无真模糊 */
+/* 手机档（<600）：59 = 11 热区 + 48 行；与 dense 共用可读材质背景 */
 html[data-navigation-style='capsule'] .player-bar-capsule-compact {
   --capsule-height: 59px;
   --capsule-hit: 11px;
@@ -884,16 +881,18 @@ html[data-navigation-style='capsule'] .player-bar-capsule-dense {
   --capsule-cover: 44px;
   --capsule-hit-size: 44px;
 }
-/* 模糊挂在 ::before 而不是 shell 上：shell 自己带 backdrop-filter 会变成 fixed 弹层的
-   包含块（见上）。::before 覆盖整条胶囊，在 shell 背景之上、内容之下做真模糊。 */
-html[data-navigation-style='capsule'] .player-bar-capsule-dense::before {
+/* Fill and blur share the decorative layer. The shell never becomes a fixed
+   popup containing block; unsupported/unknown hosts fall back to solid surface. */
+html[data-navigation-style='capsule'] .player-bar-shell::before {
   content: '';
   position: absolute;
   z-index: -1;
   inset: 0;
   border-radius: inherit;
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
+  background: var(--miot-player-fill, var(--md-surface));
+  backdrop-filter: var(--miot-player-blur, none);
+  -webkit-backdrop-filter: var(--miot-player-blur, none);
+  pointer-events: none;
 }
 
 html[data-navigation-style='capsule'] .player-bar-progress {

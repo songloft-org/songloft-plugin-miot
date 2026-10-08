@@ -313,9 +313,11 @@ assert.match(songRow, /class="song-cover-img"/);
 // 播放栏背景只允许由 shell 承担；内层 hover 再画背景会出现“多一层底色”。
 assert.match(style, /\.player-bar\s*\{[^}]*background: transparent/);
 assert.doesNotMatch(redesign, /\.player-bar:hover/);
-// 胶囊模式使用宿主下发的玻璃 token，而不是用不透明 M3 色近似。
+// 胶囊模式保留宿主 tint，由独立材质层保护对比度与辅助功能。
 assert.match(redesign, /--sl-theme-glass-fill: var\(--md-surface-container\)/);
-assert.match(redesign, /background: var\(--sl-theme-glass-fill\)/);
+assert.match(playerBar, /usePlayerMaterial/);
+assert.match(playerBar, /:style="playerMaterial"/);
+assert.match(redesign, /background: var\(--miot-player-fill, var\(--md-surface\)\)/);
 // 曲库列表对齐主程序：表头 + 独立列 + Material 行状态，且保持虚拟列表定高。
 assert.match(mainPage, /class="song-list-header"/);
 assert.match(songRow, /class="song-artist"/);
@@ -510,9 +512,9 @@ assert.match(redesign, /\.player-bar-tools > \.player-popup-anchor,[\s\S]*?\.pla
 // 胶囊玻璃：真模糊挂在 ::before 上——shell 自己带 backdrop-filter 会成为 fixed 弹层
 // （播放模式 / 音量 / 更多）的包含块，弹层按 viewport 算出来的坐标会整体错位，还会被
 // 圆角裁掉。顶部内高光 + 淡出阴影与主程序 GlassSurface / 静态玻璃同款。
-assert.match(redesign, /player-bar-capsule-dense::before \{[\s\S]*?backdrop-filter: blur\(20px\)/);
-assert.match(redesign, /html\[data-navigation-style='capsule'\] \.player-bar-shell \{[\s\S]*?background-image: linear-gradient\(180deg, var\(--sl-theme-glass-highlight/);
-assert.match(redesign, /box-shadow: 0 2px 8px rgba\(0, 0, 0, \.102\)/);
+assert.match(redesign, /player-bar-shell::before \{[\s\S]*?backdrop-filter: var\(--miot-player-blur, none\)/);
+assert.match(redesign, /box-shadow: inset 0 1px 0 var\(--miot-player-highlight/);
+assert.match(redesign, /0 2px 8px rgba\(0, 0, 0, \.102\)/);
 assert.match(redesign, /--capsule-height: 59px/);
 assert.match(redesign, /--capsule-height: 64px/);
 // 胶囊 shell 的 overflow: hidden 只用来把整宽顶边进度按 pill 轮廓裁掉（进度层自己也带
