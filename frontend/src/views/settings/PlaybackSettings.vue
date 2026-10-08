@@ -74,7 +74,11 @@ function setSwitch(key: keyof typeof state.config, value: boolean) { void saveCo
     </div>
   </SectionCard>
 
-  <SectionCard title="触屏歌词与封面" icon="lyrics">
+  <SectionCard
+    title="触屏歌词与封面"
+    icon="lyrics"
+    description="云端歌词和封面匹配依赖 Music API。在「设备 → 高级设备兼容」中取消型号勾选后，该型号使用直链播放，无法使用这项匹配功能。"
+  >
     <SettingRow title="触屏音箱显示歌词" subtitle="仅对兼容 Music API 的型号逐首匹配云端曲库"><SlSwitch aria-label="触屏音箱显示歌词" :model-value="state.config.touchscreen_lyrics_enabled" @update:model-value="setSwitch('touchscreen_lyrics_enabled', $event)" /></SettingRow>
     <div v-if="state.config.touchscreen_lyrics_enabled" class="dependency-hint"><SlIcon name="info" :size="18" /><span>歌词通过逐首匹配云端曲库实现，冷门或自制歌曲可能匹配不到；匹配成功时歌词时间轴也可能与实际播放不完全同步。</span></div>
     <div class="form-body"><div class="field"><label class="field-label">默认封面</label><div class="inline-fields"><SlSelect :model-value="String(state.config.default_cover_id || coverOptions[0].value)" :options="coverSelectOptions" aria-label="默认封面" @update:model-value="saveConfig({ default_cover_id: $event })" /><img :src="coverPreview" alt="默认封面预览" style="width:56px;height:56px;object-fit:cover;border-radius:8px" /></div><p class="field-help">用于触屏音箱或米家 App 无法取得歌曲封面时的兜底。</p></div></div>

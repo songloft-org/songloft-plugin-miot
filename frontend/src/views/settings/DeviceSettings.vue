@@ -257,13 +257,17 @@ async function toggleMusicApi(hardware: string, enabled: boolean): Promise<void>
 
   <SlDisclosure title="高级设备兼容" icon="speaker" description="按设备型号调整 Music API 与指示灯行为。">
     <div class="form-body">
-      <label class="field-label">按型号选择播放方式</label>
+      <label class="field-label">按型号选择 Music API 播放</label>
+      <p class="field-help">勾选使用 Music API，取消勾选使用直链播放。部分型号需要 Music API 才能正常发声，兼容性取决于设备固件。</p>
+      <p class="field-help">遇到歌尾复播或切歌异常时，可尝试取消勾选；若取消后无声，请重新勾选。</p>
+      <p class="field-help">保存后，下次下发歌曲时生效，当前播放不会立即切换；同一型号的所有设备共用此设置。</p>
       <p v-if="!musicApiModelRows.length" class="field-help">尚未识别到任何设备型号，登录并开启设备管理后会出现在这里。</p>
       <div v-for="row in musicApiModelRows" :key="row.hardware" class="device-check-row">
         <SlCheckbox :model-value="isMusicApiEnabled(row.hardware)" :disabled="!row.inDefaults" :aria-label="`使用 Music API 播放 ${row.hardware}`" @update:model-value="toggleMusicApi(row.hardware, $event)" />
         <div class="device-check-copy">
           <strong>{{ row.hardware }}</strong>
-          <small>{{ row.deviceName }}{{ row.inDefaults ? ' · 默认使用 Music API' : ' · 默认使用直链播放' }}</small>
+          <small>{{ row.deviceName }}</small>
+          <small>当前设置：{{ isMusicApiEnabled(row.hardware) ? 'Music API' : '直链播放' }}</small>
         </div>
         <span v-if="row.inDefaults" class="chip chip-success">默认</span>
       </div>
