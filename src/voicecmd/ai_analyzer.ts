@@ -103,11 +103,10 @@ export class AIAnalyzer {
       { role: 'user', content: `用户指令：${query}` },
     ];
 
+    // 省略 token 上限和采样温度，由服务端使用默认值，兼容推理模型及各类代理。
     const body: Record<string, unknown> = {
       model: config.model,
       messages,
-      temperature: 1.0,
-      max_tokens: 300,
       response_format: { type: 'json_object' },
     };
     // reasoning_split 仅硅基流动（SiliconFlow）原生支持，用于分离推理链使 content 直接是干净 JSON；
