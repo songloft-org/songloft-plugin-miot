@@ -119,7 +119,7 @@ const songs = [16, 17, 18].map(id => ({
   id, title: `song-${id}`, type: 'local', duration: 300, url: `/api/v1/songs/${id}/play`,
 }));
 
-function player({ mode = 'loop', config = {}, service = {} } = {}) {
+function player({ mode = 'loop', config = {}, service = {}, initialSongs = songs } = {}) {
   const pushes = [];
   const tts = [];
   const manager = new PlaylistManager('account', 'speaker', {
@@ -133,7 +133,7 @@ function player({ mode = 'loop', config = {}, service = {} } = {}) {
     updateDevice: async () => {},
     savePlaylistProgress: async () => {},
   });
-  manager.initWithSongs(songs, 0, mode, 1);
+  manager.initWithSongs(initialSongs, 0, mode, 1);
   manager.state = 'playing';
   return { manager, pushes, tts };
 }
@@ -161,6 +161,460 @@ async function continuePlaying(engine) {
     message: { response: { answer: [{ question: '继续播放' }] } },
   });
 }
+
+function voiceSession({ readState, timeout = 30, resumeResult = true, duration = 300 } = {}) {
+  const queries = [];
+  const resumes = [];
+  const { manager, pushes } = player({
+    initialSongs: [{ ...songs[0], duration }, ...songs.slice(1)],
+    service: {
+      getPlayState: async (_account, _device, options) => {
+        queries.push({ at: Date.now(), options });
+        return readState
+          ? readState(queries.length)
+          : { status: resumes.length ? 1 : 2, position: resumes.length ? 60 + (Date.now() - resumes[0]) / 1000 : 60, duration: 300, hasPosition: true, sampledAt: Date.now() };
+      },
+      resumePlay: async () => { resumes.push(Date.now()); return resumeResult; },
+      pausePlayVerified: async () => 'paused',
+    }
+  });
+  manager.playStartTimeMs = Date.now() - 60000;
+  const engine = resumeEngine(manager);
+  engine.configManager.getConfig = async () => ({ smart_resume_timeout: timeout, voice_memory_enabled: false });
+  manager.suspendForVoiceInteraction();
+  engine.scheduleSmartResume(manager, 'account', 'speaker');
+  return { manager, engine, pushes, queries, resumes };
+}
+
+test('a short voice reply resumes promptly with fresh samples and keeps the interrupted position', async () => {
+  await withClock(async h => {
+    const s = voiceSession();
+    await h.advance(4000);
+    assert.equal(s.resumes.length, 1);
+    assert.ok(s.resumes[0] <= 102000, 'resume should not wait for the old three-second guard or five-second cache');
+    assert.ok(s.queries.every(q => q.options.verify));
+    assert.equal(s.pushes.length, 0);
+    assert.equal(s.manager.getPosition(), 62);
+    assert.equal(s.manager.isVoiceSuspended(), false);
+    s.manager.cleanup();
+  });
+});
+
+test('assistant media is allowed to finish and the first idle sample gets a prompt confirmation', async () => {
+  await withClock(async h => {
+    const s = voiceSession({
+      readState: () => ({
+        status: Date.now() < 104000 ? 1 : 2,
+        duration: 6, position: 1, hasPosition: true, sampledAt: Date.now(),
+      })
+    });
+    await h.advance(3999);
+    assert.equal(s.pushes.length, 0);
+    assert.equal(s.resumes.length, 0);
+    await h.advance(1001);
+    assert.equal(s.resumes.length, 0, 'a replaced media context needs the song URL');
+    assert.equal(s.pushes.length, 1);
+    assert.ok(s.pushes[0].includes('seek=60'), 'waiting for speech must not skip music');
+    s.manager.cleanup();
+  });
+});
+
+test('confirmed automatic recovery only recalibrates the song timer, including seek and speed', async () => {
+  await withClock(async h => {
+    const s = voiceSession({ readState: () => ({ status: 1, duration: 400, position: (Date.now() - 100000) / 1000, hasPosition: true, sampledAt: Date.now() }) });
+    s.manager.streamSeekOffsetSec = 100;
+    s.manager.playbackSpeed = 0.5;
+    await h.advance(2000);
+    assert.equal(s.resumes.length, 0);
+    assert.equal(s.pushes.length, 0);
+    assert.equal(s.manager.getPosition(), 101);
+    assert.equal(s.manager.isVoiceSuspended(), false);
+    s.manager.cleanup();
+  });
+});
+
+for (const scenario of ['query failure', 'missing progress', 'cached idle', 'cached playing', 'pre-interaction sample']) {
+  test(`${scenario} cannot prove that speech ended or trigger a URL repush`, async () => {
+    await withClock(async h => {
+      const s = voiceSession({
+        timeout: 5, readState: () => ({
+          status: scenario === 'query failure' ? -1 : scenario === 'cached idle' ? 2 : 1,
+          position: 60, duration: 300,
+          hasPosition: scenario !== 'missing progress',
+          sampledAt: scenario === 'pre-interaction sample' ? 99999
+            : scenario.startsWith('cached') ? 101000 : Date.now(),
+        })
+      });
+      await h.advance(5000);
+      assert.equal(s.resumes.length, 0);
+      assert.equal(s.pushes.length, 0);
+      assert.equal(s.manager.isVoiceSuspended(), false);
+      assert.equal(s.manager.getPosition(), 60, 'missing evidence must not reset progress to zero');
+      assert.ok(h.logs.some(message => message.includes('without playback evidence')));
+      if (scenario === 'query failure') assert.equal(s.queries.length, 1, 'failure should leave fast polling and honor backoff');
+      s.manager.cleanup();
+    });
+  });
+}
+
+test('a transient query failure requires new idle evidence before resuming', async () => {
+  await withClock(async h => {
+    const s = voiceSession({ readState: count => ({ status: count === 1 ? -1 : 2, position: 60, duration: 300, hasPosition: true, sampledAt: Date.now() }) });
+    await h.advance(6999);
+    assert.equal(s.resumes.length, 0);
+    await h.advance(1);
+    assert.equal(s.resumes.length, 1);
+    assert.equal(s.pushes.length, 0);
+    assert.equal(s.queries[1].options.verify, undefined, 'recovery should first respect ordinary query backoff');
+    s.engine.setEnabled(false);
+    s.manager.cleanup();
+  });
+});
+
+test('idle then unknown is not two confirmations of speech completion', async () => {
+  await withClock(async h => {
+    const s = voiceSession({ timeout: 5, readState: count => ({ status: count === 1 ? 2 : -1, position: 60, duration: 300, hasPosition: true, sampledAt: Date.now() }) });
+    await h.advance(5000);
+    assert.equal(s.resumes.length, 0);
+    assert.equal(s.pushes.length, 0);
+    s.manager.cleanup();
+  });
+});
+
+test('fast polling is bounded while the assistant continues speaking', async () => {
+  await withClock(async h => {
+    const s = voiceSession({ readState: () => ({ status: 1, position: 1, duration: 8, hasPosition: true, sampledAt: Date.now() }) });
+    await h.advance(29000);
+    assert.ok(s.queries.filter(q => q.options.verify).length <= 5);
+    assert.ok(s.queries.length < 12);
+    assert.equal(s.pushes.length, 0);
+    assert.equal(s.resumes.length, 0);
+    s.engine.setEnabled(false);
+    s.manager.cleanup();
+  });
+});
+
+test('frozen own-media progress is replayed only after the configured speech timeout', async () => {
+  await withClock(async h => {
+    const s = voiceSession({ timeout: 5, readState: () => ({ status: 1, position: 60, duration: 300, hasPosition: true, sampledAt: Date.now() }) });
+    await h.advance(4999);
+    assert.equal(s.pushes.length, 0);
+    await h.advance(1);
+    assert.equal(s.pushes.length, 1);
+    assert.ok(s.pushes[0].includes('seek=60'));
+    s.manager.cleanup();
+  });
+});
+
+for (const action of ['pause', 'stop', 'same-song restart', 'next']) {
+  test(`an old voice query cannot restore playback after ${action}`, async () => {
+    await withClock(async h => {
+      const pending = deferred();
+      const s = voiceSession({ readState: () => pending.promise });
+      await h.advance(1000);
+      if (action === 'pause') await s.manager.pause();
+      else if (action === 'stop') await s.manager.stop();
+      else if (action === 'next') await s.manager.next();
+      else await s.manager.playAtIndex(0);
+      const pushesAfterAction = s.pushes.length;
+      const stateAfterAction = s.manager.getStatus().state;
+      pending.resolve({ status: 2, position: 60, duration: 300, hasPosition: true, sampledAt: Date.now() });
+      await flush();
+      await h.advance(3000);
+      assert.equal(s.resumes.length, 0);
+      assert.equal(s.pushes.length, pushesAfterAction);
+      assert.equal(s.manager.getStatus().state, stateAfterAction);
+      s.manager.cleanup();
+    });
+  });
+}
+
+for (const phase of ['account lookup', 'AI analysis']) {
+  test(`a new dialogue invalidates the old task before ${phase} completes`, async () => {
+    await withClock(async h => {
+      const pending = deferred();
+      const processing = deferred();
+      const s = voiceSession({ readState: () => pending.promise });
+      await h.advance(1000);
+      if (phase === 'account lookup') s.engine.accountManager.getAccounts = () => processing.promise;
+      else s.engine.configManager.getAIConfig = () => processing.promise;
+      const message = s.engine.handleMessage({ device_id: 'speaker', message: { response: { answer: [{ question: '今天天气怎么样' }] } } });
+      await flush();
+      pending.resolve({ status: 2, position: 60, duration: 300, hasPosition: true, sampledAt: Date.now() });
+      await flush();
+      await h.advance(1000);
+      assert.equal(s.resumes.length, 0);
+      assert.equal(s.pushes.length, 0);
+      processing.resolve(phase === 'account lookup' ? [{ id: 'account' }] : { enabled: false });
+      await message;
+      s.engine.setEnabled(false);
+      s.manager.cleanup();
+    });
+  });
+}
+
+test('a superseded task cannot mistake a later task for its own permission to resume', async () => {
+  await withClock(async h => {
+    const pending = deferred();
+    const s = voiceSession({ readState: count => count === 1 ? pending.promise : ({ status: 2, position: 60, duration: 300, hasPosition: true, sampledAt: Date.now() }) });
+    await h.advance(1000);
+    s.manager.suspendForVoiceInteraction();
+    s.engine.scheduleSmartResume(s.manager, 'account', 'speaker');
+    pending.resolve({ status: 2, position: 60, duration: 300, hasPosition: true, sampledAt: Date.now() });
+    await flush();
+    await h.advance(1999);
+    assert.equal(s.resumes.length, 0);
+    await h.advance(1);
+    assert.equal(s.resumes.length, 1);
+    s.engine.setEnabled(false);
+    s.manager.cleanup();
+  });
+});
+
+for (const phase of ['initial delay', 'configuration read', 'status query']) {
+  test(`disabling voice control cancels recovery during ${phase}`, async () => {
+    await withClock(async h => {
+      const pending = deferred();
+      const s = voiceSession({ readState: () => pending.promise });
+      if (phase === 'configuration read') s.engine.configManager.getConfig = () => pending.promise;
+      if (phase !== 'initial delay') await h.advance(1000);
+      s.engine.setEnabled(false);
+      pending.resolve(phase === 'configuration read' ? { smart_resume_timeout: 5 }
+        : { status: 2, position: 60, duration: 300, hasPosition: true, sampledAt: Date.now() });
+      await flush();
+      await h.advance(5000);
+      assert.equal(s.resumes.length, 0);
+      assert.equal(s.pushes.length, 0);
+      s.manager.cleanup();
+    });
+  });
+}
+
+for (const result of [true, false]) {
+  test(`pause wins over an in-flight resume whose response is ${result}`, async () => {
+    await withClock(async h => {
+      const pending = deferred();
+      const s = voiceSession();
+      s.manager.minaService.resumePlay = () => pending.promise;
+      await h.advance(2000);
+      await s.manager.pause();
+      pending.resolve(result);
+      await flush();
+      await h.advance(3000);
+      assert.equal(s.manager.getStatus().state, 'paused');
+      assert.equal(s.pushes.length, 0);
+      s.manager.cleanup();
+    });
+  });
+}
+
+for (const scenario of ['advancing', 'frozen', 'unavailable', 'missing progress', 'old foreign sample', 'duplicate sample']) {
+  test(`resume verification handles ${scenario} device progress without trusting the command acknowledgment`, async () => {
+    await withClock(async h => {
+      const { manager, pushes } = player({
+        service: {
+          resumePlay: async () => true,
+          getPlayState: async () => ({
+            status: scenario === 'unavailable' ? -1 : 1,
+            position: scenario === 'advancing' ? 60 + (Date.now() - 100000) / 1000 : 60,
+            duration: scenario === 'old foreign sample' ? 5 : 300,
+            hasPosition: scenario !== 'missing progress',
+            sampledAt: scenario === 'old foreign sample' ? 99999
+              : scenario === 'duplicate sample' ? 101000 : Date.now(),
+          }),
+        }
+      });
+      manager.playStartTimeMs = Date.now() - 60000;
+      assert.equal(await manager.resumePlayback(), true);
+      await h.advance(3000);
+      assert.equal(pushes.length, scenario === 'frozen' ? 1 : 0);
+      if (scenario === 'frozen') assert.ok(pushes[0].includes('seek=60'));
+      if (scenario === 'unavailable') assert.ok(h.logs.some(message => message.includes('playback not verified')));
+      manager.cleanup();
+    });
+  });
+}
+
+test('a resume verifier cannot repush an old same-song instance after a restart', async () => {
+  await withClock(async h => {
+    const pending = deferred();
+    const { manager, pushes } = player({ service: { resumePlay: async () => true, getPlayState: () => pending.promise } });
+    manager.playStartTimeMs = Date.now() - 60000;
+    await manager.resumePlayback();
+    await h.advance(1000);
+    await manager.playAtIndex(0);
+    pending.resolve({ status: 1, position: 1, duration: 5, hasPosition: true, sampledAt: Date.now() });
+    await flush();
+    await h.advance(3000);
+    assert.equal(pushes.length, 1);
+    assert.equal(manager.getStreamSeekOffsetSec(), 0);
+    manager.cleanup();
+  });
+});
+
+test('a new dialogue cancels background resume verification before it can repush', async () => {
+  await withClock(async h => {
+    const s = voiceSession({ readState: () => ({ status: 2, position: 60, duration: 300, hasPosition: true, sampledAt: Date.now() }) });
+    await h.advance(2000);
+    assert.equal(s.resumes.length, 1);
+    s.engine.cancelPendingResume('account', 'speaker');
+    await h.advance(3000);
+    assert.equal(s.pushes.length, 0);
+    s.manager.cleanup();
+  });
+});
+
+test('a canceled replay cannot stop a pending user restart of the same song', async () => {
+  await withClock(async h => {
+    const oldPush = deferred();
+    const newPush = deferred();
+    const s = voiceSession({ timeout: 5, readState: () => ({ status: 1, position: 60, duration: 300, hasPosition: true, sampledAt: Date.now() }) });
+    let pushes = 0;
+    s.manager.minaService.playURL = () => (++pushes === 1 ? oldPush : newPush).promise;
+    await h.advance(5000);
+    assert.equal(pushes, 1);
+    const restarted = s.manager.replayCurrent(0);
+    await flush();
+    assert.equal(pushes, 2);
+    oldPush.resolve(false);
+    await flush();
+    assert.equal(s.manager.getStatus().state, 'playing');
+    newPush.resolve(true);
+    assert.equal(await restarted, true);
+    assert.equal(s.manager.getStreamSeekOffsetSec(), 0);
+    s.manager.cleanup();
+  });
+});
+
+for (const status of [0, 2]) {
+  test(`voice recovery recognizes advancing music despite status=${status} misreports`, async () => {
+    await withClock(async h => {
+      const s = voiceSession({ readState: count => ({ status, position: count === 1 ? 62.3 : 62.4, duration: 300, hasPosition: true, sampledAt: Date.now() }) });
+      await h.advance(2000);
+      assert.equal(s.resumes.length, 0);
+      assert.equal(s.pushes.length, 0);
+      assert.ok(Math.abs(s.manager.getPosition() - 62.4) < 1e-9);
+      assert.equal(s.manager.isVoiceSuspended(), false);
+      s.manager.cleanup();
+    });
+  });
+
+  test(`resume verification accepts advancing music despite status=${status} misreports`, async () => {
+    await withClock(async h => {
+      let reads = 0;
+      const { manager, pushes } = player({
+        service: {
+          resumePlay: async () => true,
+          getPlayState: async () => ({ status, position: ++reads === 1 ? 62.3 : 62.4, duration: 300, hasPosition: true, sampledAt: Date.now() }),
+        }
+      });
+      manager.playStartTimeMs = Date.now() - 60000;
+      await manager.resumePlayback();
+      await h.advance(3000);
+      assert.equal(pushes.length, 0);
+      manager.cleanup();
+    });
+  });
+}
+
+test('brief buffering during resume can recover on the final sample without a URL repush', async () => {
+  await withClock(async h => {
+    let reads = 0;
+    const { manager, pushes } = player({
+      service: {
+        resumePlay: async () => true,
+        getPlayState: async () => ({ status: 1, position: ++reads <= 2 ? 60 : 61, duration: 300, hasPosition: true, sampledAt: Date.now() }),
+      }
+    });
+    manager.playStartTimeMs = Date.now() - 60000;
+    await manager.resumePlayback();
+    await h.advance(3000);
+    assert.equal(pushes.length, 0);
+    manager.cleanup();
+  });
+});
+
+test('a duplicate final sample cannot turn brief buffering into confirmed resume failure', async () => {
+  await withClock(async h => {
+    let reads = 0;
+    const { manager, pushes } = player({
+      service: {
+        resumePlay: async () => true,
+        getPlayState: async () => ({ status: 1, position: 60, duration: 300, hasPosition: true, sampledAt: ++reads <= 2 ? Date.now() : 102000 }),
+      }
+    });
+    manager.playStartTimeMs = Date.now() - 60000;
+    await manager.resumePlayback();
+    await h.advance(3000);
+    assert.equal(pushes.length, 0);
+    manager.cleanup();
+  });
+});
+
+test('automatic voice recovery preserves duration probing for a song with unknown metadata duration', async () => {
+  await withClock(async h => {
+    const s = voiceSession({
+      duration: 0, readState: count => ({
+        status: 1, position: 60 + (Date.now() - 100000) / 1000,
+        duration: count <= 2 ? 0 : 70, hasPosition: true, sampledAt: Date.now(),
+      })
+    });
+    await h.advance(2000);
+    assert.equal(s.manager.isVoiceSuspended(), false);
+    assert.equal(s.resumes.length, 0);
+    assert.equal(s.pushes.length, 0);
+    await h.advance(8000);
+    assert.equal(s.manager.getCurrentSong().id, 17);
+    assert.equal(s.pushes.length, 1);
+    s.manager.cleanup();
+  });
+});
+
+test('unknown-duration playback also continues probing when voice status was unavailable', async () => {
+  await withClock(async h => {
+    const s = voiceSession({
+      duration: 0, timeout: 5, readState: () => ({
+        status: Date.now() < 110000 ? -1 : 1,
+        position: 60 + (Date.now() - 105000) / 1000,
+        duration: 70, hasPosition: true, sampledAt: Date.now(),
+      })
+    });
+    await h.advance(5000);
+    assert.equal(s.resumes.length, 0);
+    assert.equal(s.pushes.length, 0);
+    assert.equal(s.manager.getPosition(), 60);
+    await h.advance(10000);
+    assert.equal(s.manager.getCurrentSong().id, 17);
+    assert.equal(s.pushes.length, 1);
+    s.manager.cleanup();
+  });
+});
+
+test('unknown-duration resume excludes a long pause from progress and retains automatic next', async () => {
+  await withClock(async h => {
+    let resumedAt;
+    let reads = 0;
+    const { manager, pushes } = player({
+      initialSongs: [{ ...songs[0], duration: 0 }, ...songs.slice(1)], service: {
+        pausePlayVerified: async () => 'paused',
+        resumePlay: async () => { resumedAt = Date.now(); return true; },
+        getPlayState: async () => ({
+          status: 1, position: 60 + (Date.now() - resumedAt) / 1000,
+          duration: ++reads <= 2 ? 0 : 70, hasPosition: true, sampledAt: Date.now(),
+        }),
+      }
+    });
+    manager.playStartTimeMs = Date.now() - 60000;
+    await manager.pause();
+    await h.advance(3600000);
+    await manager.resumePlayback();
+    assert.equal(manager.getPosition(), 60);
+    await h.advance(10000);
+    assert.equal(manager.getCurrentSong().id, 17);
+    assert.equal(pushes.length, 1);
+    manager.cleanup();
+  });
+});
 
 test('DLNA ownership blocks timer/status-based playlist recovery until an explicit new playback', async () => {
   await withClock(async h => {

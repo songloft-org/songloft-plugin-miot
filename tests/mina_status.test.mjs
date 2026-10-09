@@ -97,6 +97,19 @@ test('active volume readback immediately observes a completed volume control', a
   });
 });
 
+test('voice verification reads fresh idle state instead of the cached pre-interaction playing sample', async () => {
+  await withClient(async h => {
+    assert.equal((await h.service.getPlayState('account', 'speaker')).status, 1);
+    h.advance(1000);
+    h.setFetch(async () => response(200, { code: 0, data: { info: JSON.stringify({ status: 2, play_song_detail: { position: 12000, duration: 300000 } }) } }));
+    assert.equal((await h.service.getPlayState('account', 'speaker')).status, 1);
+    const fresh = await h.service.getPlayState('account', 'speaker', { verify: true });
+    assert.equal(fresh.status, 2);
+    assert.equal(fresh.sampledAt, 101000);
+    assert.equal(h.requests.length, 2);
+  });
+});
+
 test('successful background samples do not emit repetitive informational logs', async () => {
   await withClient(async h => {
     await h.client.getPlayerStatus('speaker');

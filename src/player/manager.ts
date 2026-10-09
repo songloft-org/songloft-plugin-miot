@@ -1013,16 +1013,20 @@ export class PlaylistManager {
    * 没续上就带位置重推 URL。**不能**让调用方同步等这个校验——网页端的播放按钮
    * （`POST /player/toggle` → handlers/playlist.ts）会跟着从 ~100ms 变成 ~1.3s，手感明显发木。
    */
-  async resumePlayback(): Promise<boolean> {
+  async resumePlayback(opts?: { positionSec?: number; isCurrent?: () => boolean }): Promise<boolean> {
     if (this.externalPlayback) return false;
-    return this.trackPlayback(() => this.resumePlaybackInternal());
+    return this.trackPlayback(() => this.resumePlaybackInternal(opts));
   }
 
-  private async resumePlaybackInternal(): Promise<boolean> {
+  private async resumePlaybackInternal(opts?: { positionSec?: number; isCurrent?: () => boolean }): Promise<boolean> {
     const epoch = this.playbackEpoch;
+    const generation = this.checkTimerGeneration;
+    const isCurrent = () => !this.externalPlayback && epoch === this.playbackEpoch &&
+      generation === this.checkTimerGeneration && opts?.isCurrent?.() !== false;
     if ((this.state !== 'playing' && this.state !== 'paused') || this.songs.length === 0) {
       return false;
     }
+    if (!isCurrent()) return false;
 
     // 上次暂停被设备忽略而升级为 stop：设备端已无媒体上下文，play 指令续不回来，
     // 只能重推 URL。带上 seek 让服务端产出以暂停位置为开头的流，听感即「原位续播」
@@ -1030,29 +1034,26 @@ export class PlaylistManager {
     // 让本来正常 paused 的成员一起对齐到同一位置——多房间同步优先于少一次重推。
     if (this.hardStopped) {
       songloft.log.info(`[PlaylistManager] Resume after hard stop, replay with seek=${this.pausedPositionSec.toFixed(1)}s`);
-      return this.playCurrent({ seekSeconds: this.pausedPositionSec, skipAnnouncement: true });
+      return this.playCurrent({ seekSeconds: this.pausedPositionSec, skipAnnouncement: true, isCurrent: opts?.isCurrent });
     }
 
-    this.stopCheckTimer();
-
     // 续播位置在改 state 之前算：getPosition() 在非 playing 态恒返回 0
-    const resumeFromSec = this.state === 'paused' ? this.pausedPositionSec : this.getPosition();
+    // 语音恢复可传入挂起时的位置，不能把播报/轮询耗时算成已听内容。
+    const resumeFromSec = typeof opts?.positionSec === 'number' && Number.isFinite(opts.positionSec) && opts.positionSec >= 0
+      ? opts.positionSec : this.state === 'paused' ? this.pausedPositionSec : this.getPosition();
 
     const ok = await this.forEachTarget('resume', t => this.minaService.resumePlay(t.account_id, t.device_id));
-    if (this.externalPlayback || epoch !== this.playbackEpoch) return false;
+    if (!isCurrent()) return false;
     if (!ok) {
       songloft.log.warn('[PlaylistManager] resumePlay failed');
       return false;
     }
 
+    this.stopCheckTimer();
+    this.clearVoiceSuspend();
     this.state = 'playing';
-
-    // 后台校验设备是否真的在放，没续上就带位置重推 URL。不 await：调用方（网页播放按钮）
-    // 不该为此干等，而且此刻 resume 指令已经发出去了，晚 2 秒再补救不影响正常情况的听感。
-    // 必须自带 catch：游离的 promise 抛出会变成 QuickJS 里的 unhandled rejection。
-    void this.verifyResumeOrRepush(resumeFromSec).catch(e => {
-      songloft.log.warn('[PlaylistManager] Resume verify failed: ' + String(e));
-    });
+    // 已知/未知时长共用续播锚点，排除暂停、播报和轮询耗时（#404）。
+    this.playStartTimeMs = Date.now() - (resumeFromSec / this.playbackSpeed) * 1000;
 
     const song = this.getCurrentSong();
     if (song && song.duration > 0) {
@@ -1060,7 +1061,6 @@ export class PlaylistManager {
       // 直接用它算 elapsed 会把暂停时长也算进已播时长，长暂停后 remaining 为负 → 不注册定时器 →
       // 歌曲自然播完时 onSongFinished 不触发，音箱循环重拉同一 URL，表现为「单曲循环、不推进列表」
       // (songloft-org/songloft#404)。与 resetAutoNextTimer 同源：按 1/speed 反向缩放锚点。
-      this.playStartTimeMs = Date.now() - (resumeFromSec / this.playbackSpeed) * 1000;
       const remaining = song.duration + this.transitionOffset - resumeFromSec;
       if (remaining > 0) {
         this.startCheckTimer(remaining / this.playbackSpeed);
@@ -1077,6 +1077,10 @@ export class PlaylistManager {
       songloft.log.info(`[PlaylistManager] Duration unknown after resume, starting device duration probe`);
     }
 
+    // 定时器建好后再捕获校验版本；网页按钮不用等待后台回读。
+    void this.verifyResumeOrRepush(resumeFromSec, opts?.isCurrent).catch(e => {
+      songloft.log.warn('[PlaylistManager] Resume verify failed: ' + String(e));
+    });
     return true;
   }
 
@@ -1089,53 +1093,86 @@ export class PlaylistManager {
    * 而旧实现看到 ubus 成功就返回 true，于是本地状态停在 playing、切歌定时器照跑，
    * 用户听到的是「播放继续数秒但没声音，直到切歌才有声音」（songloft-org/songloft-plugin-miot#61 问题 3）。
    *
-   * 只探 2 次（最多 ~2.4s）：真续上的设备第一次就报 status=1；探失败的代价只是多一次带位置的重推
+   * 最多探 3 次（间隔 1s）：有进度时必须看到两次新采样推进，不能把 status=1 的冻结进度当作续播。
+   * 不上报进度的老设备仍使用 status 和流长判据；探失败的代价只是多一次带位置的重推
    * （听感是一下小卡顿），远小于让用户干等整首歌的静音。
    * 只查主设备：分组成员各自的媒体上下文无法逐台补救，主设备没续上就整组重推 URL 对齐。
-   * status 拿不到（-1，网络抖动 / 云端 502）时**按成功处理**——宁可少一次重推，也不要
+   * status 拿不到（-1，网络抖动 / 云端 502）时放弃本次校验，不宣称已续播——宁可少一次重推，也不要
    * 因为一次查询失败就把好端端在放的歌打断重来。
    *
    * status=1 也**不足以**判定成功：小爱接管播它自己的内容时 status 同样是 1，裸 play 恢复的
    * 是音箱当前媒体（已被 REPLACE_ALL 换掉），永远回不到我们的歌。所以还要过一道流长身份校验
    * （matchDeviceStream），认定被接管就立刻重推 URL（songloft-org/songloft-plugin-miot#96）。
    *
-   * @param resumeFromSec resume 那一刻的曲内位置。重推时刻意仍用它（而不是加上校验耗掉的 2 秒）：
-   *   宁可重听 2 秒，也不要跳过用户还没听到的内容。
+   * @param resumeFromSec 恢复时的曲内位置，重推不加校验耗时，避免跳过尚未听到的内容。
    */
-  private async verifyResumeOrRepush(resumeFromSec: number): Promise<void> {
+  private async verifyResumeOrRepush(resumeFromSec: number, taskIsCurrent?: () => boolean): Promise<void> {
     // 记下当时在放哪一首：校验期间用户可能切歌/换歌单，那就不该再插一脚
     const indexAtResume = this.currentIndex;
     const songIdAtResume = this.getCurrentSong()?.id ?? 0;
+    const generationAtResume = this.checkTimerGeneration;
+    const startedAt = Date.now();
+    const isCurrent = () => this.state === 'playing' && this.currentIndex === indexAtResume &&
+      (this.getCurrentSong()?.id ?? 0) === songIdAtResume && this.checkTimerGeneration === generationAtResume &&
+      taskIsCurrent?.() !== false;
+    let lastPosition = -1;
+    let lastSampleAt = -1;
+    let idleHits = 0;
     let repushReason = '';
 
-    for (let i = 0; i < 2; i++) {
-      await new Promise(r => setTimeout(r, 1200));
+    for (let i = 0; i < 3; i++) {
+      await new Promise(r => setTimeout(r, 1000));
       // 期间被别的操作接管（暂停 / 切歌 / 停止）就不必再验
-      if (this.state !== 'playing' || this.currentIndex !== indexAtResume) return;
+      if (!isCurrent()) return;
 
       const state = await this.minaService.getPlayState(this.accountId, this.deviceId, { verify: true });
+      if (!isCurrent()) return;
       if (state.status < 0) {
-        songloft.log.warn('[PlaylistManager] Resume verify: device status unavailable, assuming resumed');
+        songloft.log.warn('[PlaylistManager] Resume verify: device status unavailable, playback not verified');
         return;
       }
-      if (state.status === 1) {
-        // 在放，但要确认放的是我们的流；'unknown'（设备不上报流长）按旧行为算续上了
-        if (this.matchDeviceStream(state) !== 'foreign') return;
-        repushReason = `device playing foreign media (deviceDuration=${state.duration}s devicePosition=${state.position}s)`;
-        break;
+      const sampleAt = state.sampledAt ?? Date.now();
+      if (sampleAt < startedAt || sampleAt <= lastSampleAt) {
+        repushReason = '';
+        continue;
       }
-      repushReason = `device not playing (status=${state.status})`;
+      lastSampleAt = sampleAt;
+      const stream = this.matchDeviceStream({ ...state, status: 1 });
+      // #449：status 可能连续误报 paused/stopped；当前流的进度推进比状态码更可靠。
+      if ((state.status === 0 || state.status === 1 || state.status === 2) && state.hasPosition && stream !== 'foreign') {
+        if (lastPosition >= 0 && state.position - lastPosition + 1e-6 >= 0.1) return;
+      } else {
+        lastPosition = -1;
+      }
+      if (state.status === 1) {
+        idleHits = 0;
+        if (stream === 'foreign') {
+          repushReason = `device playing foreign media (deviceDuration=${state.duration}s devicePosition=${state.position}s)`;
+          break;
+        }
+        if (!state.hasPosition) return; // 无进度的老设备保留原兼容行为
+        if (lastPosition >= 0) {
+          repushReason = `device progress frozen (position=${state.position}s)`;
+          // 保留最后一轮：短缓冲可能两次读到相同进度，不能立刻重推。
+        } else {
+          repushReason = '';
+        }
+        lastPosition = state.position;
+      } else if (state.status === 0 || state.status === 2) {
+        lastPosition = state.hasPosition && stream !== 'foreign' ? state.position : -1;
+        idleHits++;
+        repushReason = idleHits >= 2 ? `device not playing (status=${state.status})` : '';
+      } else {
+        return;
+      }
     }
 
     if (!repushReason) return;
 
     // 需要重推：先再确认一次上下文没变（最后一次查询也可能耗掉几百毫秒）
-    if (this.state !== 'playing' || this.currentIndex !== indexAtResume ||
-        (this.getCurrentSong()?.id ?? 0) !== songIdAtResume) {
-      return;
-    }
+    if (!isCurrent()) return;
     songloft.log.warn(`[PlaylistManager] Resume verify failed: ${repushReason}, re-pushing URL with seek=${resumeFromSec.toFixed(1)}s`);
-    await this.playCurrent({ seekSeconds: resumeFromSec, skipAnnouncement: true });
+    await this.playCurrent({ seekSeconds: resumeFromSec, skipAnnouncement: true, isCurrent: taskIsCurrent ?? (() => true) });
   }
 
   /**
@@ -1262,7 +1299,14 @@ export class PlaylistManager {
     this.stopCheckTimer();
     this.clearVoiceSuspend();
     const song = this.getCurrentSong();
-    if (!song || song.duration <= 0) return;
+    if (!song) return;
+    if (song.duration <= 0) {
+      if (typeof devicePositionSec === 'number' && Number.isFinite(devicePositionSec) && devicePositionSec >= 0) {
+        this.playStartTimeMs = Date.now() - (devicePositionSec / this.playbackSpeed) * 1000;
+      }
+      this.scheduleDurationProbe();
+      return;
+    }
 
     let remaining: number;
     if (typeof devicePositionSec === 'number' && devicePositionSec >= 0) {
@@ -1293,9 +1337,10 @@ export class PlaylistManager {
    * 因为被语音唤醒打断后设备的 URL 播放状态已被清除。
    * @param seekSeconds 曲内起播位置；传 0/省略即从头重播（旧行为）
    */
-  async replayCurrent(seekSeconds = 0): Promise<boolean> {
+  async replayCurrent(seekSeconds = 0, isCurrent?: () => boolean): Promise<boolean> {
+    if (isCurrent?.() === false) return false;
     this.endExternalPlayback();
-    return this.playCurrent({ seekSeconds, skipAnnouncement: true });
+    return this.playCurrent({ seekSeconds, skipAnnouncement: true, isCurrent });
   }
 
   /** 当前推给设备的流从歌曲第几秒开始（设备上报的 position 需加此值才是曲内绝对位置） */
@@ -1507,15 +1552,17 @@ export class PlaylistManager {
     }
   }
 
-  private async playCurrent(opts?: { seekSeconds?: number; speed?: number; skipAnnouncement?: boolean }): Promise<boolean> {
-    if (this.externalPlayback) return false;
+  private async playCurrent(opts?: { seekSeconds?: number; speed?: number; skipAnnouncement?: boolean; isCurrent?: () => boolean }): Promise<boolean> {
+    if (this.externalPlayback || opts?.isCurrent?.() === false) return false;
     const epoch = this.playbackEpoch;
+    const generation = this.checkTimerGeneration;
     if (this.externalOperations.size) await Promise.allSettled(Array.from(this.externalOperations));
-    if (this.externalPlayback || epoch !== this.playbackEpoch) return false;
+    if (this.externalPlayback || epoch !== this.playbackEpoch || opts?.isCurrent?.() === false ||
+      (opts?.isCurrent && generation !== this.checkTimerGeneration)) return false;
     return this.trackPlayback(() => this.playCurrentInternal(opts));
   }
 
-  private async playCurrentInternal(opts?: { seekSeconds?: number; speed?: number; skipAnnouncement?: boolean }): Promise<boolean> {
+  private async playCurrentInternal(opts?: { seekSeconds?: number; speed?: number; skipAnnouncement?: boolean; isCurrent?: () => boolean }): Promise<boolean> {
     const epoch = this.playbackEpoch;
     if (this.currentIndex < 0 || this.currentIndex >= this.songs.length) {
       songloft.log.error('[PlaylistManager] Invalid current index: ' + this.currentIndex);
@@ -1523,6 +1570,10 @@ export class PlaylistManager {
     }
 
     this.stopCheckTimer();
+    // 恢复任务的回调只负责任务身份；本地版本负责捕获同曲重播、暂停等操作。
+    const generationAtPlay = this.checkTimerGeneration;
+    const isCurrent = () => !opts?.isCurrent ||
+      (opts.isCurrent() && generationAtPlay === this.checkTimerGeneration);
     // 当前歌曲要变了：作废上一首定好的「下一首」，末尾的 prefetchNextSong 会基于新的
     // currentIndex 重新定一次，预热的与真会播的始终是同一首。
     this.clearPendingNextIndex();
@@ -1570,7 +1621,7 @@ export class PlaylistManager {
 
     songloft.log.info(`[PlaylistManager] Playing song index=${this.currentIndex} title=${song.title} artist=${song.artist} duration=${song.duration} seek=${seekSeconds} speed=${effectiveSpeed} targets=${this.targets.length}`);
 
-    if (this.externalPlayback || epoch !== this.playbackEpoch) return false;
+    if (this.externalPlayback || epoch !== this.playbackEpoch || !isCurrent()) return false;
 
     // 下发到所有目标设备（分组时为组内全部音箱；传结构化歌曲信息供触屏歌词模式匹配曲库）。
     // 至少一台成功即视为成功；个别成员离线/失败不影响整组继续（自动切歌定时器仍以本机时长驱动）。
@@ -1578,7 +1629,7 @@ export class PlaylistManager {
       title: song.title,
       artist: song.artist,
     }));
-    if (this.externalPlayback || epoch !== this.playbackEpoch) return false;
+    if (this.externalPlayback || epoch !== this.playbackEpoch || !isCurrent()) return false;
     // 下发报失败不等于设备没播：3012「远程控制超时」是假失败，指令往往已经生效（#98）。
     // 回读设备核实，确认在播我们的流就按成功走，避免上层重试/跳歌/停摆。
     // landedPositionSec >= 0 表示「核实为假失败」，其值是设备已经播到的流内位置。
@@ -1593,7 +1644,7 @@ export class PlaylistManager {
       this.confirmSongPlayback(song.id);
     }
 
-    if (this.externalPlayback || epoch !== this.playbackEpoch) return false;
+    if (this.externalPlayback || epoch !== this.playbackEpoch || !isCurrent()) return false;
     this.clearVoiceSuspend();
     this.state = 'playing';
     this.hardStopped = false;
