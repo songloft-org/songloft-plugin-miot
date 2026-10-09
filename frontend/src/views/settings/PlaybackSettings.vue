@@ -69,6 +69,7 @@ function setSwitch(key: keyof typeof state.config, value: boolean) { void saveCo
   </SectionCard>
 
   <SectionCard title="播放恢复" icon="refresh" description="播放失败的歌曲会暂时跳过，失败标记在 5 分钟后自动失效。网络恢复后，也可清除所有设备的失败标记，再重新播放。">
+    <SettingRow title="整点报时后续播" subtitle="默认关闭。按服务器时间，在整点后 90 秒内检测报时中断并尝试续播；该时段通过音箱按键或小爱 App 停止也可能被恢复，主动停止请使用 Songloft。"><SlSwitch aria-label="整点报时后续播" :model-value="state.config.hourly_chime_resume_enabled" @update:model-value="setSwitch('hourly_chime_resume_enabled', $event)" /></SettingRow>
     <div class="form-body">
       <SlButton variant="outlined" :label="clearingFailures ? '正在清除…' : '清除播放失败标记'" icon="refresh" :disabled="clearingFailures" @click="clearPlaybackFailures" />
     </div>

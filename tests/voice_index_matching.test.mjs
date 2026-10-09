@@ -53,7 +53,7 @@ function createEngine(commands = defaults.getDefaultVoiceCommands()) {
   };
   engine.accountManager = { getAccounts: async () => [{ id: 'account' }] };
   engine.memoryService = { setMaxRecords: async () => { } };
-  engine.playlistManagerMap = { get: () => undefined };
+  engine.playlistManagerMap = { get: () => undefined, cancelHourlyResumes: () => { } };
   engine.indexingManager = {
     waitForReady: async () => true,
     findPlaylistByNameWithRefresh: async name => ({ name, songCount: 3 }),

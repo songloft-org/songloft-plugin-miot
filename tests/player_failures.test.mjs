@@ -150,7 +150,7 @@ function resumeEngine(manager) {
   };
   engine.accountManager = { getAccounts: async () => [{ id: 'account' }] };
   engine.memoryService = { setMaxRecords: async () => { } };
-  engine.playlistManagerMap = { get: () => manager };
+  engine.playlistManagerMap = { get: () => manager, cancelHourlyResumes: device => manager.cancelHourlyResume(device) };
   engine.minaService = manager.minaService;
   return engine;
 }
@@ -953,7 +953,7 @@ test('singlePlay: natural completion clears failure and pauses on the current so
 test('bounded fallback keeps three consecutive landing failures and TTS circuit breaker', async () => {
   await withClock(async h => {
     const { manager, pushes, tts } = player({
-      service: { getPlayState: async () => ({ status: 0, position: 0, duration: 300 }) },
+      service: { getPlayState: async () => ({ status: 0, position: 0, duration: 300, hasPosition: true, sampledAt: Date.now() }) },
     });
     songs.forEach(song => manager.markSongUnplayable(song.id, 'prefetch'));
     await manager.playCurrent();
@@ -989,10 +989,12 @@ test('unavailable landing samples never skip or blacklist the playing song', asy
 test('early external stop records an expiring failure, not a permanent blacklist', async () => {
   await withClock(async h => {
     const { manager } = player({
-      service: { getPlayState: async () => ({ status: 0, position: 0, duration: 300 }) },
+      service: { getPlayState: async () => ({ status: 0, position: 0, duration: 300, hasPosition: true, sampledAt: Date.now() }) },
     });
+    manager.streamStartedAtMs = Date.now();
     manager.handleLandingFailure = async () => {};
     await manager.checkExternalStop();
+    await h.advance(20000);
     await manager.checkExternalStop();
     assert.equal(manager.unplayableSongs.get(16).reason, 'early-stop');
     await h.advance(UNPLAYABLE_SONG_TTL_MS);
@@ -1105,3 +1107,498 @@ test('clear route visits each independent or shared manager once and returns the
     assert.deepEqual(await clear({}), { cleared: 0 });
   });
 });
+
+for (const hasPosition of [false, true]) {
+  for (const confirmed of [false, true]) {
+    test(`mid-song stop never marks a song unplayable (position=${hasPosition}, confirmed=${confirmed})`, async () => {
+      await withClock(async h => {
+        await h.advance(130000);
+        const { manager, pushes, tts } = player({
+          service: { getPlayState: async () => ({ status: 0, position: 0, duration: 0, hasPosition, sampledAt: Date.now() }) },
+        });
+        manager.playStartTimeMs = Date.now() - 130000;
+        manager.streamStartedAtMs = Date.now() - 130000;
+        manager.playbackConfirmed = confirmed;
+        await manager.checkExternalStop();
+        await h.advance(20000);
+        await manager.checkExternalStop();
+        assert.equal(manager.state, 'stopped');
+        assert.equal(manager.isSongUnplayable(16), false);
+        assert.equal(pushes.length, 0);
+        assert.equal(tts.length, 0);
+        manager.cleanup();
+      });
+    });
+  }
+}
+
+test('a mid-song reset after observed progress is an interruption, not a natural ending', async () => {
+  await withClock(async h => {
+    const { manager, pushes } = player({
+      service: { getPlayState: async () => ({ status: 0, position: 0, duration: 300, hasPosition: true, sampledAt: Date.now() }) },
+    });
+    manager.playStartTimeMs = Date.now() - 130000;
+    manager.stopPollMaxPosition = 110;
+    await manager.checkExternalStop();
+    await h.advance(20000);
+    await manager.checkExternalStop();
+    assert.equal(manager.state, 'stopped');
+    assert.equal(manager.currentIndex, 0);
+    assert.equal(pushes.length, 0);
+    manager.cleanup();
+  });
+});
+
+test('an observed reset at the actual tail still advances normally', async () => {
+  await withClock(async h => {
+    const { manager, pushes, tts } = player({
+      service: { getPlayState: async () => ({ status: 0, position: 0, duration: 300, hasPosition: true, sampledAt: Date.now() }) },
+    });
+    manager.playStartTimeMs = Date.now() - 285000;
+    manager.stopPollMaxPosition = 285;
+    await manager.checkExternalStop();
+    await h.advance(1000);
+    await manager.checkExternalStop();
+    await flush();
+    assert.equal(manager.currentIndex, 1);
+    assert.equal(pushes.length, 1);
+    assert.equal(manager.isSongUnplayable(16), false);
+    assert.equal(tts.length, 0);
+    manager.cleanup();
+  });
+});
+
+test('cached idle samples and failed queries cannot confirm an external stop', async () => {
+  await withClock(async h => {
+    let state = { status: 0, position: 0, hasPosition: false, duration: 0, sampledAt: Date.now() };
+    const { manager } = player({ service: { getPlayState: async () => state } });
+    manager.playbackConfirmed = true;
+    await manager.checkExternalStop();
+    await h.advance(1000);
+    await manager.checkExternalStop();
+    assert.equal(manager.stopPollMisses, 1);
+    state = { ...state, status: -1 };
+    await manager.checkExternalStop();
+    assert.equal(manager.stopPollMisses, 0);
+    state = { ...state, status: 0, sampledAt: Date.now() };
+    await manager.checkExternalStop();
+    assert.equal(manager.state, 'playing');
+    assert.equal(manager.stopPollMisses, 1);
+    manager.cleanup();
+  });
+});
+
+async function hourlySession(h, { enabled = true, readState, readConfig, resumeResult = true, duration = 300, second = 10, seek = 0, speed = 1 } = {}) {
+  const hour = new Date(Date.now());
+  hour.setMinutes(0, 0, 0);
+  hour.setHours(hour.getHours() + 1);
+  await h.advance(hour.getTime() + second * 1000 - Date.now());
+  const config = { hourly_chime_resume_enabled: enabled, smart_resume_timeout: 30 };
+  const resumes = [];
+  const s = player({
+    config, initialSongs: songs.map(song => ({ ...song, duration })),
+    service: {
+      resumePlay: async () => { resumes.push(Date.now()); return resumeResult; },
+      pausePlayVerified: async () => 'paused',
+      getPlayState: async (_account, _device, options) => readState
+        ? readState({ resumes, options })
+        : {
+          status: resumes.length ? 1 : 0, position: resumes.length ? 120 + (Date.now() - resumes[0]) / 1000 : 0,
+          duration: resumes.length ? duration : 0, hasPosition: resumes.length > 0, sampledAt: Date.now()
+        },
+    },
+  });
+  if (readConfig) s.manager.configManager.getConfig = () => readConfig(config);
+  s.manager.streamSeekOffsetSec = seek;
+  s.manager.playbackSpeed = speed;
+  s.manager.playStartTimeMs = Date.now() - (seek / speed + 120 + second) * 1000;
+  s.manager.streamStartedAtMs = Date.now() - (120 + second) * 1000;
+  s.manager.playbackConfirmed = true;
+  s.manager.stopPollDeadlineMs = Date.now() + 120000;
+  await s.manager.checkExternalStop();
+  await h.advance(20000);
+  return { ...s, config, resumes };
+}
+
+test('hourly recovery is opt-in and does not mark the interrupted song', async () => {
+  await withClock(async h => {
+    const s = await hourlySession(h, { enabled: false });
+    assert.equal(s.manager.state, 'stopped');
+    assert.equal(s.manager.currentIndex, 0);
+    assert.equal(s.manager.isSongUnplayable(16), false);
+    assert.equal(s.resumes.length, 0);
+    assert.equal(s.pushes.length, 0);
+    s.manager.cleanup();
+  });
+});
+
+test('idle after a chime resumes the current song and excludes detection/wait time', async () => {
+  await withClock(async h => {
+    const s = await hourlySession(h);
+    assert.equal(s.manager.isHourlyResumePending(), true);
+    assert.equal(s.manager.getPosition(), 120);
+    await h.advance(4000);
+    assert.equal(s.manager.getPosition(), 120);
+    assert.equal(s.resumes.length, 0);
+    await h.advance(4000);
+    assert.equal(s.resumes.length, 1);
+    assert.equal(s.pushes.length, 0);
+    assert.equal(s.manager.currentIndex, 0);
+    assert.equal(s.manager.isSongUnplayable(16), false);
+    assert.ok(Math.abs(s.manager.getPosition() - 123) < 0.01);
+    assert.ok(s.manager.checkTimer !== null);
+    s.manager.cleanup();
+  });
+});
+
+test('a successful resume response without progress falls back to seek on the same song', async () => {
+  await withClock(async h => {
+    const s = await hourlySession(h, { readState: () => ({ status: 0, position: 0, duration: 0, hasPosition: false, sampledAt: Date.now() }) });
+    await h.advance(8000);
+    assert.equal(s.resumes.length, 1);
+    assert.equal(s.pushes.length, 1);
+    assert.match(s.pushes[0], /seek=120/);
+    assert.equal(s.manager.currentIndex, 0);
+    assert.equal(s.manager.isSongUnplayable(16), false);
+    s.manager.cleanup();
+  });
+});
+
+test('a rejected resume falls back immediately to the saved position', async () => {
+  await withClock(async h => {
+    const s = await hourlySession(h, { resumeResult: false });
+    await h.advance(5000);
+    assert.equal(s.resumes.length, 1);
+    assert.equal(s.pushes.length, 1);
+    assert.match(s.pushes[0], /seek=120/);
+    s.manager.cleanup();
+  });
+});
+
+for (const status of [-1, 1]) {
+  test(`hourly recovery never pushes while device is ${status === -1 ? 'unavailable' : 'broadcasting'}`, async () => {
+    await withClock(async h => {
+      let reading = 0;
+      const s = await hourlySession(h, {
+        readState: () => {
+          reading++;
+          return {
+            status: reading <= 2 ? 0 : status, position: 0, duration: status === 1 ? 8 : 0,
+            hasPosition: false, sampledAt: Date.now()
+          };
+        }
+      });
+      await h.advance(30000);
+      assert.equal(s.resumes.length, 0);
+      assert.equal(s.pushes.length, 0);
+      assert.equal(s.manager.state, 'stopped');
+      assert.equal(s.manager.currentIndex, 0);
+      assert.equal(s.manager.isSongUnplayable(16), false);
+      s.manager.cleanup();
+    });
+  });
+}
+
+test('cached idle cannot trigger hourly resume', async () => {
+  await withClock(async h => {
+    let reading = 0;
+    let frozenAt;
+    const s = await hourlySession(h, {
+      readState: () => {
+        reading++;
+        if (reading === 3) frozenAt = Date.now();
+        return { status: 0, position: 0, duration: 0, hasPosition: false, sampledAt: frozenAt ?? Date.now() };
+      }
+    });
+    await h.advance(30000);
+    assert.equal(s.resumes.length, 0);
+    assert.equal(s.pushes.length, 0);
+    s.manager.cleanup();
+  });
+});
+
+test('device progress after a chime only rebuilds the timer without sending play', async () => {
+  await withClock(async h => {
+    let reading = 0;
+    const s = await hourlySession(h, {
+      readState: () => {
+        reading++;
+        return {
+          status: reading <= 2 ? 0 : 1, position: reading <= 2 ? 0 : 120 + reading,
+          duration: 300, hasPosition: reading > 2, sampledAt: Date.now()
+        };
+      }
+    });
+    await h.advance(5000);
+    assert.equal(s.manager.isHourlyResumePending(), false);
+    assert.equal(s.resumes.length, 0);
+    assert.equal(s.pushes.length, 0);
+    assert.equal(s.manager.getPosition(), 124);
+    assert.ok(s.manager.checkTimer !== null);
+    s.manager.cleanup();
+  });
+});
+
+for (const action of ['pause', 'stop', 'next', 'same-song restart', 'new dialogue', 'disable', 'cleanup']) {
+  test(`an hourly status query cannot restore playback after ${action}`, async () => {
+    await withClock(async h => {
+      const pending = deferred();
+      let reading = 0;
+      const s = await hourlySession(h, {
+        readState: () => ++reading <= 2
+          ? { status: 0, position: 0, duration: 0, hasPosition: false, sampledAt: Date.now() }
+          : pending.promise
+      });
+      assert.equal(s.manager.isHourlyResumePending(), true);
+      if (action === 'pause') await s.manager.pause();
+      else if (action === 'stop') await s.manager.stop();
+      else if (action === 'next') await s.manager.next();
+      else if (action === 'same-song restart') await s.manager.playAtIndex(0);
+      else if (action === 'disable') { s.config.hourly_chime_resume_enabled = false; s.manager.cancelHourlyResume(); }
+      else if (action === 'new dialogue') s.manager.cancelHourlyResume('speaker');
+      else s.manager.cleanup();
+      const state = s.manager.state;
+      const pushes = s.pushes.length;
+      pending.resolve({ status: 0, position: 0, duration: 0, hasPosition: false, sampledAt: Date.now() });
+      await flush();
+      await h.advance(10000);
+      assert.equal(s.resumes.length, 0);
+      assert.equal(s.pushes.length, pushes);
+      assert.equal(s.manager.state, state);
+      if (action === 'pause') assert.equal(s.manager.pausedPositionSec, 120);
+      s.manager.cleanup();
+    });
+  });
+}
+
+for (const action of ['stop', 'disable']) {
+  test(`cancel during an in-flight hourly resume prevents verification and repush (${action})`, async () => {
+    await withClock(async h => {
+      const s = await hourlySession(h);
+      const pending = deferred();
+      s.manager.minaService.resumePlay = async () => { s.resumes.push(Date.now()); return pending.promise; };
+      await h.advance(5000);
+      assert.equal(s.resumes.length, 1);
+      if (action === 'stop') await s.manager.stop();
+      else { s.config.hourly_chime_resume_enabled = false; s.manager.cancelHourlyResume(); }
+      pending.resolve(true);
+      await flush();
+      await h.advance(5000);
+      assert.equal(s.pushes.length, 0);
+      assert.equal(s.resumes.length, 1);
+      assert.equal(s.manager.state, action === 'stop' ? 'stopped' : 'playing');
+      if (action === 'disable') assert.ok(s.manager.checkTimer !== null);
+      s.manager.cleanup();
+    });
+  });
+}
+
+test('outside the 90-second window and at the song tail there is no hourly recovery', async () => {
+  for (const options of [{ second: 100 }, { second: -10 }, { duration: 130 }]) {
+    await withClock(async h => {
+      const s = await hourlySession(h, options);
+      await h.advance(10000);
+      assert.equal(s.resumes.length, 0);
+      assert.equal(s.pushes.length, 0);
+      s.manager.cleanup();
+    });
+  }
+});
+
+for (const enabled of [true, false]) {
+  test(`new dialogue cancels hourly recovery before account lookup (voice enabled=${enabled})`, async () => {
+    await withClock(async h => {
+      const pending = deferred();
+      const lookup = deferred();
+      let reads = 0;
+      const s = await hourlySession(h, {
+        readState: () => ++reads <= 2
+          ? { status: 0, position: 0, duration: 0, hasPosition: false, sampledAt: Date.now() } : pending.promise
+      });
+      const engine = resumeEngine(s.manager);
+      engine.enabled = enabled;
+      engine.sleepTimers = new Map();
+      engine.playlistManagerMap.getOrCreate = async () => s.manager;
+      engine.accountManager.getAccounts = () => lookup.promise;
+      const message = engine.handleMessage({ device_id: 'speaker', message: { response: { answer: [{ question: '停止播放' }] } } });
+      await flush();
+      assert.equal(s.manager.isHourlyResumePending(), false);
+      pending.resolve({ status: 0, position: 0, duration: 0, hasPosition: false, sampledAt: Date.now() });
+      await flush();
+      await h.advance(5000);
+      assert.equal(s.resumes.length, 0);
+      assert.equal(s.pushes.length, 0);
+      lookup.resolve([{ id: 'account' }]);
+      await message;
+      assert.equal(s.manager.state, enabled ? 'stopped' : 'playing');
+      engine.setEnabled(false);
+      s.manager.cleanup();
+    });
+  });
+}
+
+test('another device cannot cancel a shared group recovery, but any group member can', async () => {
+  await withClock(async h => {
+    const s = await hourlySession(h);
+    s.manager.setTargets([{ account_id: 'account', device_id: 'speaker' }, { account_id: 'account', device_id: 'secondary' }]);
+    const map = new PlaylistManagerMap({}, {});
+    map.managers.set('grp:living', s.manager);
+    map.cancelHourlyResumes('elsewhere');
+    assert.equal(s.manager.isHourlyResumePending(), true);
+    map.cancelHourlyResumes('secondary');
+    assert.equal(s.manager.isHourlyResumePending(), false);
+    await h.advance(5000);
+    assert.equal(s.resumes.length, 0);
+    map.cleanup();
+  });
+});
+
+test('only one recovery is attempted per manager in the same hourly window', async () => {
+  await withClock(async h => {
+    const s = await hourlySession(h);
+    await h.advance(8000);
+    assert.equal(s.resumes.length, 1);
+    s.manager.minaService.getPlayState = async () => ({ status: 0, position: 0, duration: 0, hasPosition: false, sampledAt: Date.now() });
+    await s.manager.checkExternalStop();
+    await h.advance(20000);
+    assert.equal(s.resumes.length, 1);
+    assert.equal(s.pushes.length, 0);
+    assert.equal(s.manager.state, 'stopped');
+    s.manager.cleanup();
+  });
+});
+
+const { registerConfigHandlers } = loadSource('../src/handlers/config.ts', {
+  '@songloft/plugin-sdk': { jsonResponse: (value, status = 200) => ({ ...value, status }) },
+  '../config/manager': {}, '../conversation/monitor': {}, '../schedule/scheduler': {},
+  '../voicecmd/engine': {}, '../memory': { normalizeMemoryMaxRecords: Number },
+  '../utils/http': {}, '../utils/debug': {}, '../mina/constants': { DEFAULT_MUSIC_API_MODELS: [] },
+});
+
+function hourlyConfig() {
+  const routes = new Map();
+  let config = {};
+  let cancellations = 0;
+  const manager = { getConfig: async () => ({ ...config }), getAIConfig: async () => ({}), saveConfig: async value => { config = value; } };
+  registerConfigHandlers({ get: (path, fn) => routes.set('GET ' + path, fn), post: (path, fn) => routes.set('POST ' + path, fn) },
+    manager, {}, {}, { cancelHourlyResumes: () => cancellations++ }, {});
+  return {
+    get: () => routes.get('GET /config')({}), set: value => routes.get('POST /config')({ body: JSON.stringify(value) }),
+    cancellations: () => cancellations
+  };
+}
+
+test('the hourly config endpoint defaults to false, persists opt-in, and cancels immediately on disable', async () => {
+  await withClock(async () => {
+    const config = hourlyConfig();
+    assert.equal((await config.get()).data.hourly_chime_resume_enabled, false);
+    assert.equal((await config.set({ hourly_chime_resume_enabled: true })).status, 200);
+    assert.equal((await config.get()).data.hourly_chime_resume_enabled, true);
+    assert.equal(config.cancellations(), 0);
+    assert.equal((await config.set({ hourly_chime_resume_enabled: false })).status, 200);
+    assert.equal(config.cancellations(), 1);
+    assert.equal((await config.get()).data.hourly_chime_resume_enabled, false);
+  });
+});
+
+for (const value of ['false', 1, null]) {
+  test(`invalid hourly config ${JSON.stringify(value)} cannot silently alter playback`, async () => {
+    await withClock(async () => {
+      const config = hourlyConfig();
+      await config.set({ hourly_chime_resume_enabled: true });
+      assert.equal((await config.set({ hourly_chime_resume_enabled: value })).status, 400);
+      assert.equal((await config.get()).data.hourly_chime_resume_enabled, true);
+      assert.equal(config.cancellations(), 0);
+    });
+  });
+}
+
+test('hourly repush preserves the song position after seek and speed conversion', async () => {
+  await withClock(async h => {
+    const s = await hourlySession(h, {
+      seek: 30, speed: 1.5,
+      readState: () => ({ status: 0, position: 0, duration: 0, hasPosition: false, sampledAt: Date.now() })
+    });
+    assert.equal(s.manager.getPosition(), 210);
+    await h.advance(8000);
+    assert.equal(s.pushes.length, 1);
+    assert.match(s.pushes[0], /seek=210/);
+    assert.match(s.pushes[0], /speed=1\.5/);
+    s.manager.cleanup();
+  });
+});
+
+test('unknown-length broadcast progress near zero cannot masquerade as the saved song', async () => {
+  await withClock(async h => {
+    let reading = 0;
+    const s = await hourlySession(h, {
+      readState: () => {
+        reading++;
+        return {
+          status: reading <= 2 ? 0 : 1, position: reading <= 2 ? 0 : reading,
+          duration: 0, hasPosition: reading > 2, sampledAt: Date.now()
+        };
+      }
+    });
+    await h.advance(30000);
+    assert.equal(s.resumes.length, 0);
+    assert.equal(s.pushes.length, 0);
+    assert.equal(s.manager.state, 'stopped');
+    s.manager.cleanup();
+  });
+});
+
+for (const phase of ['config lookup', 'status lookup']) {
+  test(`new dialogue invalidates an hourly recovery before task creation (${phase})`, async () => {
+    await withClock(async h => {
+      const pending = deferred();
+      let reading = 0;
+      const s = await hourlySession(h, phase === 'config lookup'
+        ? { readConfig: () => pending.promise }
+        : {
+          readState: () => ++reading === 1
+            ? { status: 0, position: 0, duration: 0, hasPosition: false, sampledAt: Date.now() } : pending.promise
+        });
+      assert.equal(s.manager.isHourlyResumePending(), false);
+      s.manager.cancelHourlyResume('speaker');
+      pending.resolve(phase === 'config lookup' ? s.config
+        : { status: 0, position: 0, duration: 0, hasPosition: false, sampledAt: Date.now() });
+      await flush();
+      await h.advance(10000);
+      assert.equal(s.manager.isHourlyResumePending(), false);
+      assert.equal(s.resumes.length, 0);
+      assert.equal(s.pushes.length, 0);
+      s.manager.cleanup();
+    });
+  });
+}
+
+for (const reloadStatus of [-1, 1]) {
+  test(`a reloaded mid-song stream is not an unconfirmed new start (status=${reloadStatus})`, async () => {
+    await withClock(async h => {
+      const s = await hourlySession(h);
+      s.manager.cleanup();
+      let reading = 0;
+      const { manager, pushes, tts } = player({
+        config: s.config,
+        service: {
+          getPlayState: async () => ({
+            status: ++reading === 1 ? reloadStatus : 0, position: 0, duration: 0,
+            hasPosition: reading > 1, sampledAt: Date.now()
+          }),
+        },
+      });
+      await manager.resumeAfterReload({
+        state: 'playing', positionSec: 150, atMs: Date.now(), songId: 16, seekOffsetSec: 0,
+      });
+      await h.advance(40000);
+      assert.equal(manager.isSongUnplayable(16), false);
+      assert.equal(pushes.length, 0);
+      assert.equal(tts.length, 0);
+      assert.equal(manager.currentIndex, 0);
+      if (reloadStatus === 1) assert.equal(manager.isHourlyResumePending(), true);
+      else assert.equal(manager.state, 'stopped');
+      manager.cleanup();
+    });
+  });
+}

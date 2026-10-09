@@ -117,6 +117,7 @@ export function registerConfigHandlers(
           conversation_poll_interval: config.conversation_poll_interval ?? 2,
           debug_log_enabled: !!config.debug_log_enabled,
           smart_resume_timeout: config.smart_resume_timeout ?? 30,
+          hourly_chime_resume_enabled: !!config.hourly_chime_resume_enabled,
           max_song_index: config.max_song_index ?? 10000,
           server_host_status: getServerHostStatus(config.server_host),
           suggested_addresses: suggestedAddresses,
@@ -134,6 +135,9 @@ export function registerConfigHandlers(
   router.post('/config', async (req: HTTPRequest) => {
     try {
       const body = parseBody(req);
+      if (body.hourly_chime_resume_enabled !== undefined && typeof body.hourly_chime_resume_enabled !== 'boolean') {
+        return jsonResponse({ success: false, error: 'hourly_chime_resume_enabled must be boolean' }, 400);
+      }
       const config = await configManager.getConfig();
       let memoryMaxChanged = false;
 
@@ -325,6 +329,10 @@ export function registerConfigHandlers(
         setDebugLog(config.debug_log_enabled);
       }
 
+      if (body.hourly_chime_resume_enabled !== undefined) {
+        config.hourly_chime_resume_enabled = body.hourly_chime_resume_enabled;
+      }
+
       // 更新 smart_resume_timeout
       if (body.smart_resume_timeout !== undefined) {
         config.smart_resume_timeout = Math.max(5, Math.min(120, Number(body.smart_resume_timeout) || 30));
@@ -378,6 +386,9 @@ export function registerConfigHandlers(
       }
 
       await configManager.saveConfig(config);
+      if (body.hourly_chime_resume_enabled === false) {
+        voiceEngine.cancelHourlyResumes();
+      }
 
       let memoryWarning = '';
       if (memoryMaxChanged) {

@@ -94,6 +94,7 @@ function defaultPluginConfig(): PluginConfig {
     conversation_poll_interval: 2,
     debug_log_enabled: false,
     smart_resume_timeout: 30,
+    hourly_chime_resume_enabled: false,
     max_song_index: 10000,
     ai_config: defaultAIConfig(),
   };

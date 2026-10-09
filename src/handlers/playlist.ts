@@ -111,6 +111,9 @@ function syncManagerFromDeviceState(
   deviceStreamDuration: number,
   deviceProgressAdvanced: boolean,
 ): void {
+  // 报时等待期间可能读到播报媒体，不能抢走恢复任务或改写保存的位置。
+  if (manager.isHourlyResumePending()) return;
+
   // 小爱在 URL/MUSIC 播放模式下会偶发把正常播放的流上报成 paused/stopped。
   // 读状态接口不能因此清掉本地自动切歌定时器；只有设备确认在播放时才用它校准恢复。
   if (localState === 'paused' && deviceState === 'playing') {
@@ -207,7 +210,8 @@ export async function resolvePlayerStatus(
   return {
     ...localStatus,
     state: resolveReportState(localStatus.state, cached.state),
-    position: resolveReportPosition(localStatus.state, cached.state, localStatus.position, extrapolated),
+    position: manager.isHourlyResumePending() ? localStatus.position
+      : resolveReportPosition(localStatus.state, cached.state, localStatus.position, extrapolated),
     duration,
     volume: cached.volume,
   };

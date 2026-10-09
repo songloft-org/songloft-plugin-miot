@@ -51,6 +51,7 @@ export interface MiotConfig {
   play_announcement_delay: number;
   play_announcement_scope: string;
   smart_resume_timeout: number;
+  hourly_chime_resume_enabled: boolean;
   default_cover_id: string | number;
   touchscreen_lyrics_enabled: boolean;
   ai_config: AIConfig;

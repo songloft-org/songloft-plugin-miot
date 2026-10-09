@@ -58,6 +58,7 @@ const defaultConfig: MiotConfig = {
   play_announcement_delay: 3,
   play_announcement_scope: 'voice',
   smart_resume_timeout: 30,
+  hourly_chime_resume_enabled: false,
   default_cover_id: '',
   touchscreen_lyrics_enabled: false,
   ai_config: {},

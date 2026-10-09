@@ -69,6 +69,7 @@ async function withStatus(run) {
     getPlaybackSpeed: () => 1,
     getPlaybackRevision: () => 0,
     isVoiceSuspended: () => false,
+    isHourlyResumePending: () => false,
     matchDeviceStream: () => 'ours',
     canCalibrateAutoNextTimer: () => true,
     resetAutoNextTimer: position => { resets.push(position); },
@@ -336,5 +337,14 @@ test('a new subscriber gets its snapshot while another subscriber query is pendi
     first.close();
     second.close();
     assert.equal(h.timers.size, 0);
+  });
+});
+
+test('hourly waiting keeps the saved song position even when cached broadcast progress advances', async () => {
+  await withStatus(async h => {
+    h.manager.isHourlyResumePending = () => true;
+    const status = await h.resolve();
+    assert.equal(status.position, 20);
+    assert.deepEqual(h.resets, []);
   });
 });

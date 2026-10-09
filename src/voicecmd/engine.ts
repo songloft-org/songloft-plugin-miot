@@ -300,17 +300,17 @@ export class VoiceEngine {
    * @param msg - 对话消息
    */
   async handleMessage(msg: ConversationMessage): Promise<void> {
-    if (!this.enabled) {
-      return;
-    }
-
     // 从 AskMessage 中提取 query
     const query = this.extractQuery(msg);
     if (!query || query.trim() === '') {
       return;
     }
 
-    // 新对话一到就作废旧恢复任务，不能等账号查询、规则匹配或 AI 请求结束后才取消。
+    // 整点续播独立于语音口令开关；新对话仍须立即作废旧任务。
+    this.playlistManagerMap.cancelHourlyResumes(msg.device_id);
+    if (!this.enabled) return;
+
+    // 不能等账号查询、规则匹配或 AI 请求结束后才取消语音恢复。
     this.cancelPendingResume(msg.account_id, msg.device_id);
 
     // 找到设备对应的 accountId
@@ -1937,9 +1937,12 @@ export class VoiceEngine {
     }
   }
 
-  /**
-   * 取消待执行的恢复操作
-   */
+  /** 关闭整点续播配置后，立即作废所有设备的恢复任务。 */
+  cancelHourlyResumes(): void {
+    this.playlistManagerMap.cancelHourlyResumes();
+  }
+
+  /** 取消待执行的语音恢复操作。 */
   private cancelPendingResume(accountId?: string, deviceId?: string): void {
     if (this.resumeTask &&
       ((accountId && this.resumeTask.accountId !== accountId) || (deviceId && this.resumeTask.deviceId !== deviceId))) return;
