@@ -21,11 +21,17 @@ function loadSource(path, dependencies = {}) {
 
 const defaults = loadSource('../src/voicecmd/defaults.ts');
 const sleepTimer = loadSource('../src/sleep_timer/index.ts');
+const { IndexingManager } = loadSource('../src/indexing/manager.ts', {
+  './segmenter': loadSource('../src/indexing/segmenter.ts', {
+    '../data/pinyin-map': loadSource('../src/data/pinyin-map.ts'),
+  }),
+  '../data/traditional-to-simplified-map': loadSource('../src/data/traditional-to-simplified-map.ts'),
+});
 const { VoiceEngine } = loadSource('../src/voicecmd/engine.ts', {
   '../config/manager': {},
   '../account/manager': {},
   '../service/service': {},
-  '../player/manager': {},
+  '../player/manager': { resolvePlaylistResumeStart: async () => null },
   '../indexing/manager': {},
   '../group/coordinator': {},
   '../player/url_builder': {},
@@ -58,9 +64,11 @@ function createEngine(commands = defaults.getDefaultVoiceCommands()) {
     waitForReady: async () => true,
     findPlaylistByNameWithRefresh: async name => ({ name, songCount: 3 }),
     findSongByName: async () => null,
+    findSongsByArtist: () => [],
   };
   engine.executePlayPlaylist = async name => { actions.push({ type: 'play_playlist', name }); };
   engine.executePlaySong = async name => { actions.push({ type: 'play_song', name }); return null; };
+  engine.executePlayArtist = async name => { actions.push({ type: 'play_artist', name }); return null; };
   engine.executePlayIndexNumber = async index => { actions.push({ type: 'play_index', index }); };
   engine.executeNext = async () => { actions.push({ type: 'next' }); };
   engine.executeStop = async () => { actions.push({ type: 'stop' }); };
@@ -214,5 +222,131 @@ for (const [query, type] of [
     const { engine, actions } = createEngine();
     await handleQuery(engine, query);
     assert.deepEqual(actions, [{ type }]);
+  });
+}
+
+for (const [keyword, type] of [
+  ['播放歌单', 'play_playlist'],
+  ['放歌单', 'play_playlist'],
+  ['播放列表', 'play_playlist'],
+  ['播放歌曲', 'play_song'],
+  ['播放歌手', 'play_artist'],
+]) {
+  for (const name of ['继续听', '恢复播放', '下一首', '暂停', '随机播放', '取消收藏歌曲', '30分钟后停止播放', '播放歌曲晴天']) {
+    test(`explicit search protects control words in the name through both entries: ${keyword}${name}`, async () => {
+      const { engine, actions } = createEngine();
+      await handleQuery(engine, `${keyword}${name}`);
+      assert.deepEqual(actions, [{ type, name }]);
+      const result = await engine.testCommand(`${keyword}${name}`, 'speaker');
+      assert.equal(result.commandType, type);
+      assert.equal(result.argument, name);
+      assert.deepEqual(actions[1], { type, name });
+    });
+  }
+}
+
+test('an overlapping resume prefix cannot intercept an explicit playlist request', async () => {
+  const { engine, actions } = createEngine();
+  await handleQuery(engine, '继续播放歌单某某');
+  const result = await engine.testCommand('继续播放歌单某某', 'speaker');
+  assert.equal(result.commandType, 'play_playlist');
+  assert.equal(result.argument, '某某');
+  assert.deepEqual(actions, [
+    { type: 'play_playlist', name: '某某' },
+    { type: 'play_playlist', name: '某某' },
+  ]);
+});
+
+test('custom search keywords protect their argument from longer control keywords', async () => {
+  const commands = defaults.getDefaultVoiceCommands();
+  commands.find(command => command.type === 'play_playlist').keywords = ['听列表'];
+  const { engine, actions } = createEngine(commands);
+  await handleQuery(engine, '请听列表30分钟后停止播放');
+  const result = await engine.testCommand('请听列表30分钟后停止播放', 'speaker');
+  assert.equal(result.commandType, 'play_playlist');
+  assert.equal(result.argument, '30分钟后停止播放');
+  assert.deepEqual(actions, [
+    { type: 'play_playlist', name: '30分钟后停止播放' },
+    { type: 'play_playlist', name: '30分钟后停止播放' },
+  ]);
+});
+
+test('disabled search commands do not protect names from enabled controls', async () => {
+  const commands = defaults.getDefaultVoiceCommands();
+  commands.find(command => command.type === 'play_playlist').enabled = false;
+  const { engine, actions } = createEngine(commands);
+  await handleQuery(engine, '播放歌单继续听');
+  const result = await engine.testCommand('播放歌单继续听', 'speaker');
+  assert.equal(result.commandType, 'resume');
+  assert.deepEqual(actions, [{ type: 'resume' }, { type: 'resume' }]);
+});
+
+test('built-in stop remains available through both entries when configured stop is disabled', async () => {
+  const commands = defaults.getDefaultVoiceCommands();
+  commands.find(command => command.type === 'stop').enabled = false;
+  const { engine, actions } = createEngine(commands);
+  await handleQuery(engine, '暂停');
+  const result = await engine.testCommand('暂停', 'speaker');
+  assert.equal(result.commandType, 'stop');
+  assert.deepEqual(actions, [{ type: 'stop' }, { type: 'stop' }]);
+});
+
+test('built-in stop does not intercept an enabled search command', async () => {
+  const commands = defaults.getDefaultVoiceCommands();
+  commands.find(command => command.type === 'stop').enabled = false;
+  const { engine, actions } = createEngine(commands);
+  await handleQuery(engine, '播放歌单暂停');
+  const result = await engine.testCommand('播放歌单暂停', 'speaker');
+  assert.equal(result.commandType, 'play_playlist');
+  assert.deepEqual(actions, [
+    { type: 'play_playlist', name: '暂停' },
+    { type: 'play_playlist', name: '暂停' },
+  ]);
+});
+
+for (const name of ['继续听', '取消收藏歌曲', '不存在的歌单']) {
+  test(`playlist voice request uses the real index and playback handler: ${name}`, async t => {
+    const previousHost = globalThis.songloft;
+    t.after(() => { globalThis.songloft = previousHost; });
+    const warnings = [];
+    const speech = [];
+    const plays = [];
+    globalThis.songloft = {
+      log: { info() { }, warn: line => warnings.push(line), error() { } },
+      playlists: {
+        list: async () => [
+          { id: 7, name: '继续听', song_count: 3 },
+          { id: 8, name: '取消收藏歌曲', song_count: 4 },
+        ],
+        getSongs: async () => [],
+      },
+      songs: { list: async () => [] },
+    };
+    const index = new IndexingManager();
+    assert.equal((await index.refresh()).success, true);
+    assert.equal(await index.waitForPlaylistCache(), true);
+    const { engine, actions } = createEngine();
+    engine.indexingManager = index;
+    delete engine.executePlayPlaylist;
+    engine.playlistManagerMap.getOrCreate = async () => ({
+      prepareForNewPlayback() { },
+      getPrimary: () => ({ account_id: 'account', device_id: 'speaker' }),
+      setAnnounceOnSongChange() { },
+      play: async (...args) => { plays.push(args); return true; },
+    });
+    engine.minaService = {
+      stopPlay: async () => true,
+      textToSpeech: async (_account, _device, text) => { speech.push(text); },
+    };
+    await handleQuery(engine, `播放歌单${name}`);
+    assert.deepEqual(actions, []);
+    if (name === '不存在的歌单') {
+      assert.deepEqual(plays, []);
+      assert.deepEqual(speech, [`未找到歌单：${name}`]);
+      assert.ok(warnings.includes(`[VoiceEngine] Playlist not found: ${name} (indexReady=true playlists=2 refreshing=false)`));
+    } else {
+      assert.deepEqual(plays, [[name === '继续听' ? 7 : 8, 0, 'order']]);
+      assert.deepEqual(speech, []);
+    }
   });
 }
