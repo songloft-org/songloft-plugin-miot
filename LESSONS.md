@@ -10,6 +10,15 @@
 
 ## 条目
 
+### MIOT-018：指定 UI 参考时，先核对实际布局再实现
+
+- 范围：[songloft-org/songloft#539](https://github.com/songloft-org/songloft/issues/539) 的音量步进按钮，插件基线 `08d4398a40fc3dcf6552cdff1c55bbfeb6525ae0`。
+- 失败证据：2026-10-25，Issue 已明确要求参考 iwebplayer，首次实现却未读取参考代码，将「−5 / +5」并排放在竖向滑块下方，把面板从 64px 加宽到 120px。交互与截图检查通过，但没有验证参考设计，用户要求重新对照。
+- 规则与修复：先核对用户指定参考的 DOM、样式和事件，再判断其空间与方向关系。iwebplayer `ea9e3a4b967b265976ef1c48bfc2df9d7622879f` 的 `static/index.html` / `static/player.js` 为「数值 → ＋ → 竖向滑块 → −」，每次 ±5；本次工作树改回 64px 窄条，沿用上加下减，保留静音与 44×44 点击区域。通过功能测试不能单独证明设计合理。
+- Done right：读取并独立渲染参考原始 DOM/CSS，再检查本插件实际页面。Chrome 121 的亮暗主题、桌面底栏/全屏、390×844 和 390×480 共六组场景均验证按钮位于滑块上下、无裁切、连续步进/边界/滑块/静音及发送的设备参数；前端类型检查、测试、构建和插件包校验通过。证据 `/tmp/songloft-539-v2-browser-summary.json`、`/tmp/songloft-539-iwebplayer-reference.png` 与 `songloft-539-v2-*.png`；参考图是独立控件渲染，不是完整插件运行验收。
+- Not run：真实音箱、原生 WebView、远端 CI 和发布；本次没有提交或推送。
+- Seen 1× (2026-10-25)。状态：经验，本次 UI 实现与浏览器验证完成。
+
 ### MIOT-017：全零设备状态不能当作起播失败或外部停止
 
 - 范围：[songloft-org/songloft-plugin-miot#129](https://github.com/songloft-org/songloft-plugin-miot/issues/129) 的起播确认、外停轮询与尾部截止；OH2 等 Music API/代理播放设备。

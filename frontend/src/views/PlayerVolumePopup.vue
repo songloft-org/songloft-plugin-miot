@@ -44,7 +44,7 @@ function positionPopup(): void {
   const viewBottom = viewTop + viewHeight;
 
   const popupWidth = 64;
-  const popupHeight = 200;
+  const popupHeight = 280;
   const gap = 8;
   const edgeInset = 8;
 
@@ -60,7 +60,7 @@ function positionPopup(): void {
     width: `${popupWidth}px`,
     height: `${popupHeight}px`,
     // 上下都不宽裕时按可用空间收，别把弹层顶到视口外
-    maxHeight: `${Math.round(Math.max(176, (preferAbove ? spaceAbove : spaceBelow) - 8))}px`,
+    maxHeight: `${Math.round(Math.max(272, (preferAbove ? spaceAbove : spaceBelow) - 8))}px`,
     left: `${Math.round(left)}px`,
   };
   if (preferAbove) {
@@ -121,6 +121,12 @@ function commit(value: number): void {
   emit('change', localVolume.value);
 }
 
+function adjustVolume(delta: number): void {
+  if (props.disabled) return;
+  const value = clampVolume(localVolume.value + delta);
+  if (value !== localVolume.value) commit(value);
+}
+
 function toggleMute(): void {
   if (localVolume.value > 0) {
     previousVolume.value = localVolume.value;
@@ -138,6 +144,14 @@ function toggleMute(): void {
       <div class="player-popup-dismiss" aria-label="关闭音量面板" @click="navigation.playerPopup = ''"></div>
       <div class="player-volume-popup" :style="popupStyle" aria-label="音量控制">
         <span class="player-volume-value">{{ Math.round(localVolume) }}%</span>
+        <SlButton
+          class="player-volume-step"
+          label="+"
+          title="音量加5"
+          aria-label="音量加5"
+          :disabled="disabled || localVolume >= 100"
+          @click="adjustVolume(5)"
+        />
         <div class="player-volume-slider-shell">
           <SlSlider
             class="player-volume-slider"
@@ -152,7 +166,15 @@ function toggleMute(): void {
             @dragging="setDragging"
           />
         </div>
-        <SlButton variant="icon" :icon="icon" player-icon class="player-tool-button" :title="localVolume > 0 ? '静音' : '取消静音'" @click="toggleMute" />
+        <SlButton
+          class="player-volume-step"
+          label="−"
+          title="音量减5"
+          aria-label="音量减5"
+          :disabled="disabled || localVolume <= 0"
+          @click="adjustVolume(-5)"
+        />
+        <SlButton variant="icon" :icon="icon" player-icon class="player-tool-button" :title="localVolume > 0 ? '静音' : '取消静音'" :disabled="disabled" @click="toggleMute" />
       </div>
     </template>
   </div>

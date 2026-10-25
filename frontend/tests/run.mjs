@@ -521,7 +521,7 @@ assert.match(redesign, /--capsule-height: 64px/);
 // 同款圆角 + overflow）。弹层是 fixed + JS 坐标，不被它裁剪，所以音量滑杆能弹出来。
 assert.match(redesign, /html\[data-navigation-style='capsule'\] \.player-bar-progress \{[^}]*overflow: hidden/);
 assert.match(style, /\.player-mode-popup, \.player-volume-popup \{[^}]*position: fixed/);
-assert.match(style, /\.player-volume-popup \{[^}]*width: 64px[^}]*height: 200px/);
+assert.match(style, /\.player-volume-popup \{[^}]*width: 64px[^}]*height: 280px/);
 assert.match(volumePopup, /function positionPopup\(\): void/);
 assert.match(volumePopup, /ref="anchor"/);
 // 胶囊档列表一直铺到视口底（浮起胶囊不占布局），靠 padding-bottom 把末尾垫到胶囊之上，

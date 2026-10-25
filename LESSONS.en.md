@@ -10,6 +10,15 @@ Include rule, scope, full owner/repo#number, failure/fix commit SHAs, actual val
 
 ## Entries
 
+### MIOT-018: Inspect the actual layout before implementing a specified UI reference
+
+- Scope: volume step buttons for [songloft-org/songloft#539](https://github.com/songloft-org/songloft/issues/539), plugin baseline `08d4398a40fc3dcf6552cdff1c55bbfeb6525ae0`.
+- Failure evidence: on 2026-10-25, the issue explicitly referenced iwebplayer, but the first implementation did not inspect its code. It placed “−5 / +5” side by side below the vertical slider, widening the panel from 64px to 120px. Interaction and screenshot checks passed without checking the reference design; the user requested a comparison.
+- Rule and fix: inspect the specified reference's DOM, styles, and events before judging spatial and directional relationships. At iwebplayer `ea9e3a4b967b265976ef1c48bfc2df9d7622879f`, `static/index.html` / `static/player.js` use “value → + → vertical slider → −”, adjusting by five. This worktree restores a narrow 64px panel with plus above and minus below, keeping mute and 44×44 targets. Functional tests alone do not establish design quality.
+- Done right: read and independently render the original reference DOM/CSS, then inspect this plugin's actual page. Six Chrome 121 scenarios cover light/dark themes, desktop bar/fullscreen, 390×844 and 390×480: controls above/below the slider, no clipping, repeated steps/bounds/drag/mute, and emitted device parameters. Frontend type checking, tests, build, and plugin package validation pass. Evidence: `/tmp/songloft-539-v2-browser-summary.json`, `/tmp/songloft-539-iwebplayer-reference.png`, and `songloft-539-v2-*.png`; the reference image is an isolated control render, not full-plugin runtime acceptance.
+- Not run: real speaker, native WebView, remote CI, or release; no commit or push in this task.
+- Seen 1× (2026-10-25). Status: lesson; UI implementation and browser verification complete in this worktree.
+
 ### MIOT-017: An all-zero device state is neither a landing failure nor an external stop
 
 - Scope: landing verification, external-stop polling, and the tail deadline in [songloft-org/songloft-plugin-miot#129](https://github.com/songloft-org/songloft-plugin-miot/issues/129); OH2 and similar Music API/proxy playback devices.

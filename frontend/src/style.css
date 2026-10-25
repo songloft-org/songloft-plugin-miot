@@ -320,10 +320,11 @@ h1, h2, h3, p { margin: 0; }
 .player-speed-button { border: 0; background: transparent; font-size: 13px; font-weight: 600; line-height: 1; color: var(--md-on-surface-variant); cursor: pointer; }
 .player-speed-button:disabled { cursor: default; }
 .player-speed-option-label { flex: 1; text-align: center; }
-.player-volume-popup { width: 64px; height: 200px; display: flex; flex-direction: column; align-items: center; padding: 12px 8px 8px; }
-.player-volume-value { color: var(--md-on-surface-variant); font-size: 12px; font-weight: 500; }
+.player-volume-popup { width: 64px; height: 280px; display: flex; flex-direction: column; align-items: center; padding: 12px 8px 8px; }
+.player-volume-value { color: var(--md-on-surface-variant); font-size: 12px; font-weight: 500; font-variant-numeric: tabular-nums; }
 .player-volume-slider-shell { width: 44px; min-height: 104px; flex: 1; display: flex; align-items: center; justify-content: center; overflow: visible; }
-.player-volume-slider { width: 44px; height: 112px; flex: 0 0 44px; }
+.player-volume-slider { width: 44px; height: 100px; flex: 0 0 44px; }
+.player-volume-step.sl-button { width: 44px; min-width: 44px; height: 44px; flex-shrink: 0; padding: 0; font-size: 24px; }
 .player-sleep-popup { position: fixed; z-index: 232; width: 280px; max-width: calc(100vw - 32px); max-height: calc(100vh - 96px); overflow-y: auto; background: var(--md-surface); border: 1px solid var(--md-outline-variant); border-radius: 12px; box-shadow: var(--md-shadow-3); }
 /* PlayerBar 工具区：弹层位置由 JS 通过 el.closest('.player-bar-tools') 自动检测并右对齐。 */
 .sleep-timer-status { min-height: 48px; display: flex; align-items: center; gap: 8px; padding: 8px 8px 8px 16px; color: var(--md-primary); font-size: 14px; font-weight: 500; }
