@@ -637,7 +637,7 @@ export class MinaService {
         hardware: apiDev.hardware || '',
         alias: apiDev.alias || '',
         presence: apiDev.presence || 'offline',
-        managed: local?.managed ?? false,
+        managed: local?.managed ?? true,
         volume: local?.volume ?? 0,
         play_mode: local?.play_mode ?? 'order',
         playlist_id: local?.playlist_id ?? 0,

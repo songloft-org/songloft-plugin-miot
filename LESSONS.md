@@ -10,6 +10,15 @@
 
 ## 条目
 
+### MIOT-019：设备默认选择须落到持久配置并保留明确的取消选择
+
+- 范围：[songloft-org/songloft-plugin-miot#126](https://github.com/songloft-org/songloft-plugin-miot/issues/126#issuecomment-6394927442)，基线 `87e75236f452cbf2caf311a5f235daf1ed102a91`。
+- 证据：2026-10-25，报告人再次把未勾选框误认为未加载图标；原实现发现新设备时保存 `managed=false`，受管理列表因此为空。隔离基线运行新增四项回归均因目标行为失败。
+- 规则与修复：新设备在账号合并及 API 返回中默认 `managed=true`，由持久化状态驱动页面和管理列表；使用 `??` 保留已有 `false`，不在刷新时覆盖用户选择。页面明确默认全选及取消勾选用途。
+- Done right：Linux amd64 / Node 22.17.1，本次基线加未提交工作树；`npx tsc --noEmit`、`node --experimental-strip-types --test tests/*.test.mjs`、`npm run build`（包含 QuickJS 字节码）、`npm run validate`，以及前端 `npm run typecheck`、`npm run build`、`npm test` 通过。四项专项覆盖全部新设备、重载持久状态、旧选择与播放配置、账号隔离及云端/存储失败分支。Docker Chrome 121 在 1024×768、390×844 实际点击、回读真实 ConfigManager 的临时存储并刷新，均确认初始全选、取消后保持；模拟云端，无真实账号。证据 `/tmp/miot-126-{focused,baseline,tests,build-network}.log`、`/tmp/miot-126-browser.json` 与对应截图；源码标识见 `/tmp/miot-126-verification.json`。
+- Not run：真实音箱、原生 WebView、远端 CI 与发布；未修改宿主契约，未运行父仓库 Go 测试。首次沙箱构建未联网、未生成字节码，解除限制重跑后完整构建通过；不以首次降级产物作为交付包。
+- Seen 1× (2026-10-25)。状态：本地实现与验证完成；提交、CI 和发布状态按后续交付核对。
+
 ### MIOT-018：指定 UI 参考时，先核对实际布局再实现
 
 - 范围：[songloft-org/songloft#539](https://github.com/songloft-org/songloft/issues/539) 的音量步进按钮，插件基线 `08d4398a40fc3dcf6552cdff1c55bbfeb6525ae0`。

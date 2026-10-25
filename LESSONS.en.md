@@ -10,6 +10,15 @@ Include rule, scope, full owner/repo#number, failure/fix commit SHAs, actual val
 
 ## Entries
 
+### MIOT-019: Persist device selection defaults and preserve explicit deselection
+
+- Scope: [songloft-org/songloft-plugin-miot#126](https://github.com/songloft-org/songloft-plugin-miot/issues/126#issuecomment-6394927442), baseline `87e75236f452cbf2caf311a5f235daf1ed102a91`.
+- Evidence: on 2026-10-25, another reporter mistook the unchecked box for an unloaded icon. Discovery persisted `managed=false` for new devices, leaving the managed list empty. All four new regression cases fail for the intended behavior against an isolated baseline.
+- Rule and fix: default new devices to `managed=true` in account merging and API responses, with persisted state driving the UI and managed list. Use `??` to preserve existing `false` values instead of overwriting choices on refresh. The page explains automatic selection and deselection.
+- Done right: Linux amd64 / Node 22.17.1, baseline plus this uncommitted worktree; `npx tsc --noEmit`, `node --experimental-strip-types --test tests/*.test.mjs`, `npm run build` (including QuickJS bytecode), `npm run validate`, and frontend `npm run typecheck`, `npm run build`, `npm test` pass. Four focused cases cover all new devices, persisted state reloads, existing choices and playback settings, account isolation, and cloud/storage failure paths. Docker Chrome 121 at 1024×768 and 390×844 uses real clicks, reads temporary storage through the actual ConfigManager, and reloads: all devices start selected and deselection persists. Cloud responses are simulated; no real account is used. Evidence: `/tmp/miot-126-{focused,baseline,tests,build-network}.log`, `/tmp/miot-126-browser.json`, and corresponding screenshots; source identity: `/tmp/miot-126-verification.json`.
+- Not run: real speakers, native WebView, remote CI, or release; host contracts are unchanged, so parent Go tests were not run. The initial sandbox build lacked network access and bytecode; the unrestricted rerun completed the full build. The initial fallback artifact is not the deliverable package.
+- Seen 1× (2026-10-25). Status: local implementation and validation complete; verify commit, CI, and release status in subsequent delivery records.
+
 ### MIOT-018: Inspect the actual layout before implementing a specified UI reference
 
 - Scope: volume step buttons for [songloft-org/songloft#539](https://github.com/songloft-org/songloft/issues/539), plugin baseline `08d4398a40fc3dcf6552cdff1c55bbfeb6525ae0`.

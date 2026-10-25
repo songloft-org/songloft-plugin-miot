@@ -168,8 +168,8 @@ export class AccountManager {
         model: apiDev.model || '',
         hardware: apiDev.hardware || '',
         alias: apiDev.alias || '',
-        // 保留本地设置，新设备使用默认值
-        managed: existing?.managed ?? false,
+        // 新设备默认全部启用管理，保留用户已保存的取消勾选。
+        managed: existing?.managed ?? true,
         volume: existing?.volume ?? 0,
         play_mode: existing?.play_mode ?? 'order',
         play_speed: existing?.play_speed ?? 1,
