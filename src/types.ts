@@ -40,6 +40,9 @@ export interface DeviceConfig {
   current_song_index: number;
   last_selected_at: string;
   temp_artist?: string;      // 临时歌手歌单的搜索词，重启后用于恢复
+  temp_artist_exact?: boolean; // 独立歌曲扩展的歌手队列：按完整歌手名匹配整个曲库
+  temp_song_id?: number;       // 临时歌手队列恢复时按稳定 ID 定位当前歌曲
+  temp_start_song_id?: number; // 保留独立歌曲队列「点播歌曲在前」的顺序
 
   // ===== 重载续播锚点（songloft-org/songloft-plugin-miot#96）=====
   // 插件热重载（自动更新、手动更新、zip 变更热重载）会销毁整个 JS 环境，

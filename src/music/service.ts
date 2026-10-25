@@ -1731,7 +1731,7 @@ export class MusicCommandService {
   /**
    * 播放一首独立歌曲（不在任何歌单里）。
    *
-   * 交给 PlaylistManager 当「单曲临时列表」播，而不是手写 playURL——playCurrent 已经把
+   * 交给 PlaylistManager 建立「点播歌曲在前」的临时歌手列表——playCurrent 已经把
    * 「读 config 拿 force_mp3/normalize → 构 URL → 分组扇出 → 注册切歌定时器 → 预热 → 更新
    * 播放状态」全做了。旧实现手写直推，漏掉 force_mp3 后音箱拿到不能解码的流就亮灯不出声
    * （songloft-org/songloft-plugin-miot#62），也不注册定时器、网页端看不到在播什么。
@@ -1740,18 +1740,13 @@ export class MusicCommandService {
     standalone: StandaloneSongCandidate,
     pm: PlaylistManager,
   ): Promise<boolean> {
-    // 固定 order 模式：单曲列表下 getNextIndex() 返回 -1，播完即停，与原直推行为一致。
-    // 若沿用设备的 single/loop 模式会变成无限循环。
-    // artistQuery 必须显式传 ''：playWithSongs 对 undefined 会保留上一次的临时歌手查询词，
-    // 持久化后会被 restoreTempPlaylists 误当成「歌手歌单」恢复。
-    // 分组扇出由 playCurrent 对 targets 统一处理，这里不再自己调 fanOutPlayURL，否则重复下发。
-    const ok = await pm.playWithSongs([standalone as any], 0, 'order', `单曲: ${standalone.title}`, '');
+    const ok = await pm.playStandaloneSong(standalone as any, this.indexingManager);
     if (!ok) {
       songloft.log.error('[MusicCommandService] Failed to play standalone song: ' + standalone.title + ' - ' + standalone.artist);
       return false;
     }
 
-    songloft.log.warn(`[MusicCommandService] 走独立歌曲路径播放（不在任何歌单，无自动续播）: "${standalone.title}" - ${standalone.artist} id=${standalone.id} type=${standalone.type}`);
+    songloft.log.info(`[MusicCommandService] 独立歌曲接入临时歌手队列: "${standalone.title}" - ${standalone.artist} id=${standalone.id} type=${standalone.type}`);
     return true;
   }
 

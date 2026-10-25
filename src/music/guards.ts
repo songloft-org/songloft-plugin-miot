@@ -21,6 +21,10 @@ export function guardedPlayers(players: PlaylistManagerMap, current: () => boole
           args[4] = current;
         if (name === 'playWithSongs')
           args[5] = current;
+        if (name === 'playStandaloneSong') {
+          ensure(current);
+          args[2] = current;
+        }
         if (name === 'playAtIndex' || name === 'next' || name === 'previous' || name === 'pause')
           args[name === 'playAtIndex' ? 1 : 0] = current;
         if (name === 'stop')

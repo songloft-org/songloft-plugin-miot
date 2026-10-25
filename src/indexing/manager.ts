@@ -1158,6 +1158,32 @@ export class IndexingManager {
     return results;
   }
 
+  /** 自动续播按完整歌手名匹配整个歌曲索引，不依赖歌曲是否已加入歌单。 */
+  async loadLibrarySongsByArtist(artistName: string, isCurrent: () => boolean = () => true): Promise<any[]> {
+    const artistKey = normalizeForMatch(artistName);
+    if (!artistKey || !isCurrent()) return [];
+    const ids = [...new Set(this.songs.filter((song) => song.artistLower === artistKey).map((song) => song.id))];
+    const songs: any[] = new Array(ids.length);
+    let next = 0;
+    // 限制桥接并发；个别歌曲被删除或读取失败不阻断其余队列。
+    await Promise.all(
+      Array.from({ length: Math.min(4, ids.length) }, async () => {
+        while (next < ids.length && isCurrent()) {
+          const index = next++;
+          try {
+            const song = await songloft.songs.getById(ids[index]);
+            if (isCurrent() && song?.url && song.type !== 'radio' && normalizeForMatch(song.artist) === artistKey) {
+              songs[index] = song;
+            }
+          } catch (e) {
+            songloft.log.warn(`[IndexingManager] Failed to load artist song id=${ids[index]}: ${String(e)}`);
+          }
+        }
+      }),
+    );
+    return isCurrent() ? songs.filter(Boolean) : [];
+  }
+
   /** 内存索引里的最佳匹配（含 MIN_MATCH_SCORE 阈值），未达标返回 null。 */
   private bestIndexedMatch(songName: string): IndexedSong | null {
     const matched = this.searchSong(songName);

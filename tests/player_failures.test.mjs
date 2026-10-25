@@ -3733,3 +3733,176 @@ for (const kind of ['voice', 'hourly']) {
     });
   });
 }
+
+for (const mode of ['order', 'random', 'loop', 'single', 'singlePlay']) {
+  test(`standalone artist queue: matched song starts first and ${mode} controls natural completion`, async () => {
+    await withClock(async (h) => {
+      const tracks = songs.map((song) => ({ ...song, artist: '周杰伦', album: '', type: 'remote' }));
+      const { manager, pushes, tts } = player({
+        service: {
+          getPlayState: async () => ({
+            status: 1,
+            position: 0,
+            duration: 0,
+            hasPosition: false,
+            sampledAt: Date.now(),
+          }),
+        },
+      });
+      const saved = {};
+      manager.configManager.getDevices = async () => [{ device_id: 'speaker', play_mode: mode }];
+      manager.configManager.updateDevice = async (_account, _device, patch) => Object.assign(saved, patch);
+      const indexingManager = {
+        loadLibrarySongsByArtist: async (artist) => {
+          assert.equal(artist, '周杰伦');
+          return [tracks[0], tracks[1], tracks[2], tracks[1]];
+        },
+      };
+      assert.equal(await VoiceEngine.prototype.playStandaloneSong.call({ indexingManager }, tracks[1], manager), true);
+      assert.deepEqual(
+        manager.getSongs().map((song) => song.id),
+        [17, 16, 18],
+      );
+      assert.equal(manager.getStatus().playlist_name, '歌手: 周杰伦');
+      assert.equal(manager.getStatus().current_song.id, 17);
+      assert.equal(manager.getStatus().play_mode, mode);
+      assert.ok(pushes[0].includes('/songs/17/play'));
+      assert.equal(saved.temp_artist, '周杰伦');
+      assert.equal(saved.temp_artist_exact, true);
+      assert.equal(saved.temp_song_id, 17);
+      await h.advance(299999);
+      assert.equal(pushes.length, 1, 'must not cut the requested song short');
+      await h.advance(1);
+      if (mode === 'singlePlay') {
+        assert.equal(pushes.length, 1);
+        assert.equal(manager.state, 'paused');
+      } else {
+        assert.equal(pushes.length, 2);
+        assert.ok(pushes[1].includes(`/songs/${mode === 'single' ? 17 : 16}/play`));
+        assert.ok(manager.checkTimer !== null);
+      }
+      assert.equal(manager.unplayableSongs.size, 0);
+      assert.deepEqual(tts, []);
+      manager.cleanup();
+    });
+  });
+}
+
+for (const reason of ['empty', 'error', 'no-artist']) {
+  test(`standalone artist queue: ${reason} keeps requested song playable`, async () => {
+    await withClock(async () => {
+      const { manager, pushes } = player();
+      const song = { ...songs[0], artist: reason === 'no-artist' ? '' : '歌手' };
+      const indexing = {
+        loadLibrarySongsByArtist: async () => {
+          assert.notEqual(reason, 'no-artist');
+          if (reason === 'error') throw new Error('unavailable');
+          return [];
+        },
+      };
+      assert.equal(await manager.playStandaloneSong(song, indexing), true);
+      assert.equal(manager.getSongs().length, 1);
+      assert.ok(pushes[0].includes('/songs/16/play'));
+      manager.cleanup();
+    });
+  });
+}
+
+test('standalone artist queue: stopping or a newer playback cancels delayed artist loading', async () => {
+  await withClock(async () => {
+    for (const change of ['stop', 'new-playback', 'task']) {
+      const { manager, pushes } = player();
+      const gate = deferred();
+      let current = true;
+      const playing = manager.playStandaloneSong(
+        { ...songs[0], artist: '歌手' },
+        {
+          loadLibrarySongsByArtist: () => gate.promise,
+        },
+        () => current,
+      );
+      await flush();
+      if (change === 'stop') await manager.stop(false);
+      if (change === 'new-playback') manager.prepareForNewPlayback();
+      if (change === 'task') current = false;
+      gate.resolve(songs);
+      assert.equal(await playing, false);
+      assert.deepEqual(pushes, []);
+      manager.cleanup();
+    }
+  });
+});
+
+test('standalone artist queue: reload restores the selected song by ID without pushing or restoring an old playlist', async () => {
+  await withClock(async () => {
+    const saved = {
+      device_id: 'speaker',
+      playlist_id: 42,
+      temp_artist: '周杰伦',
+      temp_artist_exact: true,
+      temp_song_id: 16,
+      temp_start_song_id: 17,
+      play_mode: 'loop',
+    };
+    const map = new PlaylistManagerMap(
+      {},
+      {
+        getDevices: async () => [saved],
+      },
+    );
+    const manager = await map.getOrCreate('account', 'speaker');
+    assert.equal(manager.getSongs().length, 0);
+    await map.restoreTempPlaylists({ loadLibrarySongsByArtist: async () => songs });
+    assert.deepEqual(
+      manager.getSongs().map((song) => song.id),
+      [17, 16, 18],
+    );
+    assert.equal(manager.getStatus().current_song.id, 16);
+    assert.equal(manager.getStatus().playlist_name, '歌手: 周杰伦');
+    assert.equal(manager.getStatus().play_mode, 'loop');
+    assert.equal(manager.state, 'idle');
+    manager.cleanup();
+  });
+});
+
+test('standalone artist queue: selecting another song in the temporary playlist preserves its library restore metadata', async () => {
+  await withClock(async () => {
+    const { manager } = player();
+    const saved = {};
+    manager.configManager.updateDevice = async (_account, _device, patch) => Object.assign(saved, patch);
+    await manager.playStandaloneSong({ ...songs[1], artist: '歌手' }, { loadLibrarySongsByArtist: async () => songs });
+    await manager.playWithSongs(manager.getSongs(), 2, 'order', manager.getStatus().playlist_name);
+    assert.equal(saved.temp_artist, '歌手');
+    assert.equal(saved.temp_artist_exact, true);
+    assert.equal(saved.temp_start_song_id, 17);
+    assert.equal(saved.temp_song_id, 18);
+    manager.cleanup();
+  });
+});
+
+test('standalone artist queue: no-import seed stays in memory and its natural end advances to an indexed song', async () => {
+  await withClock(async (h) => {
+    const { manager, pushes } = player({
+      service: {
+        getPlayState: async () => ({ status: 1, position: 0, duration: 0, hasPosition: false, sampledAt: Date.now() }),
+      },
+    });
+    const saved = {};
+    manager.configManager.updateDevice = async (_account, _device, patch) => Object.assign(saved, patch);
+    const direct = { ...songs[0], id: 0, artist: '歌手', url: 'https://audio.example/test.mp3' };
+    assert.equal(await manager.playStandaloneSong(direct, { loadLibrarySongsByArtist: async () => songs }), true);
+    assert.deepEqual(
+      manager.getSongs().map((song) => song.id),
+      [0, 16, 17, 18],
+    );
+    assert.equal(saved.temp_artist, '');
+    assert.equal(pushes[0], direct.url);
+    await h.advance(299999);
+    assert.equal(pushes.length, 1);
+    await h.advance(1);
+    assert.equal(pushes.length, 2);
+    assert.ok(pushes[1].includes('/songs/16/play'));
+    assert.ok(!h.hostCalls.some((args) => String(args[1]).includes('/songs/0/')));
+    manager.cleanup();
+  });
+});

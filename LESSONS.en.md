@@ -10,6 +10,15 @@ Include rule, scope, full owner/repo#number, failure/fix commit SHAs, actual val
 
 ## Entries
 
+### MIOT-020: Standalone continuation needs a visible queue preserved through frontend selection and reload
+
+- Scope: [songloft-org/songloft-plugin-miot#130](https://github.com/songloft-org/songloft-plugin-miot/issues/130#issuecomment-6393443720), baseline `cd32b8ffb0b69a2a6ae4d32bf56c712f7a941b13`.
+- Evidence: the 2026-10-25 log creates `mode=order total=1` at 11:50:34; the timer fires normally at 11:55:27 and playback ends because no next song exists. Missing queue candidates must not be diagnosed as an explicit play-once setting or a broken transition timer. During implementation, real browser song selection exposed a `playWithSongs` default that lost the new queue source; a regression now covers the correction.
+- Rule and fix: put the matched song first, then load same-artist candidates from the entire song index. Automatic continuation uses full artist-field matching and ID deduplication rather than playlist membership or fuzzy matching. Reuse temporary playlists and existing transitions, preserve the device's mode, retain queue provenance on frontend song selection, and restore the current ID and initial requested-song order after reload. Check task/playback validity after awaits and limit detail reads to four concurrent requests.
+- Done right: this uncommitted worktree passes 1282 plugin tests, type checking, build/package validation, frontend contract checks and 72 tests, plus parent `CGO_ENABLED=0 make check`. All 14 new queue regressions fail against isolated baseline sources. Cases assert no transition one millisecond before completion, then verify the actual next URL, failure markers/TTS and timers. Docker Chrome 121 desktop/mobile pages display the real temporary queue; real clicks are checked against player state and output URLs. See the [validation record](docs/en/issue-130.md) for source identity, environment, evidence and limits.
+- Not run: the reporter's speaker/firmware, audible hardware playback or long-running use. Candidates come from the existing index; this does not implement online artist catalogs. Non-imported direct links do not persist a restore marker.
+- Seen 1× (2026-10-25). Status: implementation and local validation complete; see subsequent #130 delivery records for commit, CI, publication and reply status.
+
 ### MIOT-019: Persist device selection defaults and preserve explicit deselection
 
 - Scope: [songloft-org/songloft-plugin-miot#126](https://github.com/songloft-org/songloft-plugin-miot/issues/126#issuecomment-6394927442), baseline `87e75236f452cbf2caf311a5f235daf1ed102a91`.

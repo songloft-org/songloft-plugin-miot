@@ -326,6 +326,10 @@ export class OnlineSearcher {
         const transcoded = pushUrl !== directUrl;
         const songName = song.artist ? `${song.title}-${song.artist}` : song.title;
         songloft.log.info('[OnlineSearcher] [Diag] No-import direct push: songName="' + songName + '" url="' + pushUrl + '"' + (transcoded ? ' (transcoded)' : ''));
+        if (pm && indexingManager) {
+          // id=0 只存在于临时队列，不写曲库，也不对它发送已播放/收藏请求。
+          return pm.playStandaloneSong({ ...song, id: 0, url: pushUrl, type: 'remote', duration: song.duration || 0 } as any, indexingManager);
+        }
         const played = await minaService.playURL(accountId, deviceId, pushUrl, {
           title: song.title,
           artist: song.artist,
@@ -395,6 +399,18 @@ export class OnlineSearcher {
         return true;
       }
       songloft.log.warn(`[OnlineSearcher] Playlist takeover failed for playlist ${appendedPlaylistId}, falling back to single URL push`);
+    }
+
+    // 没有目标歌单时，导入歌曲与已入库的独立歌曲共用临时歌手队列。
+    if (pm && indexingManager) {
+      indexingManager.addImportedSong({ id: imported.id, title: song.title, artist: song.artist, album: song.album });
+      let fullSong: any = { ...song, id: imported.id, url: imported.url, type: 'remote' };
+      try {
+        fullSong = await songloft.songs.getById(imported.id) || fullSong;
+      } catch (e) {
+        songloft.log.warn('[OnlineSearcher] Failed to read imported song detail: ' + String(e));
+      }
+      return pm.playStandaloneSong(fullSong, indexingManager);
     }
 
     // 用返回的 url 构造完整播放 URL（相对路径，URLBuilder 会拼接 server_host 和 token）。

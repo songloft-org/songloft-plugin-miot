@@ -32,7 +32,7 @@ const song = { title: '忘情水', artist: '刘德华', url: 'https://source/son
 function fixture(t, options = {}) {
   const previous = { songloft: globalThis.songloft, fetch: globalThis.fetch };
   t.after(() => { Object.assign(globalThis, previous); });
-  const requests = [], pushes = [], speech = [], localPlays = [], events = [];
+  const requests = [], pushes = [], speech = [], localPlays = [], queuePlays = [], events = [];
   const config = {
     search_priority: options.priority || 'parallel',
     external_search_enabled: options.enabled ?? true,
@@ -76,6 +76,10 @@ function fixture(t, options = {}) {
     play: async (...args) => { localPlays.push(args); return true; },
     playPlaylistFromSong: async (...args) => { localPlays.push(args); return true; },
     playWithSongs: async (...args) => { localPlays.push(args); return true; },
+    playStandaloneSong: async (track, index) => {
+      assert.equal(index, engine.indexingManager);
+      queuePlays.push(track); events.push('queue'); return options.playOK ?? true;
+    },
     getCurrentSong: () => options.localSongs?.[0],
   };
   const engine = Object.create(MusicCommandService.prototype);
@@ -102,7 +106,7 @@ function fixture(t, options = {}) {
     addImportedSong: (...args) => events.push(['index', ...args]),
   };
   engine.onlineSearcher = new OnlineSearcher(engine.configManager);
-  return { engine, requests, pushes, speech, localPlays, events };
+  return { engine, requests, pushes, speech, localPlays, queuePlays, events };
 }
 
 async function execute(engine, action, name, entry = 'ai') {
@@ -122,11 +126,12 @@ for (const [action, name] of [['play_artist', '刘德华'], ['play_playlist', '�
         assert.equal(searches.length, 2);
         for (const r of searches) assert.deepEqual(r.body, { keyword: name, quality: '320k' });
         assert.equal(f.requests.filter(r => r.url.endsWith('/songs/remote')).length, 1);
-        assert.deepEqual(f.pushes, [['account', 'speaker', 'http://host/api/v1/songs/42/play', { title: song.title, artist: song.artist }]]);
+        assert.deepEqual(f.pushes, []);
+        assert.deepEqual(f.queuePlays, [{ ...song, id: 42, url: '/api/v1/songs/42/play', type: 'remote' }]);
         assert.deepEqual(f.speech, []);
         assert.equal(f.events.filter(e => e === 'prepare').length, 1);
         assert.equal(f.events.filter(e => e === 'stop').length, 1);
-        assert.ok(f.events.indexOf('import') < f.events.indexOf('push'));
+        assert.ok(f.events.indexOf('import') < f.events.indexOf('queue'));
         assert.equal(f.events.filter(e => Array.isArray(e) && e[0] === 'index').length, 1);
         if (action === 'play_artist') assert.deepEqual(played, { songName: song.title, artist: song.artist });
       });
@@ -142,11 +147,13 @@ for (const [action, name] of [['play_artist', '刘德华'], ['play_playlist', '�
       if (['disabled', 'miss', 'searchError', 'importError'].includes(failure)) assert.deepEqual(f.pushes, []);
     });
   }
-  test(`${action} preserves no-import direct push`, async t => {
+  test(`${action} keeps no-import playback in a temporary queue without importing`, async t => {
     const f = fixture(t, { noImport: true });
     await execute(f.engine, action, name);
     assert.equal(f.requests.filter(r => !r.url.endsWith('/search')).length, 0);
-    assert.equal(f.pushes[0][2], song.url);
+    assert.deepEqual(f.pushes, []);
+    assert.equal(f.queuePlays[0].id, 0);
+    assert.equal(f.queuePlays[0].url, song.url);
     assert.deepEqual(f.speech, []);
   });
   test(`${action} passes the player for configured playlist continuation`, async t => {
@@ -160,7 +167,7 @@ for (const [action, name] of [['play_artist', '刘德华'], ['play_playlist', '�
   test(`${action} still searches externally when the index is unavailable`, async t => {
     const f = fixture(t, { ready: false });
     await execute(f.engine, action, name);
-    assert.equal(f.pushes.length, 1);
+    assert.equal(f.queuePlays.length, 1);
     assert.deepEqual(f.speech, []);
   });
 }
@@ -174,7 +181,7 @@ test('artist suffix is removed before external search', async t => {
 test('artist cache hit with no loadable songs falls back externally', async t => {
   const f = fixture(t, { artistLocs: [{ playlistId: 7, songId: 9 }] });
   await execute(f.engine, 'play_artist', '刘德华');
-  assert.equal(f.pushes.length, 1);
+  assert.equal(f.queuePlays.length, 1);
 });
 
 test('local artist songs keep random playback without external requests', async t => {
@@ -195,7 +202,7 @@ test('local playlist hit keeps playlist playback without external requests', asy
 test('empty named playlist falls back externally', async t => {
   const f = fixture(t, { playlist: { id: 7, name: '抖音热门榜', songCount: 0 } });
   await execute(f.engine, 'play_playlist', '抖音热门榜');
-  assert.equal(f.pushes.length, 1);
+  assert.equal(f.queuePlays.length, 1);
   assert.deepEqual(f.localPlays, []);
 });
 
@@ -242,7 +249,7 @@ for (const priority of ['local_first', 'external_first', 'parallel']) {
       assert.equal(searches.length, 4);
       assert.deepEqual(searches.slice(2).map(r => r.body), [0, 1].map(() => ({ keyword: name.replace(/\s/g, ''), hint: { title: name.replace(/\s/g, '') }, quality: '320k' })));
       assert.equal(f.requests.filter(r => r.url.endsWith('/songs/remote')).length, 1);
-      assert.equal(f.pushes[0][2], 'http://host/api/v1/songs/42/play');
+      assert.equal(f.queuePlays[0].url, '/api/v1/songs/42/play');
       assert.deepEqual(f.speech, []);
       assert.equal(f.events.filter(e => e === 'prepare').length, 1);
       assert.equal(f.events.filter(e => e === 'stop').length, 1);

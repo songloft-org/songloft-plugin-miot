@@ -138,3 +138,55 @@ test('chained character variants share one search key', async () => {
     assert.equal((await manager.findSongByName(query))?.songId, 1, query);
   }
 });
+
+test('standalone continuation loads exact artists from the library including songs outside playlists', async () => {
+  const songs = [
+    { id: 1, title: '点播歌曲', artist: '劉德華', type: 'remote', url: '/songs/1', duration: 300 },
+    { id: 2, title: '未加入歌单', artist: '刘德华', type: 'local', url: '/songs/2', duration: 250 },
+    { id: 3, title: '近似歌手', artist: '刘德华翻唱', url: '/songs/3' },
+    { id: 4, title: '电台', artist: '刘德华', type: 'radio', url: '/radio' },
+    { id: 5, title: '失效记录', artist: '刘德华', url: '' },
+    { id: 6, title: '已删除', artist: '刘德华', url: '/songs/6' },
+  ];
+  const manager = await createIndex(
+    songs,
+    new Map([
+      [1, [songs[0]]],
+      [2, [songs[0]]],
+    ]),
+  );
+  const read = [];
+  globalThis.songloft.songs.getById = async (id) => {
+    read.push(id);
+    if (id === 6) throw new Error('deleted');
+    return songs.find((song) => song.id === id);
+  };
+  assert.deepEqual(
+    (await manager.loadLibrarySongsByArtist('刘德华')).map((song) => song.id),
+    [1, 2],
+  );
+  assert.equal(read.filter((id) => id === 1).length, 1);
+  assert.ok(!read.includes(3), 'automatic continuation must not use fuzzy artist matches');
+  assert.deepEqual(await manager.loadLibrarySongsByArtist(''), []);
+});
+
+test('artist queue loading stops after cancellation and limits concurrent detail reads', async () => {
+  const songs = Array.from({ length: 12 }, (_, i) => ({ id: i + 1, title: `歌曲${i}`, artist: '歌手', url: '/song' }));
+  const manager = await createIndex(songs, new Map());
+  let current = true,
+    active = 0,
+    peak = 0;
+  const pending = [];
+  globalThis.songloft.songs.getById = async (id) => {
+    peak = Math.max(peak, ++active);
+    await new Promise((resolve) => pending.push(resolve));
+    active--;
+    return songs.find((song) => song.id === id);
+  };
+  const loading = manager.loadLibrarySongsByArtist('歌手', () => current);
+  assert.equal(peak, 4);
+  current = false;
+  pending.forEach((resolve) => resolve());
+  assert.deepEqual(await loading, []);
+  assert.equal(pending.length, 4, 'cancelled work must not start more bridge requests');
+});

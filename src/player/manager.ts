@@ -429,6 +429,8 @@ export class PlaylistManager {
   private tempPlaylistName: string = ''; // 临时歌单名称（如"歌手: 周杰伦"），playlistId < 0 时有效
   private readonly tempId: number; // 该 manager 的固定临时歌单 ID（构造时分配，生命周期内复用）
   private tempArtistQuery: string = ''; // 临时歌手歌单的原始搜索词，用于持久化和恢复
+  private tempArtistExact = false;
+  private tempStartSongId = 0;
   private pendingTempArtist: string = ''; // 待恢复的临时歌手名（索引就绪后自动恢复）
   private _lastLoadNotFound: boolean = false; // 上次 loadPlaylistSongs 失败是否因歌单不存在(ID 过期)
   private hardStopped: boolean = false; // 上次暂停被设备忽略而升级为 stop：设备端已无媒体上下文，续播需重推 URL
@@ -674,7 +676,7 @@ export class PlaylistManager {
    * 用于"播放歌手XX的歌"等场景，将跨歌单收集的歌曲作为虚拟播放列表。
    * @param artistQuery - 歌手搜索词，用于重启后恢复
    */
-  async playWithSongs(songs: Song[], startIndex: number, mode: PlayMode, label?: string, artistQuery?: string, isCurrent?: () => boolean): Promise<boolean> {
+  async playWithSongs(songs: Song[], startIndex: number, mode: PlayMode, label?: string, artistQuery?: string, isCurrent?: () => boolean, exactArtist?: boolean): Promise<boolean> {
     if (isCurrent?.() === false) return false;
     this.endExternalPlayback();
     this.stopCheckTimer();
@@ -693,6 +695,9 @@ export class PlaylistManager {
     this.playlistId = this.tempId;
     this.tempPlaylistName = label || '';
     this.tempArtistQuery = artistQuery !== undefined ? artistQuery : this.tempArtistQuery;
+    // 页面在同一临时列表里选曲时不传 artistQuery，保留队列来源与初始顺序。
+    this.tempArtistExact = exactArtist ?? (artistQuery === undefined && this.tempArtistExact);
+    this.tempStartSongId = this.tempArtistExact ? (artistQuery === undefined ? this.tempStartSongId : songs[0].id) : 0;
     this.currentIndex = (startIndex >= 0 && startIndex < songs.length) ? startIndex : 0;
     this.playMode = normalizePlayMode(mode);
     this.randomPlayed = new Set();
@@ -704,8 +709,59 @@ export class PlaylistManager {
       return false;
     }
 
+    await this.persistState();
     songloft.log.info(`[PlaylistManager] playWithSongs started id=${this.playlistId} label="${this.tempPlaylistName}" index=${this.currentIndex} mode=${this.playMode} total=${this.songs.length}`);
     return true;
+  }
+
+  /** 点播独立歌曲时，先播放命中歌曲，再续播曲库中同歌手的歌曲。 */
+  async playStandaloneSong(
+    song: Song,
+    indexingManager: import('../indexing/manager').IndexingManager,
+    taskCurrent?: () => boolean,
+  ): Promise<boolean> {
+    const revision = this.getPlaybackRevision();
+    const epoch = this.playbackEpoch;
+    const isCurrent = () =>
+      taskCurrent?.() !== false && revision === this.getPlaybackRevision() && epoch === this.playbackEpoch;
+    let mode: PlayMode = 'order';
+    try {
+      const devices = await this.configManager.getDevices(this.accountId);
+      mode = normalizePlayMode(devices.find((device) => device.device_id === this.deviceId)?.play_mode);
+    } catch (e) {
+      songloft.log.warn('[PlaylistManager] Failed to read standalone play mode: ' + String(e));
+    }
+    if (!isCurrent()) return false;
+    const artist = song.type === 'radio' ? '' : (song.artist || '').trim();
+    let others: Song[] = [];
+    if (artist && song.type !== 'radio') {
+      try {
+        others = await indexingManager.loadLibrarySongsByArtist(artist, isCurrent);
+      } catch (e) {
+        songloft.log.warn('[PlaylistManager] Failed to build artist queue: ' + String(e));
+      }
+    }
+    if (!isCurrent()) return false;
+    const seen = new Set([song.id]);
+    const queue = [
+      song,
+      ...others.filter((candidate) => {
+        if (seen.has(candidate.id)) return false;
+        seen.add(candidate.id);
+        return true;
+      }),
+    ];
+    // playWithSongs 会改变 revision，传入的任务守卫仍由它贯穿实际推流。
+    // 不入库的临时直链可能过期，不持久化它的歌手队列恢复标记。
+    return this.playWithSongs(
+      queue,
+      0,
+      mode,
+      artist ? '歌手: ' + artist : '单曲: ' + song.title,
+      song.id > 0 ? artist : '',
+      taskCurrent,
+      true,
+    );
   }
 
   /**
@@ -1615,18 +1671,20 @@ export class PlaylistManager {
   /**
    * 用歌手歌曲列表初始化临时歌单（恢复用，不自动播放）
    */
-  initWithTempArtist(songs: Song[], artistName: string, playMode: PlayMode): void {
+  initWithTempArtist(songs: Song[], artistName: string, playMode: PlayMode, songId = 0, exactArtist = false): void {
     this.resetStreamEvidence();
     this.confirmedTailStream = null;
     this.deadlineTailEvidence = null;
     this.tailLoopSample = null;
     this.songs = songs;
     this.totalSongs = songs.length;
-    this.currentIndex = 0;
+    this.currentIndex = Math.max(0, songs.findIndex(song => song.id === songId));
     this.playMode = normalizePlayMode(playMode);
     this.playlistId = this.tempId;
     this.tempPlaylistName = '歌手: ' + artistName;
     this.tempArtistQuery = artistName;
+    this.tempArtistExact = exactArtist;
+    this.tempStartSongId = exactArtist ? songs[0].id : 0;
     this.pendingTempArtist = '';
     this.state = 'idle';
     this.randomPlayed = new Set();
@@ -3697,22 +3755,24 @@ export class PlaylistManager {
   private async persistState(): Promise<void> {
     const anchor = this.buildResumeAnchor();
     if (isTempPlaylistId(this.playlistId)) {
-      if (this.tempArtistQuery) {
-        try {
-          await this.configManager.updateDevice(this.accountId, this.deviceId, {
-            temp_artist: this.tempArtistQuery,
-            play_mode: this.playMode,
-            // 临时歌手歌单要等索引就绪才由 restoreTempPlaylists 重建，重载续播覆盖不到它。
-            // 锚点必须清空：否则 restoreFromConfig 会拿它去续播 playlist_id 里那个**旧**歌单。
-            resume_state: '',
-            resume_position_sec: 0,
-            resume_at_ms: 0,
-            resume_song_id: 0,
-            resume_seek_offset_sec: 0,
-          });
-        } catch (e) {
-          songloft.log.warn('[PlaylistManager] Failed to persist temp artist: ' + String(e));
-        }
+      try {
+        await this.configManager.updateDevice(this.accountId, this.deviceId, {
+          playlist_id: 0,
+          temp_artist: this.tempArtistQuery,
+          temp_artist_exact: this.tempArtistExact,
+          temp_song_id: this.getCurrentSong()?.id || 0,
+          temp_start_song_id: this.tempStartSongId,
+          play_mode: this.playMode,
+          // 临时歌手歌单要等索引就绪才由 restoreTempPlaylists 重建，重载续播覆盖不到它。
+          // 锚点必须清空：否则 restoreFromConfig 会拿它去续播 playlist_id 里那个**旧**歌单。
+          resume_state: '',
+          resume_position_sec: 0,
+          resume_at_ms: 0,
+          resume_song_id: 0,
+          resume_seek_offset_sec: 0,
+        });
+      } catch (e) {
+        songloft.log.warn('[PlaylistManager] Failed to persist temp artist: ' + String(e));
       }
       return;
     }
@@ -3722,6 +3782,9 @@ export class PlaylistManager {
         current_song_index: this.currentIndex,
         play_mode: this.playMode,
         temp_artist: '',
+        temp_artist_exact: false,
+        temp_song_id: 0,
+        temp_start_song_id: 0,
         ...anchor,
       });
     } catch (e) {
@@ -4166,7 +4229,11 @@ export class PlaylistManagerMap {
       const tempArtist = devCfg.temp_artist;
       if (tempArtist && typeof tempArtist === 'string' && tempArtist.trim()) {
         (manager as any).pendingTempArtist = tempArtist.trim();
+        (manager as any).pendingTempArtistExact = devCfg.temp_artist_exact === true;
+        (manager as any).pendingTempSongId = devCfg.temp_song_id || 0;
+        (manager as any).pendingTempStartSongId = devCfg.temp_start_song_id || 0;
         songloft.log.info(`[PlaylistManagerMap] Pending temp artist restore: "${tempArtist}" for ${deviceId}`);
+        return null;
       }
 
       if (!devCfg.playlist_id || devCfg.playlist_id <= 0) {
@@ -4233,8 +4300,26 @@ export class PlaylistManagerMap {
     for (const [key, manager] of Array.from(this.managers.entries())) {
       const artist = (manager as any).pendingTempArtist;
       if (!artist) continue;
+      const revision = manager.getPlaybackRevision();
+      const isCurrent = () => (manager as any).pendingTempArtist === artist && manager.getPlaybackRevision() === revision;
+      const exactArtist = (manager as any).pendingTempArtistExact === true;
 
       try {
+        if (exactArtist) {
+          const fullSongs = await indexingManager.loadLibrarySongsByArtist(artist, isCurrent);
+          if (!isCurrent()) continue;
+          const playMode = await this.getDevicePlayMode(manager);
+          if (!isCurrent()) continue;
+          if (fullSongs.length) {
+            const startIndex = fullSongs.findIndex(song => song.id === (manager as any).pendingTempStartSongId);
+            const queue = startIndex > 0
+              ? [fullSongs[startIndex], ...fullSongs.filter((_, index) => index !== startIndex)] : fullSongs;
+            manager.initWithTempArtist(queue, artist, playMode, (manager as any).pendingTempSongId, true);
+          } else {
+            (manager as any).pendingTempArtist = '';
+          }
+          continue;
+        }
         const artistLocs = indexingManager.findSongsByArtist(artist);
         if (artistLocs.length === 0) {
           songloft.log.info(`[PlaylistManagerMap] restoreTempPlaylists: no songs for "${artist}", skipping`);
@@ -4268,7 +4353,8 @@ export class PlaylistManagerMap {
 
         if (fullSongs.length > 0) {
           const playMode = await this.getDevicePlayMode(manager);
-          manager.initWithTempArtist(fullSongs as any, artist, playMode);
+          if (!isCurrent()) continue;
+          manager.initWithTempArtist(fullSongs as any, artist, playMode, (manager as any).pendingTempSongId);
           songloft.log.info(`[PlaylistManagerMap] Restored temp artist "${artist}" with ${fullSongs.length} songs for ${key}`);
         } else {
           (manager as any).pendingTempArtist = '';
