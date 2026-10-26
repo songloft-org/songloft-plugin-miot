@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import test from 'node:test';
 import ts from 'typescript';
+import { loader } from '../../tests/chat_loader.mjs';
+const { isDashScopeEndpoint } = loader()('../src/utils/ai_url.ts');
 const deferred = () => { let resolve, reject; const promise = new Promise((r, e) => { resolve = r; reject = e; }); return { promise, resolve, reject }; };
 const flush = async () => {
   for (let i = 0; i < 30; i++)
@@ -59,7 +61,7 @@ test('history switch restores the selected turn count and one save persists inde
 function script(file, env, exports) {
   const source = fs.readFileSync(new URL(`../src/${file}`, import.meta.url), 'utf8').match(/<script setup lang="ts">([\s\S]*?)<\/script>/)[1].replace(/^import .*;\n/gm, '');
   const js = ts.transpileModule(source + `\nreturn { ${exports} };`, { compilerOptions: { target: ts.ScriptTarget.ES2020, module: ts.ModuleKind.CommonJS } }).outputText;
-  return new Function(...Object.keys(env), js)(...Object.values(env));
+  return new Function('isDashScopeEndpoint', ...Object.keys(env), js)(isDashScopeEndpoint, ...Object.values(env));
 }
 test('late HTTP chat status cannot overwrite a newer WebSocket status; old devices are ignored', async () => {
   const requests = [], sockets = [], timers = new Map();
@@ -209,7 +211,7 @@ function pageOf(options = {}) {
     put: async (path, value) => { calls.push([path, structuredClone(value)]); return value; }, post: async (...args) => calls.push(args), del: async (path) => calls.push(path),
     notify: (...args) => notifications.push(args), confirmAction: options.confirm || (async () => ({ confirmed: true })),
   };
-  const page = script('views/settings/ChatSettings.vue', env, 'action, safeAction, refresh, refreshSafely, clear, removeTurn, save, submit, config, triggers, history, memories, memoryDrafts, busy, error, refreshError, loaded, question, speak');
+  const page = script('views/settings/ChatSettings.vue', env, 'action, safeAction, refresh, refreshSafely, clear, removeTurn, save, submit, config, triggers, history, memories, memoryDrafts, busy, error, refreshError, loaded, question, speak, webSearchAvailable');
   return { ...page, state, calls, notifications, watches, unmount: () => unmount() };
 }
 test('save sends normalized triggers and action blocks duplicate submissions, reporting errors', async () => {
@@ -295,4 +297,22 @@ test('dismissed confirmation and unmounted page produce no writes or stale data'
   let ran = false;
   other.safeAction(async () => { ran = true; });
   assert.equal(ran, false);
+});
+
+test('search availability follows effective chat connection and preserves saved preference', async () => {
+  const h = pageOf();
+  h.state.config = { ai_config: { api_url: 'https://dashscope.aliyuncs.com/compatible-mode/v1' } };
+  h.config.connection = 'analysis';
+  h.config.api_url = 'https://api.deepseek.com/v1';
+  h.config.web_search_enabled = true;
+  assert.equal(h.webSearchAvailable.value, true);
+  h.config.connection = 'independent';
+  assert.equal(h.webSearchAvailable.value, false);
+  await h.save();
+  assert.equal(h.calls[0][1].web_search_enabled, true);
+  h.config.api_url = 'https://workspace.cn-beijing.maas.aliyuncs.com/compatible-mode/v1';
+  assert.equal(h.webSearchAvailable.value, true);
+  h.config.web_search_enabled = false;
+  await h.save();
+  assert.equal(h.calls[1][1].web_search_enabled, false);
 });

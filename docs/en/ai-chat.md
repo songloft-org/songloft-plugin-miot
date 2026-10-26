@@ -16,6 +16,14 @@ External song searches first collapse consecutive whitespace in the keyword and 
 
 “停止回答”, “退出对话”, and “结束对话” cancel the answer and close the window, optionally restoring music after a safe stop. “停止播放” keeps music stopped. New questions invalidate old tasks so late model responses cannot speak.
 
+## Web Search
+
+Enable and save “联网搜索” under the conversation model settings to send `enable_search: true` to the official Alibaba Cloud Model Studio API for chat requests. The model decides whether to search on each turn; enabling the option does not guarantee a search. It defaults to off for both fresh and upgraded configurations. A Model Studio model with web search support is required, and additional charges may apply; see the [official documentation](https://help.aliyun.com/en/model-studio/web-search).
+
+The switch supports official DashScope endpoints (including international and US endpoints) and workspace addresses under `*.maas.aliyuncs.com`. Availability follows the effective conversation connection, whether shared or independent. For other connections the switch is disabled; the saved preference is retained but inactive. The independent DeepSeek search API is not integrated. Command analysis, summaries, and memory extraction do not enable search.
+
+Search uses the existing timeout, streaming, and cancellation mechanisms. API errors are shown without automatically retrying with search disabled. This initial implementation does not provide forced search, search strategies, or a separate source list.
+
 ## Speech and Music Recovery
 
 Model SSE incrementally updates the current answer on the page, with status pushes throttled to at most once per 200 ms. Native speaker TTS always waits for the complete model answer. Answers are split at sentence boundaries into segments of up to 200 characters, with at most 1,200 characters spoken. Full answers remain in history. Model reasoning content is not spoken.

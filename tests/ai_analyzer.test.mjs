@@ -24,7 +24,7 @@ const aiRequest = loadSource('../src/utils/ai_request.ts', {});
 const { AIAnalyzer } = loadSource('../src/voicecmd/ai_analyzer.ts', {
   '../utils/ai_url': aiUrl,
   '../utils/ai_request': aiRequest,
-  '../utils/ai_thinking': loadSource('../src/utils/ai_thinking.ts', {}),
+  '../utils/ai_thinking': loadSource('../src/utils/ai_thinking.ts', { './ai_url': aiUrl }),
 });
 
 // Global songloft stub for logging in tests

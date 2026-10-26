@@ -10,6 +10,15 @@
 
 ## 条目
 
+### MIOT-021：联网搜索按实际问答连接适配，并与后台请求隔离
+
+- 范围：[songloft-org/songloft-plugin-miot#131](https://github.com/songloft-org/songloft-plugin-miot/issues/131)，基线 `0fb44b066edc772ca21a8d0b1bec429569f89afd`。
+- 证据：2026-10-26 核对官方文档，百炼支持对话请求顶层 `enable_search`，DeepSeek 独立搜索需要另一条调用链；不能给所有 OpenAI 兼容接口发送同一厂商参数。新增回归放入隔离旧版本后，11 项中 5 项因缺少配置默认值或搜索参数失败，其余隔离场景通过。
+- 规则与实现：首版仅在用户开启、实际连接为百炼官方端点且请求种类为 chat 时附加搜索参数。前后端共用端点判据，复用默认连接和独立连接均按实际地址判断；切换不支持的连接保留偏好但暂停生效。摘要、记忆提取及口令分析不启用搜索，开启也不证明模型实际进行了搜索。行为见 [AI 对话](docs/ai-chat.md#联网搜索)。
+- Done right：未提交工作树，Linux x86_64 / Node 22.17.1；1304 项插件测试、73 项前端测试、两层类型检查、QuickJS 字节码构建及包校验通过，最终格式调整后重跑受影响的 41 项测试与构建。Docker Chrome 121 在 1200px/390px 下实际点击开关、保存及刷新，通过真实配置路由和 ConfigManager 磁盘存储核对；不支持的独立连接禁用开关，切回复用百炼连接后保留偏好，页面异常为零。证据位于 `/tmp/miot-131-20261026/` 的测试、构建日志、`browser-result.json`、截图与 `verification.json`。
+- Not run：真实百炼付费 API、音箱发声、原生 WebView、远端 CI；没有专用测试凭证或本次设备验收。本次未修改公共宿主，未提交、推送或发布。
+- Seen 1× (2026-10-26)。状态：本地实现与验证完成。
+
 ### MIOT-020：独立歌曲续播必须生成可展示的队列，并贯通网页选曲与重载
 
 - 范围：[songloft-org/songloft-plugin-miot#130](https://github.com/songloft-org/songloft-plugin-miot/issues/130#issuecomment-6393443720)，基线 `cd32b8ffb0b69a2a6ae4d32bf56c712f7a941b13`。

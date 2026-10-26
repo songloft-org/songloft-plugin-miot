@@ -1,11 +1,12 @@
 import type { AIConfig } from '../types';
-import { aiChatCompletionsUrl } from '../utils/ai_url';
+import { aiChatCompletionsUrl, isDashScopeEndpoint } from '../utils/ai_url';
 import { requestAI } from '../utils/ai_request';
 import { canDisableDashScopeThinking } from '../utils/ai_thinking';
 import type { HTTPStream } from '@songloft/plugin-sdk';
 import { readChatStream, readStreamJSON, readStreamText } from './sse';
 export interface AIRequestControl {
   streaming?: boolean;
+  webSearch?: boolean;
   onProgress?: (text: string) => void;
 }
 export interface AIMessage {
@@ -93,7 +94,12 @@ export class AIClient {
           try {
             const value = await requestAI(endpoint, {
               method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${config.api_key}` },
-              body: JSON.stringify({ model: config.model, stream: streaming, messages, max_tokens: kind === 'chat' ? 2048 : 1200, ...(thinkingDisabled ? { enable_thinking: false } : {}) }),
+              body: JSON.stringify({
+                model: config.model, stream: streaming, messages,
+                max_tokens: kind === 'chat' ? 2048 : 1200,
+                ...(thinkingDisabled ? { enable_thinking: false } : {}),
+                ...(kind === 'chat' && control.webSearch === true && isDashScopeEndpoint(endpoint) ? { enable_search: true } : {}),
+              }),
             }, config.timeout, { kind, model: config.model, thinkingDisabled }, async (response) => {
               if (!response.ok)
                 throw new Error(`AI API error: ${response.status}`);

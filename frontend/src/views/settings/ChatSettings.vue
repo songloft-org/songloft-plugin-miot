@@ -2,6 +2,7 @@
 import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue';
 import { DEFAULT_CHAT_CONFIG } from '../../../../src/chat/types';
 import type { ChatConfig, ChatMemory, ChatTurn } from '../../../../src/chat/types';
+import { isDashScopeEndpoint } from '../../../../src/utils/ai_url';
 import { del, get, messageOf, post, put, query } from '../../api';
 import { confirmAction, deviceId, deviceName, managedDevices, notify, saveConfig, selectDevice, state } from '../../store';
 import SectionCard from '../../ui/SectionCard.vue';
@@ -24,6 +25,7 @@ const target = computed(() => ({ account_id: state.currentAccountId, device_id: 
 const targetQuery = computed(() => query(target.value));
 const lastContextTurns = ref(3);
 const contextEnabled = computed(() => config.context_turns > 0);
+const webSearchAvailable = computed(() => isDashScopeEndpoint(config.connection === 'independent' ? config.api_url : state.config.ai_config.api_url || ''));
 const dirty = computed(() => loaded.value && JSON.stringify({ ...config, trigger_words: triggers.value.split(/[、,，\n]/).map(v => v.trim()).filter(Boolean) }) !== savedConfig.value);
 function setContextEnabled(enabled: boolean) {
   if (!enabled && config.context_turns > 0) lastContextTurns.value = config.context_turns;
@@ -139,6 +141,10 @@ const safeAction = (run: () => Promise<void>) => { if (alive) void action(run); 
       <label class="chat-field">问答模型<SlInput v-model="config.model" aria-label="问答模型" placeholder="留空则使用默认模型" /></label>
       <SlButton v-if="config.connection === 'independent'" label="保存并获取模型" variant="outlined" :disabled="busy || !loaded" @click="safeAction(async () => { await save(); models = (await get<{ models: Array<{ id: string }> }>('/chat/models')).models; })" />
       <SlSelect :disabled="busy || !loaded" v-if="models.length" v-model="config.model" :options="models.map(m => ({ value: m.id, label: m.id }))" aria-label="可用问答模型" />
+      <SettingRow title="联网搜索" subtitle="由模型判断是否搜索，需使用支持该能力的百炼模型，可能产生额外费用。">
+        <SlSwitch v-model="config.web_search_enabled" :disabled="!webSearchAvailable" aria-label="联网搜索" />
+      </SettingRow>
+      <p v-if="!webSearchAvailable">当前连接不支持此开关，仅适用于百炼官方 API；已保存的联网搜索设置暂不生效。</p>
       <SlDisclosure title="高级设置" description="超时、角色、追问和模型兼容">
       <label class="chat-field">请求超时（1–30 秒）<SlInput :model-value="String(config.timeout)" type="number" aria-label="问答超时" @update:model-value="config.timeout = Number($event)" /></label>
       <label class="chat-field">角色提示词<textarea v-model="config.system_prompt" class="sl-input chat-textarea" aria-label="角色提示词" maxlength="4000"></textarea></label>

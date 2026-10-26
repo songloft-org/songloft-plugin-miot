@@ -128,6 +128,7 @@ export class AIChatService {
           songloft.log.info(`[AIChat] task=${task.turn.id} model_start_ms=${Date.now() - started}`);
           return await this.client.request(connection, this.memory.messages(snapshot, task.config, task.turn.user), 'chat', current, task.scope, {
             streaming: task.config.streaming_enabled,
+            webSearch: task.config.web_search_enabled,
             onProgress: text => {
               if (!current()) return;
               if (!task.turn.assistant) songloft.log.info(`[AIChat] task=${task.turn.id} first_content_ms=${Date.now() - started}`);

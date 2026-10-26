@@ -10,6 +10,15 @@ Include rule, scope, full owner/repo#number, failure/fix commit SHAs, actual val
 
 ## Entries
 
+### MIOT-021: Adapt web search to the effective chat connection and isolate background requests
+
+- Scope: [songloft-org/songloft-plugin-miot#131](https://github.com/songloft-org/songloft-plugin-miot/issues/131), baseline `0fb44b066edc772ca21a8d0b1bec429569f89afd`.
+- Evidence: official documentation checked on 2026-10-26 exposes a top-level `enable_search` chat parameter for Model Studio, while standalone DeepSeek search requires a separate call chain. The same vendor parameter must not be sent to every OpenAI-compatible endpoint. Against an isolated baseline, 5 of 11 new regressions fail because configuration defaults or search parameters are missing; the remaining isolation cases pass.
+- Rule and implementation: this initial version adds search only when the user enables it, the effective endpoint is official Model Studio, and the request kind is chat. Frontend and backend share endpoint detection for both shared and independent connections. Unsupported connections retain the preference but suspend its effect. Summaries, memory extraction, and command analysis do not enable search; enabling the option does not prove a search occurred. See [AI chat](docs/en/ai-chat.md#web-search).
+- Done right: uncommitted worktree on Linux x86_64 / Node 22.17.1; 1304 plugin tests, 73 frontend tests, both type checks, QuickJS bytecode build, and package validation pass. After final formatting, the 41 affected tests and build were rerun. Docker Chrome 121 at 1200px/390px uses real clicks, saves, and reloads, checking the actual configuration routes and ConfigManager disk storage. An unsupported independent connection disables the switch; returning to the shared Model Studio connection preserves the preference. No page exceptions occurred. Evidence is in `/tmp/miot-131-20261026/`: test/build logs, `browser-result.json`, screenshots, and `verification.json`.
+- Not run: real paid Model Studio API, speaker audio, native WebView, or remote CI; no dedicated test credentials or device acceptance were available for this task. The public host was not modified. No commit, push, or release was performed.
+- Seen 1× (2026-10-26). Status: local implementation and validation complete.
+
 ### MIOT-020: Standalone continuation needs a visible queue preserved through frontend selection and reload
 
 - Scope: [songloft-org/songloft-plugin-miot#130](https://github.com/songloft-org/songloft-plugin-miot/issues/130#issuecomment-6393443720), baseline `cd32b8ffb0b69a2a6ae4d32bf56c712f7a941b13`.

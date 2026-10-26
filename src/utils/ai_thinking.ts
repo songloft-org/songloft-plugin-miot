@@ -1,6 +1,8 @@
+import { isDashScopeEndpoint } from './ai_url';
+
 /** 仅百炼官方端点的已知混合思考模型使用非标准参数，避免影响其它兼容接口。 */
 export function canDisableDashScopeThinking(endpoint: string, model: string): boolean {
-  const isDashScope = /^https?:\/\/(?:dashscope(?:-intl|-us)?\.aliyuncs\.com|[a-z0-9.-]+\.maas\.aliyuncs\.com)(?::\d+)?\//i.test(endpoint);
+  const isDashScope = isDashScopeEndpoint(endpoint);
   const hybridModel = /^qwen3\.[5-8]-(?:plus|flash)(?:-latest|-\d{4}-\d{2}-\d{2})?$/i.test(model);
   const legacyHybrid = /^qwen-(plus|flash)(?:-(latest|\d{4}-\d{2}-\d{2}))?$/i.exec(model);
   const legacySupported = legacyHybrid !== null && (!legacyHybrid[2] || legacyHybrid[2].toLowerCase() === 'latest' ||

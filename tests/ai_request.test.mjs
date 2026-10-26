@@ -158,7 +158,7 @@ test('network diagnostics redact URLs normalized by the host or containing redir
 });
 
 const aiUrl = loadSource('../src/utils/ai_url.ts');
-const aiThinking = loadSource('../src/utils/ai_thinking.ts');
+const aiThinking = loadSource('../src/utils/ai_thinking.ts', { './ai_url': aiUrl });
 const aiAnalyzer = loadSource('../src/voicecmd/ai_analyzer.ts', {
   '../utils/ai_url': aiUrl, '../utils/ai_request': aiRequest, '../utils/ai_thinking': aiThinking,
 });

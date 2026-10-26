@@ -19,6 +19,11 @@
 /** 已知 OpenAI 兼容版本段：/v1（标准）~ /v4（智谱等） */
 const KNOWN_VERSION_SEG = /\/(v1|v2|v3|v4)$/i;
 
+/** 百炼官方端点；前后端共用，避免向其它兼容服务发送厂商参数。 */
+export function isDashScopeEndpoint(endpoint: string): boolean {
+  return /^https?:\/\/(?:dashscope(?:-intl|-us)?\.aliyuncs\.com|[a-z0-9.-]+\.maas\.aliyuncs\.com)(?::\d+)?(?:\/|$)/i.test(endpoint.trim());
+}
+
 /** 归一化为「已包含版本段前缀」的 base URL（无尾斜杠） */
 export function normalizeAiBaseUrl(apiUrl: string): string {
   let u = (apiUrl || '').trim();
