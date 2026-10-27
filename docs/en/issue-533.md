@@ -55,3 +55,31 @@ Pre-commit revalidation: fast-forwarded to remote `22cc42dcbd992782ab0e64becdb49
 Not run: audible L15A playback, coexistence of firmware-native and plugin timers, real cloud conversation latency, long-running use, remote CI, or official release. There are no frontend interaction changes; browser operations were not run. Automation does not establish actual silent intervals; the reporter's device still needs verification.
 
 The above records local validation; no installation on a real speaker. Subsequent commits, CI, automatic publication, and replies are tracked in the delivery comment on #533. Keep the Issue open pending device acceptance. Commit: `fix(voice): 修复语音定时后的续播并避免重复确认`, with `songloft-org/songloft#533` in the body.
+
+## 2026-10-27: No recovery after a native alarm/reminder (investigation, unfixed)
+
+The [new report](https://github.com/songloft-org/songloft/issues/533#issuecomment-6432369965) describes music failing to resume after dismissing a 10:35 alarm. Acceptance of the earlier sleep-timer fix does not establish support for native alarms.
+
+The attachment `songloft-logs-20261027-103641.zip` (SHA-256 `6c1b06f8d1b7c8919b462c50a4d827ed286a20f9af9c1a882bc77d349a4b5fa3`) records:
+
+- At 10:31:33, a resume command restarts the current song. At 10:31:54, “remind me to check my phone at 10:35” arrives with a native reply confirming that time.
+- At the same time, landing verification reports `status=0`, marks that song unplayable, advances, and registers a 306-second timer. This is a separate interruption while setting the reminder; missing raw state prevents attributing it to the same cause as the later stop.
+- At 10:35:46, `External stop confirmed (status=0, position=0s), cancelling auto-next` is followed by `Playback stopped pushToDevice=false`. This occurs approximately 230 seconds after timer registration at 10:31:56, before its 306-second natural deadline. External-stop detection causes the stop.
+- The relevant interval contains no dismissal conversation, raw `player_get_play_status` response, or subsequent recovery URL. The stop log omits `hasPosition`; zero alone cannot distinguish a real reset from missing media details or establish when the alarm ended.
+- The last recorded MIoT update is `2026.10.22.0` on October 22. This is not independent verification of the user's current installed version.
+
+Both release source `f65146c762a11000ce9a12866fbbc742e027de26` and current main `b1d25e133aa547652ebb80cabc0b0264603d8d42` only attempt hourly recovery when `hourly_chime_resume_enabled` is enabled and the interruption falls within 90 seconds after the hour. 10:35 is outside that window. There is no native alarm/reminder state detection. Extending the window or automatically resuming every idle state also changes the meaning of deliberate button/App stops. Recovery after setting a reminder and recovery after its future ringing require separate handling.
+
+On 2026-10-27, Linux amd64 / Node 22.17.1, a copied test runner outside the worktree loaded current main sources. A synthetic 10:35:06 case with confirmed playback, 190 seconds elapsed in a 306-second song, and consecutive fresh idle samples reproduced the same stop at 10:35:46: `stopped`, no recovery URL, and no next-track timer, even with hourly recovery enabled. This proves the existing branch behavior, not real device state or audible playback. It and three existing window/stop guards passed:
+
+```bash
+node --experimental-strip-types --test --test-name-pattern='issue 533 alarm at 10:35|outside the 90-second window|ordinary stop cadence' /tmp/songloft-533-alarm-20261027/repro/tests/player_failures.test.mjs
+```
+
+Evidence is under `/tmp/songloft-533-alarm-20261027/`: the attachment, `logs/`, `repro/`, and `repro.log`. Production source and repository tests are unchanged. Parent baseline: `f15c0c919693e508fc91dc0448a7304af7d219a9`; existing dirty Lynx changes were preserved.
+
+Next, use the existing Voice Settings debug-log switch to capture raw state without adding queries or changing control behavior. Record reminder setup, ringing start, dismissal method (exact spoken command/button/App), ringing end, and manual resume times, plus a deliberate pause for comparison. Check whether actual responses expose usable alarm identity or state before defining recovery conditions; alarm fields in a cloud device protocol do not prove that this firmware returns them through ubus. A spoken “stop” dismissing an alarm must also be distinguished from stopping music.
+
+Not run: physical L15A, raw alarm/reminder state capture, interruption during reminder setup, latest-plugin device retest, long-running playback, full build or test suite (investigation and documentation only). At the investigation stage, no commit, push, release, comment, or Issue closure was performed.
+
+Follow-up decision on 2026-10-27: the user chose a direct reply recommending “continue playing” after dismissing the alarm, without expanding automatic recovery. The authorized [Issue reply](https://github.com/songloft-org/songloft/issues/533#issuecomment-6432806582) was posted and read back, explaining state-identification limits and the manual workaround. The Issue remains open. If manual recovery also fails, request its time and logs. This task preserves investigation documentation only, with no production behavior change or plugin release.

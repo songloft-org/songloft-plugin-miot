@@ -10,6 +10,15 @@ Include rule, scope, full owner/repo#number, failure/fix commit SHAs, actual val
 
 ## Entries
 
+### MIOT-022: Native alarm recovery cannot be inferred from the hourly window or idle state
+
+- Scope: [the alarm follow-up to songloft-org/songloft#533](https://github.com/songloft-org/songloft/issues/533#issuecomment-6432369965), plugin baseline `b1d25e133aa547652ebb80cabc0b0264603d8d42`.
+- Evidence: on 2026-10-27 the attachment confirms a 10:35 reminder and an external-stop cancellation at 10:35:46, but omits raw state, dismissal wording, and the end time. Both installed-release source and main only support opt-in recovery within 90 seconds after the hour. Device acceptance of the earlier sleep-timer fix does not establish native alarm support. Landing verification also fails while setting the reminder and requires separate investigation.
+- Rule: distinguish sleep timers, voice interruption during reminder setup, future alarm ringing, and deliberate music stops. `status=0, position=0` does not establish alarm completion. Use the existing debug switch to inspect actual response fields and dismissal methods before defining recovery. A wider window or generic idle recovery changes deliberate-stop semantics and requires a product decision.
+- Done right: an external synthetic 10:35 reproduction using current sources produces the same stop log, no recovery URL, and timer cancellation. It and three existing window/stop guards pass. See the [#533 record](docs/en/issue-533.md) for bilingual findings, attachment hash, commands, and evidence. Production behavior is unchanged.
+- Not run: physical L15A, raw alarm state, latest-plugin device retest, full build or suite. Investigation only; no fix or release.
+- Seen 1× (2026-10-27). Status: the user chose the manual “continue playing” workaround; the [reply was posted](https://github.com/songloft-org/songloft/issues/533#issuecomment-6432806582). Automatic recovery was not expanded; reliable alarm identification still lacks evidence.
+
 ### MIOT-021: Adapt web search to the effective chat connection and isolate background requests
 
 - Scope: [songloft-org/songloft-plugin-miot#131](https://github.com/songloft-org/songloft-plugin-miot/issues/131), baseline `0fb44b066edc772ca21a8d0b1bec429569f89afd`.
