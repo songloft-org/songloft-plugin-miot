@@ -6,6 +6,7 @@ import { chatConnection, chatScope } from '../chat/types';
 import type { ChatConfig } from '../chat/types';
 import { aiModelsUrl } from '../utils/ai_url';
 import { requestAI } from '../utils/ai_request';
+import { aiRequestHeaders } from '../utils/ai_headers';
 export function chatBody(req: HTTPRequest): Record<string, unknown> {
   const raw = !req.body ? '{}' : typeof req.body === 'string' ? req.body : decodeURIComponent(Array.from(req.body).map(byte => '%' + byte.toString(16).padStart(2, '0')).join(''));
   let parsed: unknown;
@@ -56,7 +57,7 @@ export function registerChatHandlers(router: Router, config: ConfigManager, chat
     const connection = chatConnection(await config.getChatConfig(), await config.getAIConfig());
     if (!connection.api_url || !connection.api_key)
       throw new Error('AI 对话连接配置不完整');
-    const models = await requestAI(aiModelsUrl(connection.api_url), { method: 'GET', headers: { Authorization: `Bearer ${connection.api_key}` } }, connection.timeout, { kind: 'models' }, async (response) => {
+    const models = await requestAI(aiModelsUrl(connection.api_url), { method: 'GET', headers: aiRequestHeaders(connection) }, connection.timeout, { kind: 'models' }, async (response) => {
       if (!response.ok)
         throw new Error(`模型列表请求失败：${response.status}`);
       const result = await response.json();

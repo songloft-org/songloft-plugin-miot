@@ -33,7 +33,7 @@ for (const stored of [{}, { conversation_poll_interval: 1 }, { conversation_poll
   test(`config defaults to 2 seconds and preserves stored interval ${stored.conversation_poll_interval}`, async () => {
     const original = globalThis.songloft;
     const { ConfigManager } = loadSource('../src/config/manager.ts', {
-      '../chat/types': loadSource('../src/chat/types.ts', {}),
+      '../chat/types': loadSource('../src/chat/types.ts', { '../utils/ai_headers': loadSource('../src/utils/ai_headers.ts', {}) }),
       '../memory/types': loadSource('../src/memory/types.ts', {}),
       '../voicecmd/defaults': loadSource('../src/voicecmd/defaults.ts', {}),
     });

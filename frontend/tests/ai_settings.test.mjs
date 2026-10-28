@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import test from 'node:test';
 import ts from 'typescript';
+import { loader } from '../../tests/chat_loader.mjs';
+const { parseAIHeaders } = loader()('../src/utils/ai_headers.ts');
 const flush = async () => {
   for (let i = 0; i < 30; i++)
     await Promise.resolve();
@@ -13,14 +15,14 @@ function harness(options = {}) {
   let mounted, unmounted;
   const source = fs.readFileSync(new URL('../src/views/settings/AIModelSettings.vue', import.meta.url), 'utf8').match(/<script setup lang="ts">([\s\S]*?)<\/script>/)[1].replace(/^import .*;\n/gm, '');
   const env = {
-    state, navigation: { settingsCategory: '' }, AI_PRESET_PROVIDERS: [{ id: 'preset', name: '测试模型服务商', baseUrl: 'https://preset.test/v1', defaultModel: 'preset-model', apiKeyUrl: 'https://preset.test/key' }],
+    parseAIHeaders, state, navigation: { settingsCategory: '' }, AI_PRESET_PROVIDERS: [{ id: 'preset', name: '测试模型服务商', baseUrl: 'https://preset.test/v1', defaultModel: 'preset-model', apiKeyUrl: 'https://preset.test/key' }],
     ref: value => ({ value }), computed: fn => ({ get value() { return fn(); } }), watch: (_get, callback) => watchers.push(callback), onMounted: fn => { mounted = fn; }, onUnmounted: fn => { unmounted = fn; },
     notify: (...args) => notifications.push(args), messageOf: e => e.message,
     saveConfig: options.save || (async (patch) => { calls.push(['save', structuredClone(patch)]); Object.assign(state.config, patch); }),
     get: options.get || (async (path) => { calls.push(['get', path]); return { models: [{ id: 'old' }, { id: 'new' }] }; }),
     post: options.post || (async (path, body) => { calls.push(['post', path, body]); return { action: 'play_song', confidence: 'high' }; }),
   };
-  const js = ts.transpileModule(source + '\nreturn {applyPreset, selectModel, refreshModels, enableAnalysis, testAnalysis, selectedPreset, customModel, models, loading, modelError, connectionState, testQuery, testResult, testBusy};', { compilerOptions: { target: ts.ScriptTarget.ES2020, module: ts.ModuleKind.CommonJS } }).outputText;
+  const js = ts.transpileModule(source + '\nreturn {applyPreset, selectModel, refreshModels, enableAnalysis, testAnalysis, selectedPreset, customModel, models, loading, modelError, connectionState, testQuery, testResult, testBusy, customHeaders};', { compilerOptions: { target: ts.ScriptTarget.ES2020, module: ts.ModuleKind.CommonJS } }).outputText;
   const page = new Function(...Object.keys(env), js)(...Object.values(env));
   return { ...page, state, calls, notifications, watchers, mount: () => mounted(), unmount: () => unmounted() };
 }
@@ -160,4 +162,28 @@ test('unmount during connection save prevents a subsequent analysis network requ
   await pending;
   assert.equal(posts, 0);
   assert.equal(h.testResult.value, '');
+});
+test('model detection saves custom headers and invalid JSON blocks the request', async () => {
+  const h = harness();
+  h.customHeaders.value = '{"X-Opencode-Session":"stable-session"}';
+  await h.refreshModels();
+  assert.deepEqual(h.calls[0][1].ai_config.custom_headers, { 'x-opencode-session': 'stable-session' });
+  assert.equal(h.connectionState.value, 'ok');
+  const count = h.calls.length;
+  h.customHeaders.value = '{bad';
+  await h.refreshModels();
+  assert.equal(h.calls.length, count);
+  assert.equal(h.connectionState.value, 'error');
+  assert.match(h.modelError.value, /JSON/);
+});
+test('changing custom headers invalidates a pending model-list result', async () => {
+  const wait = deferred(), h = harness({ get: () => wait.promise });
+  const pending = h.refreshModels();
+  await flush();
+  h.customHeaders.value = '{"x-session":"new-session"}';
+  h.watchers[0]();
+  wait.resolve({ models: [{ id: 'old-session-model' }] });
+  await pending;
+  assert.deepEqual(h.models.value, []);
+  assert.equal(h.connectionState.value, 'idle');
 });

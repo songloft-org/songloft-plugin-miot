@@ -6,6 +6,7 @@
 import type { AIConfig, AIAnalysisResult } from '../types';
 import { aiChatCompletionsUrl } from '../utils/ai_url';
 import { requestAI } from '../utils/ai_request';
+import { aiRequestHeaders } from '../utils/ai_headers';
 import { canDisableDashScopeThinking } from '../utils/ai_thinking';
 
 /** AI System Prompt */
@@ -125,10 +126,7 @@ export class AIAnalyzer {
 
     return requestAI(endpoint, {
       method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${config.api_key}`,
-        'Content-Type': 'application/json',
-      },
+      headers: aiRequestHeaders(config),
       body: JSON.stringify(body),
     }, config.timeout, { kind: 'analysis', model: config.model, thinkingDisabled, queryChars: query.length }, async (resp, requestId) => {
       if (!resp.ok) {

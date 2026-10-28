@@ -12,9 +12,12 @@ import SlSwitch from '../../ui/SlSwitch.vue';
 import SlButton from '../../ui/SlButton.vue';
 import SlSelect from '../../ui/SlSelect.vue';
 import SlDisclosure from '../../ui/SlDisclosure.vue';
+import AIHeadersField from '../../ui/AIHeadersField.vue';
+import { parseAIHeaders } from '../../../../src/utils/ai_headers';
 
 const config = reactive<ChatConfig>({ ...DEFAULT_CHAT_CONFIG, trigger_words: [...DEFAULT_CHAT_CONFIG.trigger_words] });
 const triggers = ref(config.trigger_words.join('、'));
+const customHeaders = ref(JSON.stringify(config.custom_headers || {}, null, 2));
 const savedConfig = ref(''), streamingAvailable = ref<boolean | null>(null);
 const loaded = ref(false), busy = ref(false), error = ref(''), refreshError = ref(''), question = ref(''), speak = ref(true);
 const history = ref<ChatTurn[]>([]), memories = ref<ChatMemory[]>([]), summary = ref(''), offset = ref(0), total = ref(0);
@@ -26,7 +29,7 @@ const targetQuery = computed(() => query(target.value));
 const lastContextTurns = ref(3);
 const contextEnabled = computed(() => config.context_turns > 0);
 const webSearchAvailable = computed(() => isDashScopeEndpoint(config.connection === 'independent' ? config.api_url : state.config.ai_config.api_url || ''));
-const dirty = computed(() => loaded.value && JSON.stringify({ ...config, trigger_words: triggers.value.split(/[、,，\n]/).map(v => v.trim()).filter(Boolean) }) !== savedConfig.value);
+const dirty = computed(() => loaded.value && (JSON.stringify({ ...config, trigger_words: triggers.value.split(/[、,，\n]/).map(v => v.trim()).filter(Boolean) }) !== savedConfig.value || customHeaders.value !== JSON.stringify(config.custom_headers || {}, null, 2)));
 function setContextEnabled(enabled: boolean) {
   if (!enabled && config.context_turns > 0) lastContextTurns.value = config.context_turns;
   config.context_turns = enabled ? lastContextTurns.value : 0;
@@ -55,8 +58,10 @@ async function refresh() {
   history.value = h.history; total.value = h.total; summary.value = h.summary; memories.value = m.memories;
 }
 async function save() {
+  if (config.connection === 'independent') config.custom_headers = parseAIHeaders(customHeaders.value);
   config.trigger_words = triggers.value.split(/[、,，\n]/).map(v => v.trim()).filter(Boolean);
   Object.assign(config, await put<ChatConfig>('/chat/config', config));
+  customHeaders.value = JSON.stringify(config.custom_headers || {}, null, 2);
   savedConfig.value = JSON.stringify(config);
   notify('AI 对话设置已保存', 'success');
 }
@@ -97,7 +102,7 @@ watch([
   () => state.chatStatus?.phase,
   () => state.chatStatus?.memory_revision,
 ], () => { void refreshSafely(); });
-onMounted(() => { void action(async () => { Object.assign(config, await get<ChatConfig>('/chat/config')); triggers.value = config.trigger_words.join('、'); savedConfig.value = JSON.stringify(config); lastContextTurns.value = config.context_turns || 3; loaded.value = true; void get<{ streaming: boolean }>('/chat/capabilities').then(value => { if (alive) streamingAvailable.value = value.streaming; }).catch(() => { }); await refresh(); }); });
+onMounted(() => { void action(async () => { Object.assign(config, await get<ChatConfig>('/chat/config')); triggers.value = config.trigger_words.join('、'); customHeaders.value = JSON.stringify(config.custom_headers || {}, null, 2); savedConfig.value = JSON.stringify(config); lastContextTurns.value = config.context_turns || 3; loaded.value = true; void get<{ streaming: boolean; }>('/chat/capabilities').then(value => { if (alive) streamingAvailable.value = value.streaming; }).catch(() => { }); await refresh(); }); });
 let alive = true;
 onUnmounted(() => { alive = false; refreshVersion++; });
 const safeAction = (run: () => Promise<void>) => { if (alive) void action(run); };
@@ -136,8 +141,9 @@ const safeAction = (run: () => Promise<void>) => { if (alive) void action(run); 
       <template v-if="config.connection === 'independent'">
         <label class="chat-field">API 地址<SlInput v-model="config.api_url" type="url" aria-label="问答 API 地址" /></label>
         <label class="chat-field">API 密钥<SlInput v-model="config.api_key" type="password" aria-label="问答 API 密钥" /></label>
+        <AIHeadersField v-model="customHeaders" label="问答自定义请求头" />
       </template>
-      <p v-if="config.connection === 'analysis'">默认模型：{{ state.config.ai_config.model || '尚未配置' }}。启用对话不需要开启口令分析。</p>
+      <p v-if="config.connection === 'analysis'">默认模型：{{ state.config.ai_config.model || '尚未配置' }}。同时复用默认连接的自定义请求头。启用对话不需要开启口令分析。</p>
       <label class="chat-field">问答模型<SlInput v-model="config.model" aria-label="问答模型" placeholder="留空则使用默认模型" /></label>
       <SlButton v-if="config.connection === 'independent'" label="保存并获取模型" variant="outlined" :disabled="busy || !loaded" @click="safeAction(async () => { await save(); models = (await get<{ models: Array<{ id: string }> }>('/chat/models')).models; })" />
       <SlSelect :disabled="busy || !loaded" v-if="models.length" v-model="config.model" :options="models.map(m => ({ value: m.id, label: m.id }))" aria-label="可用问答模型" />

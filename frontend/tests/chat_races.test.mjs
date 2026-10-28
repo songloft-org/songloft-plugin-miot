@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import test from 'node:test';
 import ts from 'typescript';
 import { loader } from '../../tests/chat_loader.mjs';
+const { parseAIHeaders } = loader()('../src/utils/ai_headers.ts');
 const { isDashScopeEndpoint } = loader()('../src/utils/ai_url.ts');
 const deferred = () => { let resolve, reject; const promise = new Promise((r, e) => { resolve = r; reject = e; }); return { promise, resolve, reject }; };
 const flush = async () => {
@@ -61,7 +62,7 @@ test('history switch restores the selected turn count and one save persists inde
 function script(file, env, exports) {
   const source = fs.readFileSync(new URL(`../src/${file}`, import.meta.url), 'utf8').match(/<script setup lang="ts">([\s\S]*?)<\/script>/)[1].replace(/^import .*;\n/gm, '');
   const js = ts.transpileModule(source + `\nreturn { ${exports} };`, { compilerOptions: { target: ts.ScriptTarget.ES2020, module: ts.ModuleKind.CommonJS } }).outputText;
-  return new Function('isDashScopeEndpoint', ...Object.keys(env), js)(isDashScopeEndpoint, ...Object.values(env));
+  return new Function('isDashScopeEndpoint', 'parseAIHeaders', ...Object.keys(env), js)(isDashScopeEndpoint, parseAIHeaders, ...Object.values(env));
 }
 test('late HTTP chat status cannot overwrite a newer WebSocket status; old devices are ignored', async () => {
   const requests = [], sockets = [], timers = new Map();
@@ -211,9 +212,27 @@ function pageOf(options = {}) {
     put: async (path, value) => { calls.push([path, structuredClone(value)]); return value; }, post: async (...args) => calls.push(args), del: async (path) => calls.push(path),
     notify: (...args) => notifications.push(args), confirmAction: options.confirm || (async () => ({ confirmed: true })),
   };
-  const page = script('views/settings/ChatSettings.vue', env, 'action, safeAction, refresh, refreshSafely, clear, removeTurn, save, submit, config, triggers, history, memories, memoryDrafts, busy, error, refreshError, loaded, question, speak, webSearchAvailable');
+  const page = script('views/settings/ChatSettings.vue', env, 'action, safeAction, refresh, refreshSafely, clear, removeTurn, save, submit, config, triggers, history, memories, memoryDrafts, busy, error, refreshError, loaded, question, speak, webSearchAvailable, customHeaders, dirty');
   return { ...page, state, calls, notifications, watches, unmount: () => unmount() };
 }
+test('independent chat saves and clears custom headers, rejecting invalid JSON before HTTP', async () => {
+  const h = pageOf();
+  h.loaded.value = true;
+  h.config.connection = 'independent';
+  h.customHeaders.value = '{"x-opencode-session":"independent"}';
+  assert.equal(h.dirty.value, true);
+  await h.save();
+  assert.deepEqual(h.calls[0][1].custom_headers, { 'x-opencode-session': 'independent' });
+  assert.equal(h.dirty.value, false);
+  h.customHeaders.value = '{bad';
+  await h.action(h.save);
+  assert.match(h.error.value, /JSON/);
+  assert.equal(h.calls.length, 1);
+  h.customHeaders.value = '';
+  await h.save();
+  assert.deepEqual(h.calls[1][1].custom_headers, {});
+  assert.equal(h.dirty.value, false);
+});
 test('save sends normalized triggers and action blocks duplicate submissions, reporting errors', async () => {
   const h = pageOf(), wait = deferred();
   h.triggers.value = ' 问一下，问一问、请问\n问题';

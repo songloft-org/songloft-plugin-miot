@@ -33,11 +33,12 @@ export async function requestAI<T>(
   const started = Date.now();
   const safeUrl = url.split(/[?#]/)[0].replace(/^(https?:\/\/)[^/]*@/i, '$1');
   const apiKey = (options.headers.Authorization || '').replace(/^Bearer\s+/i, '');
+  const credentials = [...new Set([apiKey, ...Object.entries(options.headers).filter(([name]) => name.toLowerCase() !== 'content-type').map(([, value]) => value)].filter(Boolean))].sort((a, b) => b.length - a.length);
   const redact = (value: string): string => {
     // Go 网络错误中的 URL 可能已移除 userinfo/fragment，不能只匹配原始配置。
     const withoutUrl = value.replace(/https?:\/\/[^\s"'<>]+/gi, matched =>
       matched.split(/[?#]/)[0].replace(/^(https?:\/\/)[^/]*@/i, '$1'));
-    return (apiKey ? withoutUrl.split(apiKey).join('***') : withoutUrl).replace(/[\r\n]/g, ' ').slice(0, 500);
+    return credentials.reduce((text, secret) => text.split(secret).join('***'), withoutUrl).replace(/[\r\n]/g, ' ').slice(0, 500);
   };
   const prefix = `[AIRequest] id=${requestId} kind=${context.kind}`;
   const modelHint = context.model ? `，模型 ${redact(context.model)}` : '';

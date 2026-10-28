@@ -11,6 +11,7 @@ export interface AIConfig {
   enabled?: boolean;
   api_url?: string;
   api_key?: string;
+  custom_headers?: Record<string, string>;
   model?: string;
   timeout?: number;
 }

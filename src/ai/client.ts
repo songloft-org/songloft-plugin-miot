@@ -1,6 +1,7 @@
 import type { AIConfig } from '../types';
 import { aiChatCompletionsUrl, isDashScopeEndpoint } from '../utils/ai_url';
 import { requestAI } from '../utils/ai_request';
+import { aiRequestHeaders } from '../utils/ai_headers';
 import { canDisableDashScopeThinking } from '../utils/ai_thinking';
 import type { HTTPStream } from '@songloft/plugin-sdk';
 import { readChatStream, readStreamJSON, readStreamText } from './sse';
@@ -93,7 +94,7 @@ export class AIClient {
           this.activeRequests.set(id, { scope, cancel });
           try {
             const value = await requestAI(endpoint, {
-              method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${config.api_key}` },
+              method: 'POST', headers: aiRequestHeaders(config),
               body: JSON.stringify({
                 model: config.model, stream: streaming, messages,
                 max_tokens: kind === 'chat' ? 2048 : 1200,

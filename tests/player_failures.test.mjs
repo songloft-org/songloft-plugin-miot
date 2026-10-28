@@ -769,7 +769,7 @@ for (const api of ['music', 'url']) {
       for (const idleStatus of [0, 3]) {
         test(`issue 533 integrated: monitor to dispatcher to ${api}, statusPage=${statusPage}, speed=${speed}, idle=${idleStatus}`, async () => {
           await withClock(async h => {
-            const chatTypes = loadSource('../src/chat/types.ts', {});
+            const chatTypes = loadSource('../src/chat/types.ts', { '../utils/ai_headers': loadSource('../src/utils/ai_headers.ts', {}) });
             const { VoiceDispatcher } = loadSource('../src/voicecmd/dispatcher.ts', { '../chat/types': chatTypes, '../conversation/query': conversation });
             const { PlaybackCoordinator } = loadSource('../src/playback/coordinator.ts', { '../chat/types': chatTypes });
             const { ConversationMonitor } = loadSource('../src/conversation/monitor.ts', { '../utils/debug': { isDebugLog: () => false } });
@@ -3340,6 +3340,7 @@ test('only one recovery is attempted per manager in the same hourly window', asy
 });
 
 const { registerConfigHandlers } = loadSource('../src/handlers/config.ts', {
+  '../utils/ai_headers': loadSource('../src/utils/ai_headers.ts', {}),
   '@songloft/plugin-sdk': { jsonResponse: (value, status = 200) => ({ ...value, status }) },
   '../config/manager': {}, '../conversation/monitor': {}, '../schedule/scheduler': {},
   '../voicecmd/engine': {}, '../memory': { normalizeMemoryMaxRecords: Number },
@@ -3552,7 +3553,7 @@ test('active chat detects volume controls without enabling the music engine', as
 
 test('DLNA takeover invalidates pending voice analysis before it can replace the cast', async () => {
   await withClock(async () => {
-    const chatTypes = loadSource('../src/chat/types.ts', {});
+    const chatTypes = loadSource('../src/chat/types.ts', { '../utils/ai_headers': loadSource('../src/utils/ai_headers.ts', {}) });
     const { VoiceDispatcher } = loadSource('../src/voicecmd/dispatcher.ts', { '../chat/types': chatTypes, '../conversation/query': conversation });
     const { PlaybackCoordinator } = loadSource('../src/playback/coordinator.ts', { '../chat/types': chatTypes });
     const { manager } = player(), wait = deferred(), calls = [];

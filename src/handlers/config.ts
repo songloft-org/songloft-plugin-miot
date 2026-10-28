@@ -13,6 +13,7 @@ import { setHostBaseUrl, callHostAPI } from '../utils/http';
 import { setDebugLog } from '../utils/debug';
 import type { SearchPriority } from '../types';
 import { DEFAULT_MUSIC_API_MODELS } from '../mina/constants';
+import { validateAIHeaders } from '../utils/ai_headers';
 
 const SEARCH_PRIORITIES: SearchPriority[] = ['parallel', 'local_first', 'external_first'];
 
@@ -356,6 +357,9 @@ export function registerConfigHandlers(
       if (body.ai_config !== undefined) {
         const aiConfig = await configManager.getAIConfig();
         const newAI = body.ai_config as Record<string, unknown>;
+        if (newAI.custom_headers !== undefined) {
+          aiConfig.custom_headers = validateAIHeaders(newAI.custom_headers);
+        }
         if (typeof newAI.enabled === 'boolean') {
           aiConfig.enabled = newAI.enabled;
         }

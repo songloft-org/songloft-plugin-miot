@@ -6,6 +6,8 @@ import SlButton from '../../ui/SlButton.vue';
 import SlInput from '../../ui/SlInput.vue';
 import SlSelect from '../../ui/SlSelect.vue';
 import SlSwitch from '../../ui/SlSwitch.vue';
+import AIHeadersField from '../../ui/AIHeadersField.vue';
+import { parseAIHeaders } from '../../../../src/utils/ai_headers';
 import { get, post } from '../../api';
 import { AI_PRESET_PROVIDERS } from '../../aiPresets';
 import { messageOf, notify, saveConfig, state } from '../../store';
@@ -16,6 +18,7 @@ const models = ref<Array<{ id: string; ownedBy?: string }>>([]);
 const loading = ref(false), modelError = ref(''), latency = ref<number | null>(null);
 const connectionState = ref<'idle' | 'loading' | 'ok' | 'error'>('idle');
 const testQuery = ref(''), testResult = ref(''), testBusy = ref(false);
+const customHeaders = ref(JSON.stringify(state.config.ai_config.custom_headers || {}, null, 2));
 let alive = true, requestVersion = 0;
 const presetOptions = [
   { value: 'custom', label: '自定义（OpenAI 兼容）' },
@@ -25,7 +28,11 @@ const preset = computed(() => AI_PRESET_PROVIDERS.find(p => p.id === selectedPre
 const CUSTOM_MODEL = '__custom_model__';
 const modelOptions = computed(() => [...models.value.map(m => ({ value: m.id, label: m.ownedBy ? `${m.id} (${m.ownedBy})` : m.id, searchText: m.id })), { value: CUSTOM_MODEL, label: '自定义模型名…' }]);
 const modelValue = computed(() => customModel.value ? CUSTOM_MODEL : state.config.ai_config.model || '');
-const signature = () => JSON.stringify([state.config.ai_config.api_url, state.config.ai_config.api_key]);
+const signature = () => {
+  let headers: unknown = customHeaders.value;
+  try { headers = parseAIHeaders(customHeaders.value); } catch { }
+  return JSON.stringify([state.config.ai_config.api_url, state.config.ai_config.api_key, headers]);
+};
 const connectionText = computed(() => ({ idle: '尚未检测连接', loading: '检测连接中…', ok: `已连接 · ${latency.value} ms`, error: `连接失败：${modelError.value}` })[connectionState.value]);
 
 function syncPreset() {
@@ -33,7 +40,10 @@ function syncPreset() {
   selectedPreset.value = AI_PRESET_PROVIDERS.find(p => p.baseUrl.replace(/\/+$/, '') === url)?.id || 'custom';
 }
 async function saveConnection() {
-  await saveConfig({ ai_config: { ...state.config.ai_config } });
+  let headers: Record<string, string>;
+  try { headers = parseAIHeaders(customHeaders.value); }
+  catch (error) { notify(messageOf(error), 'error'); throw error; }
+  await saveConfig({ ai_config: { ...state.config.ai_config, custom_headers: headers } });
 }
 async function applyPreset(id: string) {
   selectedPreset.value = id;
@@ -90,6 +100,7 @@ async function testAnalysis() {
   finally { if (alive) testBusy.value = false; }
 }
 watch(signature, () => { requestVersion++; models.value = []; loading.value = false; modelError.value = ''; latency.value = null; connectionState.value = 'idle'; syncPreset(); });
+watch(() => JSON.stringify(state.config.ai_config.custom_headers || {}), () => { customHeaders.value = JSON.stringify(state.config.ai_config.custom_headers || {}, null, 2); });
 onMounted(() => { syncPreset(); customModel.value = !!state.config.ai_config.model; void refreshModels(true); });
 onUnmounted(() => { alive = false; requestVersion++; });
 </script>
@@ -100,6 +111,7 @@ onUnmounted(() => { alive = false; requestVersion++; });
       <div class="field"><label class="field-label">服务商</label><SlSelect :model-value="selectedPreset" :options="presetOptions" aria-label="选择 AI 预设服务商" @update:model-value="applyPreset" /></div>
       <div v-if="selectedPreset === 'custom'" class="field"><label class="field-label">API 地址</label><SlInput v-model="state.config.ai_config.api_url" aria-label="默认 AI API 地址" placeholder="https://api.example.com/v1" @change="saveConnection().catch(() => {})" /></div>
       <div class="field"><label class="field-label">API 密钥</label><SlInput v-model="state.config.ai_config.api_key" type="password" aria-label="默认 AI API 密钥" @change="saveConnection().catch(() => {})" /></div>
+      <AIHeadersField v-model="customHeaders" label="默认 AI 自定义请求头" @change="saveConnection().catch(() => {})" />
       <a v-if="preset" class="preset-key-link" :href="preset.apiKeyUrl" target="_blank" rel="noopener">前往 {{ preset.name }} 获取 API Key ↗</a>
       <div class="field">
         <label class="field-label">默认模型</label>

@@ -10,6 +10,14 @@ Include rule, scope, full owner/repo#number, failure/fix commit SHAs, actual val
 
 ## Entries
 
+### MIOT-023: Custom AI Connection Headers Must Reach Every Request Path
+
+- Scope: [songloft-org/songloft-plugin-miot#133](https://github.com/songloft-org/songloft-plugin-miot/issues/133), plugin baseline `af05c60c1a1504b98dfad2ad955df374100f9dbf`.
+- Evidence: on 2026-10-28 the reporter showed the same key changing from HTTP 400 to 200 with only `x-opencode-session` added. Source inspection found four fixed-header paths: chat, both model lists, and command analysis; connection selection also dropped custom headers. All 23 new regressions failed for missing target behavior against isolated old source. The live gateway comparison is the reporter's evidence and was not repeated here.
+- Rule and implementation: headers belong to the effective connection. Save default and independent headers separately and forward them with shared connections. Ordinary, streaming, model-list, and background requests share validation and construction. Header changes invalidate stale model results; invalid input preserves stored settings, and custom credentials are redacted from errors/logs. Do not inject provider headers based on arbitrary URL substrings or regenerate session values for every request.
+- Done right: 1327 plugin tests, 76 frontend tests, both typechecks, QuickJS build, and package validation passed. Docker Chrome 121 at 1200px/390px exercised saving, reload, model detection, and clearing, checking persisted and outgoing headers through actual handlers/ConfigManager. Commands, worktree identity, and coverage limits are in the [#133 record](docs/en/issue-133.md).
+- Seen 1× (2026-10-28). Status: general gateway connection lesson; local validation is complete. See the #133 reply for commit/release and CI status. Real OpenCode and OH2/S12 acceptance remain untested.
+
 ### MIOT-022: Native alarm recovery cannot be inferred from the hourly window or idle state
 
 - Scope: [the alarm follow-up to songloft-org/songloft#533](https://github.com/songloft-org/songloft/issues/533#issuecomment-6432369965), plugin baseline `b1d25e133aa547652ebb80cabc0b0264603d8d42`.

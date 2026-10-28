@@ -11,6 +11,7 @@ import { AIAnalyzer } from '../voicecmd/ai_analyzer';
 import { VoiceEngine } from '../voicecmd/engine';
 import { aiModelsUrl, maskUrl } from '../utils/ai_url';
 import { requestAI } from '../utils/ai_request';
+import { aiRequestHeaders } from '../utils/ai_headers';
 
 /** 解析请求体（兼容 Uint8Array 和 string） */
 function parseBody(req: HTTPRequest): any {
@@ -140,10 +141,7 @@ export function registerVoiceCommandHandlers(
       modelsUrl = aiModelsUrl(aiConfig.api_url);
       const models = await requestAI(modelsUrl, {
         method: 'GET',
-        headers: {
-          'Authorization': `Bearer ${aiConfig.api_key}`,
-          'Content-Type': 'application/json',
-        },
+        headers: aiRequestHeaders(aiConfig),
       }, aiConfig.timeout, { kind: 'models' }, async (resp, requestId) => {
         // QuickJS 无 Response 类，duck-type 检查关键属性
         if (!resp || typeof resp.ok !== 'boolean' || typeof resp.status !== 'number') {

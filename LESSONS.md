@@ -10,6 +10,14 @@
 
 ## 条目
 
+### MIOT-023：AI 连接的附加请求头必须贯穿所有请求路径
+
+- 范围：[songloft-org/songloft-plugin-miot#133](https://github.com/songloft-org/songloft-plugin-miot/issues/133)，插件基线 `af05c60c1a1504b98dfad2ad955df374100f9dbf`。
+- 证据：2026-10-28，报告提供同密钥仅增加 `x-opencode-session` 后 400→200 的对照；源码核对发现问答、两处模型列表及口令分析共四处固定头，连接选择也未传递自定义头。隔离旧源码下新增 23 项回归均因目标行为缺失失败；真实网关对照由报告人提供，本次未重复请求。
+- 规则与实现：请求头属于有效连接配置，默认/独立连接分别保存，复用时一起传递；普通、流式、模型列表和后台请求共用校验与构造。修改请求头使旧模型检测结果失效；非法输入不覆盖旧配置，自定义凭据从错误与日志脱敏。不要按任意 URL 子串注入厂商头或为每次请求重新生成会话值。
+- Done right：1327 项插件测试、76 项前端测试、两层类型检查、QuickJS 构建与包校验通过；Docker Chrome 121 在 1200px/390px 实际保存、刷新、模型检测及清空，使用真实 handler/ConfigManager 核对落盘与发出的头。命令、工作树标识与验证边界见 [#133 记录](docs/issue-133.md)。
+- Seen 1× (2026-10-28)。状态：通用网关连接经验；本地验证完成，提交/发布与 CI 状态见 #133 回复，真实 OpenCode 与 OH2/S12 未验。
+
 ### MIOT-022：原生闹钟恢复不能从整点窗口或单次 idle 推断
 
 - 范围：[songloft-org/songloft#533 的闹钟反馈](https://github.com/songloft-org/songloft/issues/533#issuecomment-6432369965)，插件基线 `b1d25e133aa547652ebb80cabc0b0264603d8d42`。

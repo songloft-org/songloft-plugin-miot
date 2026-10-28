@@ -16,6 +16,20 @@ External song searches first collapse consecutive whitespace in the keyword and 
 
 “停止回答”, “退出对话”, and “结束对话” cancel the answer and close the window, optionally restoring music after a safe stop. “停止播放” keeps music stopped. New questions invalidate old tasks so late model responses cannot speak.
 
+## Custom Request Headers
+
+Both the default model connection and the independent chat connection accept optional custom request headers as a JSON object, for example:
+
+```json
+{"x-opencode-session":"11111111-2222-4333-8444-555555555555"}
+```
+
+Default connection edits save automatically. For an independent connection, click Save settings or Save and fetch models. Reusing the default connection also reuses its headers; independent headers are not merged into it. Headers apply to the corresponding connection's model lists, streaming and ordinary chat, summaries, memory extraction, and command analysis. Leave the field blank or use `{}` to clear it. Existing configurations add no headers by default.
+
+Values must be strings. Names are case insensitive; duplicate names, control characters, and overrides of `Authorization`, `Content-Type`, `Host`, `Content-Length`, `Transfer-Encoding`, `Connection`, or `X-Fetch-Timeout-Ms` are rejected. Keep the API key in its dedicated field. Custom header values are redacted from request errors and logs. Invalid input displays an error and is not saved.
+
+The API fields are `ai_config.custom_headers` for the default connection (`POST /config`) and `custom_headers` for independent chat (`PUT /chat/config`), both string-to-string objects. Gateways requiring a session header can be configured with a stable value here. [OpenCode's documentation](https://opencode.ai/v2/docs/console/go/#where-can-i-use-it) requires a stable `x-opencode-session` for each conversation; the plugin does not generate or rotate this value automatically.
+
 ## Web Search
 
 Enable and save “联网搜索” under the conversation model settings to send `enable_search: true` to the official Alibaba Cloud Model Studio API for chat requests. The model decides whether to search on each turn; enabling the option does not guarantee a search. It defaults to off for both fresh and upgraded configurations. A Model Studio model with web search support is required, and additional charges may apply; see the [official documentation](https://help.aliyun.com/en/model-studio/web-search).

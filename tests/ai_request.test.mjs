@@ -16,6 +16,7 @@ function loadSource(path, dependencies = {}) {
   }, exports);
   return exports;
 }
+const aiHeaders = loadSource('../src/utils/ai_headers.ts', {});
 const aiRequest = loadSource('../src/utils/ai_request.ts');
 const { requestAI } = aiRequest;
 
@@ -160,12 +161,13 @@ test('network diagnostics redact URLs normalized by the host or containing redir
 const aiUrl = loadSource('../src/utils/ai_url.ts');
 const aiThinking = loadSource('../src/utils/ai_thinking.ts', { './ai_url': aiUrl });
 const aiAnalyzer = loadSource('../src/voicecmd/ai_analyzer.ts', {
-  '../utils/ai_url': aiUrl, '../utils/ai_request': aiRequest, '../utils/ai_thinking': aiThinking,
+  '../utils/ai_url': aiUrl, '../utils/ai_request': aiRequest, '../utils/ai_thinking': aiThinking, '../utils/ai_headers': aiHeaders,
 });
 const { registerVoiceCommandHandlers } = loadSource('../src/handlers/voice_command.ts', {
   '@songloft/plugin-sdk': { jsonResponse: data => data },
   '../utils/ai_url': aiUrl,
   '../utils/ai_request': aiRequest,
+  '../utils/ai_headers': aiHeaders,
   '../voicecmd/ai_analyzer': aiAnalyzer,
 });
 

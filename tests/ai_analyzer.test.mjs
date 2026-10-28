@@ -20,10 +20,12 @@ function loadSource(path, dependencies) {
 }
 
 const aiUrl = loadSource('../src/utils/ai_url.ts', {});
+const aiHeaders = loadSource('../src/utils/ai_headers.ts', {});
 const aiRequest = loadSource('../src/utils/ai_request.ts', {});
 const { AIAnalyzer } = loadSource('../src/voicecmd/ai_analyzer.ts', {
   '../utils/ai_url': aiUrl,
   '../utils/ai_request': aiRequest,
+  '../utils/ai_headers': aiHeaders,
   '../utils/ai_thinking': loadSource('../src/utils/ai_thinking.ts', { './ai_url': aiUrl }),
 });
 
