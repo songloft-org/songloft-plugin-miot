@@ -69,6 +69,7 @@ export const GET_ASK_BY_MINA: string[] = ['M01'];
 export const DEFAULT_MUSIC_API_MODELS: readonly string[] = [
   'X08C',
   'X08E',
+  'X8S',
   'X8F',
   'X4B',
   'LX05',
