@@ -3,7 +3,8 @@ import type { ConfigManager } from '../config/manager';
 import type { MinaService } from '../service/service';
 import type { PlaylistManager, PlaylistManagerMap } from '../player/manager';
 import { child, escapeXML, parseXML } from './xml';
-import { clock, description, DEVICE, PROTOCOL_INFO, ROOT, SCHEMAS, scpd, ServiceName, soapFault, soapResult, SSDP_ADDR, SSDP_GROUP, TYPES, UPnPError } from './protocol';
+import type { SSDPDiscovery } from './discovery';
+import { clock, description, DEVICE, PROTOCOL_INFO, SCHEMAS, scpd, ServiceName, soapFault, soapResult, SSDP_ADDR, TYPES, UPnPError } from './protocol';
 
 export interface ReceiverConfig {
   enabled: boolean;
@@ -12,13 +13,10 @@ export interface ReceiverConfig {
   account_id: string;
   device_id: string;
 }
-export const DEFAULT_CONFIG: ReceiverConfig = { enabled: false, name: 'Songloft 小爱音箱', base_url: '', account_id: '', device_id: '' };
 interface Subscription {
   sid: string; service: ServiceName; callback: string; peer: string; expires: number; seq: number;
   initial: boolean; sending: boolean; latest: string;
 }
-const CONFIG_KEY = 'dlna_receiver_config';
-const UUID_KEY = 'dlna_receiver_uuid';
 
 export function peerIP(address: string): string {
   return address.replace(/^\[::ffff:([\d.]+)\]:\d+$/, '$1').replace(/^([\d.]+):\d+$/, '$1');
@@ -38,7 +36,7 @@ export function httpURL(value: string): { host: string; path: string } {
   if (!authority || (authority[2] && (+authority[2] < 1 || +authority[2] > 65535))) throw new Error('不支持该地址');
   return { host: authority[1].toLowerCase(), path: m[2] || '/' };
 }
-export function header(req: HTTPRequest, name: string): string {
+function header(req: HTTPRequest, name: string): string {
   const key = Object.keys(req.headers || {}).find(k => k.toLowerCase() === name.toLowerCase());
   return key ? req.headers[key].trim() : '';
 }
@@ -49,14 +47,13 @@ function textBody(req: HTTPRequest): string {
   if (!req.body) return '';
   return typeof req.body === 'string' ? req.body : new TextDecoder().decode(req.body);
 }
-function newUUID(): string {
+export function newUUID(): string {
   const h = crypto.randomBytes(16).toString('hex');
   return `uuid:${h.slice(0, 8)}-${h.slice(8, 12)}-4${h.slice(13, 16)}-8${h.slice(17, 20)}-${h.slice(20)}`;
 }
 
 export class DLNAReceiver {
-  private config = { ...DEFAULT_CONFIG };
-  private uuid = '';
+  private config: ReceiverConfig = { enabled: false, name: '', base_url: '', account_id: '', device_id: '' };
   private socket = '';
   private accepting = false;
   private generation = 0;
@@ -80,7 +77,8 @@ export class DLNAReceiver {
   private playStartedAt = 0;
   private lastError = '';
 
-  constructor(private configs: ConfigManager, private mina: MinaService, private players: PlaylistManagerMap) { }
+  constructor(private configs: ConfigManager, private mina: MinaService, private players: PlaylistManagerMap,
+    private uuid: string, private discovery: SSDPDiscovery) { }
 
   private serial<T>(run: () => Promise<T>, closing = false): Promise<T> {
     if (this.queued >= 32 && !closing) return Promise.reject(new UPnPError(501, 'Receiver busy'));
@@ -90,27 +88,25 @@ export class DLNAReceiver {
     return result;
   }
 
-  async init(): Promise<void> {
-    const saved = await songloft.storage.get(CONFIG_KEY);
-    try { if (saved) this.config = { ...DEFAULT_CONFIG, ...JSON.parse(String(saved)) }; } catch { }
-    this.uuid = String(await songloft.storage.get(UUID_KEY) || '');
-    if (!/^uuid:[\da-f-]{36}$/.test(this.uuid)) {
-      this.uuid = newUUID();
-      await songloft.storage.set(UUID_KEY, this.uuid);
-    }
-    if (this.config.enabled) {
-      try { await this.validate(this.config); await this.start(); }
-      catch (e) { this.lastError = String(e); songloft.log.warn('[DLNA] ' + this.lastError); }
-    }
-  }
-
-  status(hostSupported = true) {
+  status() {
     return {
-      ...this.config, running: this.accepting, host_supported: hostSupported, error: this.lastError,
+      ...this.config, running: this.accepting, error: this.lastError,
       state: this.transport, uri: this.uri, position: this.position, duration: this.duration
     };
   }
   busyReason(): string { return this.ownsPlayback && this.transport === 'PLAYING' ? 'DLNA receiver playing' : ''; }
+
+  clearError(): void { this.lastError = ''; }
+
+  async rename(name: string): Promise<void> {
+    return this.serial(async () => {
+      if (!name || name.length > 80) throw new Error('接收器名称无效');
+      const previous = this.config.name;
+      this.config.name = name;
+      try { if (this.accepting) await this.announce('ssdp:alive'); }
+      catch (error) { this.config.name = previous; throw error; }
+    });
+  }
 
   async configure(input: ReceiverConfig): Promise<void> {
     return this.serial(async () => {
@@ -122,7 +118,6 @@ export class DLNAReceiver {
       this.config = next;
       try {
         if (next.enabled) await this.start();
-        await songloft.storage.set(CONFIG_KEY, JSON.stringify(next));
       } catch (e) {
         await this.stop();
         this.config = previous;
@@ -148,22 +143,19 @@ export class DLNAReceiver {
   }
 
   private endpoint(): string { return `${this.config.base_url}/api/v1/jsplugin/miot`; }
+  private root(): string { return `/dlna/${this.uuid.slice(5)}`; }
   private advertisements(): string[] { return ['upnp:rootdevice', this.uuid, DEVICE, ...Object.values(TYPES)]; }
   private usn(type: string): string { return type === this.uuid ? this.uuid : `${this.uuid}::${type}`; }
 
   private async start(): Promise<void> {
-    const options = { address: '0.0.0.0:1900', reuseAddress: true };
-    const socket = await songloft.net.udpBind(options);
-    this.socket = socket.socketId;
+    this.socket = await this.discovery.open(event => this.onSearch(event));
     try {
-      await songloft.net.udpJoinMulticast(this.socket, SSDP_GROUP);
-      songloft.net.onData(this.socket, event => this.onSearch(event));
       await this.announce('ssdp:alive');
       this.accepting = true;
       this.scheduleAnnouncement();
       this.schedulePoll();
     } catch (e) {
-      await songloft.net.udpClose(this.socket);
+      await this.discovery.close(this.socket);
       this.socket = '';
       throw e;
     }
@@ -172,7 +164,7 @@ export class DLNAReceiver {
   private async announce(nts: string): Promise<void> {
     const socket = this.socket;
     for (const type of this.advertisements()) {
-      await songloft.net.udpSend(socket, `NOTIFY * HTTP/1.1\r\nHOST: ${SSDP_ADDR}\r\nNT: ${type}\r\nNTS: ${nts}\r\nUSN: ${this.usn(type)}\r\nCACHE-CONTROL: max-age=1800\r\nLOCATION: ${this.endpoint()}${ROOT}/device.xml\r\nSERVER: Songloft/1.0 UPnP/1.0 MIoT/1.0\r\n\r\n`, SSDP_ADDR);
+      await this.discovery.send(socket, `NOTIFY * HTTP/1.1\r\nHOST: ${SSDP_ADDR}\r\nNT: ${type}\r\nNTS: ${nts}\r\nUSN: ${this.usn(type)}\r\nCACHE-CONTROL: max-age=1800\r\nLOCATION: ${this.endpoint()}${this.root()}/device.xml\r\nSERVER: Songloft/1.0 UPnP/1.0 MIoT/1.0\r\n\r\n`, SSDP_ADDR);
     }
   }
   private scheduleAnnouncement(): void {
@@ -206,7 +198,7 @@ export class DLNAReceiver {
       void (async () => {
         for (const type of types) {
           if (generation !== this.generation) return;
-          await songloft.net.udpSend(socket, `HTTP/1.1 200 OK\r\nCACHE-CONTROL: max-age=1800\r\nEXT:\r\nLOCATION: ${this.endpoint()}${ROOT}/device.xml\r\nSERVER: Songloft/1.0 UPnP/1.0 MIoT/1.0\r\nST: ${type}\r\nUSN: ${this.usn(type)}\r\n\r\n`, event.remoteAddr);
+          await this.discovery.send(socket, `HTTP/1.1 200 OK\r\nCACHE-CONTROL: max-age=1800\r\nEXT:\r\nLOCATION: ${this.endpoint()}${this.root()}/device.xml\r\nSERVER: Songloft/1.0 UPnP/1.0 MIoT/1.0\r\nST: ${type}\r\nUSN: ${this.usn(type)}\r\n\r\n`, event.remoteAddr);
         }
       })().catch(e => songloft.log.warn('[DLNA] Discovery response failed: ' + String(e)));
     }, Math.floor(Math.random() * Math.min(+headers.mx, 5) * 1000));
@@ -241,30 +233,19 @@ export class DLNAReceiver {
     this.transport = 'NO_MEDIA_PRESENT';
     if (this.socket) {
       try { await this.announce('ssdp:byebye'); } catch { }
-      try { await songloft.net.udpClose(this.socket); }
+      try { await this.discovery.close(this.socket); }
       catch (e) { songloft.log.warn('[DLNA] Close socket failed: ' + String(e)); }
       finally { this.socket = ''; }
     }
   }
 
   async handle(req: HTTPRequest): Promise<HTTPResponse> {
-    if (req.path === '/receiver/config') {
-      const supported = 'remoteAddr' in req;
-      if (req.method === 'GET') return this.json(this.status(supported));
-      if (req.method === 'PUT') {
-        try {
-          const body = JSON.parse(textBody(req));
-          if (body.enabled && !supported) throw new Error('请升级 Songloft 宿主以支持 DLNA 接收');
-          await this.configure(body);
-          return this.json(this.status(supported));
-        } catch (e) { return this.json({ error: e instanceof Error ? e.message : String(e) }, 400); }
-      }
-      return { statusCode: 405, headers: { Allow: 'GET, PUT' }, body: '' };
-    }
     if (!isLAN(requestPeer(req))) return this.json({ error: 'DLNA 仅允许局域网访问，需支持对端地址的新版宿主' }, 403);
     if (!this.accepting || !this.config.enabled) return { statusCode: 503, body: 'Receiver disabled' };
-    const match = req.path.match(/^\/dlna\/(AVTransport|RenderingControl|ConnectionManager)(\.xml|\/control|\/event)$/);
-    if (req.path === `${ROOT}/device.xml` && (req.method === 'GET' || req.method === 'HEAD')) return description(this.config.name, this.uuid, this.endpoint());
+    if (!req.path.startsWith(this.root() + '/')) return { statusCode: 404, body: '' };
+    const path = req.path.slice(this.root().length);
+    const match = path.match(/^\/(AVTransport|RenderingControl|ConnectionManager)(\.xml|\/control|\/event)$/);
+    if (path === '/device.xml' && (req.method === 'GET' || req.method === 'HEAD')) return description(this.config.name, this.uuid, this.endpoint(), this.root());
     if (!match) return { statusCode: 404, body: '' };
     const service = match[1] as ServiceName;
     if (match[2] === '.xml' && (req.method === 'GET' || req.method === 'HEAD')) return scpd(service);

@@ -10,6 +10,15 @@
 
 ## 条目
 
+### MIOT-024：多音箱 DLNA 必须隔离设备身份与控制，同时共享发现 socket
+
+- 范围：[songloft-org/songloft-plugin-miot#128](https://github.com/songloft-org/songloft-plugin-miot/issues/128) 的多音箱扩展；插件基线 `bb1641ea54e69a61fdbfab6b0b655078bf12c88f`。
+- 证据：2026-11-01，原实现只保存一个目标、UUID 和播放状态。宿主每插件仅允许八个 UDP socket，直接为每台音箱复制监听器会耗尽配额；隔离副本中移除共享发现实例后，十台音箱回归因实际绑定十个而非一个 socket 失败。这是构造回归，不是报告人的现场复现；评论中的飞牛 8200 冲突原因仍未证实，插件 HTTP 复用 Songloft 端口，SSDP 使用 UDP 1900。
+- 规则与实现：按账号与设备持久化 UDN，并在广播、描述、控制及订阅路径中保持一致；播放队列、所有权、状态、订阅和错误分别隔离。所有接收器共享一个引用计数的发现监听器，最后一个关闭才释放。更新名称不停止其他音箱；先持久化身份再广播。按本次用户要求统一使用独立音箱路径，删除旧单接收器迁移、路径别名与独立存储入口。
+- Done right：本次未提交工作树，Linux amd64 / Node 22.17.1；1335 项插件测试、76 项前端测试、两层类型检查、QuickJS 构建与包校验通过。Chrome 121 在 1200px/390px 使用真实接收器管理器与 ConfigManager、模拟音箱及 UDP 桥接，验证保存、刷新、双路投放、状态显示与关闭释放；父仓库 DLNA/UDP/Timer 回归及 `CGO_ENABLED=0 GOFLAGS='-tags=dev,lite' make check` 通过。证据在 `/tmp/miot-dlna-cleanup/`，工作树标识见 `verification.json`。
+- Not run：真实手机 SSDP 发现、音箱发声/固件兼容、飞牛共存及长期运行；未提交、推送或发布，不能将多音箱扩展称为 #128 现场问题已修复。
+- Seen 1× (2026-11-01)。状态：经验，本地实现与自动化验证。
+
 ### MIOT-023：AI 连接的附加请求头必须贯穿所有请求路径
 
 - 范围：[songloft-org/songloft-plugin-miot#133](https://github.com/songloft-org/songloft-plugin-miot/issues/133)，插件基线 `af05c60c1a1504b98dfad2ad955df374100f9dbf`。

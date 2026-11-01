@@ -10,6 +10,15 @@ Include rule, scope, full owner/repo#number, failure/fix commit SHAs, actual val
 
 ## Entries
 
+### MIOT-024: Isolate DLNA identities and controls while sharing discovery across speakers
+
+- Scope: the multi-speaker extension associated with [songloft-org/songloft-plugin-miot#128](https://github.com/songloft-org/songloft-plugin-miot/issues/128); plugin baseline `bb1641ea54e69a61fdbfab6b0b655078bf12c88f`.
+- Evidence: on 2026-11-01, the original implementation stored one target, UUID, and playback state. The host allows only eight UDP sockets per plugin, so copying a listener per speaker exhausts the quota. Removing the shared discovery instance in an isolated copy made the ten-speaker regression fail because it bound ten sockets instead of one. This is a constructed regression, not an on-site reproduction. The reported fnOS port 8200 conflict remains unconfirmed: plugin HTTP reuses Songloft’s port and SSDP uses UDP 1900.
+- Rule and implementation: persist UDNs per account/device and use the same identity throughout advertisements, descriptions, controls, and subscription paths. Isolate command queues, ownership, state, subscriptions, and errors. Share one reference-counted discovery listener and release it after the final receiver closes. Renaming must not stop another speaker; persist identities before advertising. As explicitly requested, use scoped speaker paths throughout and remove single-receiver migration, URL aliases, and independent storage handling.
+- Done right: uncommitted working tree, Linux amd64 / Node 22.17.1; 1335 plugin tests, 76 frontend tests, both type checks, QuickJS build, and package validation passed. Chrome 121 at 1200px/390px used the real receiver manager and ConfigManager with simulated speakers and UDP bridge to verify saving, reloading, two independent casts, status display, and cleanup. Parent DLNA/UDP/Timer regressions and `CGO_ENABLED=0 GOFLAGS='-tags=dev,lite' make check` passed. Evidence: `/tmp/miot-dlna-cleanup/`; working-tree identity is in `verification.json`.
+- Not run: real-phone SSDP discovery, audible speaker/firmware behavior, fnOS coexistence, and long-running operation. Not committed, pushed, or released; this extension does not establish that the on-site #128 problem is fixed.
+- Seen 1× (2026-11-01). Status: experience; local implementation and automated verification.
+
 ### MIOT-023: Custom AI Connection Headers Must Reach Every Request Path
 
 - Scope: [songloft-org/songloft-plugin-miot#133](https://github.com/songloft-org/songloft-plugin-miot/issues/133), plugin baseline `af05c60c1a1504b98dfad2ad955df374100f9dbf`.

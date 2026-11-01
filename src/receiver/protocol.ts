@@ -1,6 +1,5 @@
 import { escapeXML, xmlResponse } from './xml';
 
-export const ROOT = '/dlna';
 export const TYPES = {
   AVTransport: 'urn:schemas-upnp-org:service:AVTransport:1',
   RenderingControl: 'urn:schemas-upnp-org:service:RenderingControl:1',
@@ -80,10 +79,10 @@ export function scpd(service: ServiceName) {
   return xmlResponse(`<scpd xmlns="urn:schemas-upnp-org:service-1-0"><specVersion><major>1</major><minor>0</minor></specVersion><actionList>${actions}</actionList><serviceStateTable>${variables}</serviceStateTable></scpd>`);
 }
 
-export function description(name: string, uuid: string, base: string) {
+export function description(name: string, uuid: string, base: string, root: string) {
   // Some senders prepend the server origin even to absolute URLs. Keep the deployment path.
   const basePath = base.replace(/^https?:\/\/[^/]+/i, '');
-  const services = Object.entries(TYPES).map(([key, type]) => `<service><serviceType>${type}</serviceType><serviceId>urn:upnp-org:serviceId:${key}</serviceId><SCPDURL>${escapeXML(basePath + ROOT + '/' + key + '.xml')}</SCPDURL><controlURL>${escapeXML(basePath + ROOT + '/' + key + '/control')}</controlURL><eventSubURL>${escapeXML(basePath + ROOT + '/' + key + '/event')}</eventSubURL></service>`).join('');
+  const services = Object.entries(TYPES).map(([key, type]) => `<service><serviceType>${type}</serviceType><serviceId>urn:upnp-org:serviceId:${key}</serviceId><SCPDURL>${escapeXML(basePath + root + '/' + key + '.xml')}</SCPDURL><controlURL>${escapeXML(basePath + root + '/' + key + '/control')}</controlURL><eventSubURL>${escapeXML(basePath + root + '/' + key + '/event')}</eventSubURL></service>`).join('');
   return xmlResponse(`<root xmlns="urn:schemas-upnp-org:device-1-0"><specVersion><major>1</major><minor>0</minor></specVersion><device><deviceType>${DEVICE}</deviceType><friendlyName>${escapeXML(name)}</friendlyName><manufacturer>Songloft</manufacturer><modelName>MIoT DLNA Receiver</modelName><UDN>${uuid}</UDN><serviceList>${services}</serviceList></device></root>`);
 }
 

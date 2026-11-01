@@ -21,7 +21,7 @@ import { AIAnalyzer } from './voicecmd/ai_analyzer';
 import { getDefaultVoiceCommands } from './voicecmd/engine';
 import { IndexingManager } from './indexing/manager';
 import { MemoryService } from './memory';
-import { DLNAReceiver } from './receiver/receiver';
+import { DLNAReceivers } from './receiver/receivers';
 
 // 导入所有handler注册函数
 import { registerAccountHandlers } from './handlers/account';
@@ -82,7 +82,7 @@ let conversationMonitor: ConversationMonitor;
 let voiceEngine: VoiceEngine;
 let indexingManager: IndexingManager;
 let memoryService: MemoryService;
-let dlnaReceiver: DLNAReceiver;
+let dlnaReceiver: DLNAReceivers;
 let aiChat: AIChatService;
 let voiceDispatcher: VoiceDispatcher;
 
@@ -101,7 +101,7 @@ async function onInit(): Promise<void> {
   groupCoordinator = new GroupCoordinator(playlistManagerMap, minaService, configManager);
   // 加载分组快照，使 PlaylistManagerMap 能同步把分组设备解析到共享 manager（多房间共用一套播放列表）
   await playlistManagerMap.refreshGroups();
-  dlnaReceiver = new DLNAReceiver(configManager, minaService, playlistManagerMap);
+  dlnaReceiver = new DLNAReceivers(configManager, minaService, playlistManagerMap);
   await dlnaReceiver.init();
   memoryService = new MemoryService();
 
@@ -245,7 +245,9 @@ async function onHTTPRequest(req: HTTPRequest): Promise<HTTPResponse> {
   }
   if (req.path === '/receiver/config' || req.path.startsWith('/dlna/')) return dlnaReceiver.handle(req);
   if (req.method !== 'GET' && (req.path.startsWith('/groups') || req.path.startsWith('/account') || req.path === '/config' || req.path.includes('/managed'))) { await aiChat.cancelAll(); voiceDispatcher.invalidate(); aiChat.configurationChanged(); }
-  return await router.handle(req);
+  const response = await router.handle(req);
+  if (req.method !== 'GET' && (response.statusCode ?? 200) < 400 && (req.path.startsWith('/groups') || req.path.startsWith('/account') || req.path.includes('/managed'))) await dlnaReceiver.refresh();
+  return response;
 }
 
 // 入站 WebSocket：播放状态推送订阅（/status/ws）+ 对话记录推送订阅（/conversation/ws）
