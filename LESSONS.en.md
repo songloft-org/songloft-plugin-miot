@@ -20,6 +20,14 @@ Include rule, scope, full owner/repo#number, failure/fix commit SHAs, actual val
 - Not run: real-phone SSDP discovery, speaker firmware and audible output, acoustic synchronization, fnOS coexistence, or long-running operation. The on-site #128 discovery failure is still not established as fixed.
 - Seen 1× (2026-11-01). Status: local implementation and automated verification; release status must be checked against its source commit.
 
+### MIOT-025: Zero-state compatibility can hide external stops; verify whether the plugin received the command
+
+- Scope: [songloft-org/songloft-plugin-miot#136](https://github.com/songloft-org/songloft-plugin-miot/issues/136#issuecomment-6556355696), baseline `3f7a5420186b3756f078427e1c5aa6fc98d1f576`.
+- Evidence: on 2026-11-01, S12's `status=3` with zero media details was ignored by the #129 blind branch at 12:40:35; the deadline pushed the next song at 12:43:46. The stop command was not captured, so its delivery failure cannot be established. Backend `v2.11.6 / c5df438` lacks subsequent pump and timer-handle fixes.
+- Rule: distinguish native stop, explicit plugin stop, device state and automatic advancement. HEAD success does not prove sound. Do not simply remove zero-state compatibility or equate plugin updates with host updates. First compare raw normal-playback and deliberate-stop samples and command times on the same device.
+- Done right: an isolated runner loads baseline source. Four investigation cases confirm idle 0/3 without plugin stop still pushes the next URL at 211 seconds, while explicit `stop()` prevents further pushes for ten minutes. These and six #129 cases passed, together with 649 playback and 16 frontend regressions. Investigation/documents only; physical hardware, full build and a production fix are Not run. Evidence, initial reply draft and published reply: [investigation](docs/en/issue-136.md).
+- Seen 1× (2026-11-01). Status: compatibility branch confirmed; stop phrase, normal S12 reports and reliable distinguishing evidence remain pending. No production logic change.
+
 ### MIOT-024: Isolate DLNA identities and controls while sharing discovery across speakers
 
 - Scope: the multi-speaker extension associated with [songloft-org/songloft-plugin-miot#128](https://github.com/songloft-org/songloft-plugin-miot/issues/128); plugin baseline `bb1641ea54e69a61fdbfab6b0b655078bf12c88f`.
