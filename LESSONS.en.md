@@ -10,6 +10,15 @@ Include rule, scope, full owner/repo#number, failure/fix commit SHAs, actual val
 
 ## Entries
 
+### UI-003: A missing song field does not mean there is no current song
+
+- Scope: Artist text in the fullscreen player; baseline `c39f1bf8b201813305a81508bf5cbf3cfb3884ba`.
+- Evidence: On 2026-11-01, the user reported an incorrect song selection prompt. Both desktop and mobile templates used `current_song?.artist || selection prompt`, so an existing song with an empty artist also prompted the user to start playback.
+- Rule and fix: Check whether the current song exists before handling missing fields. Both layouts share a computed value: an empty or whitespace-only artist displays “未知歌手”; only an absent song displays the selection prompt.
+- Done right: Linux / Node 22.17.1, baseline plus this uncommitted working tree; both type checks, 1351 plugin tests, 76 frontend tests and frontend contract checks, full bytecode build and package validation passed. Docker Chrome 121 verified eight cases at 1200px / 390px: named artist, empty artist, whitespace artist and no song, with no page errors. Logs and screenshots: `/tmp/miot-artist-*`.
+- Not run: Real speakers, native WebViews, remote CI and release; only display logic changed. The first browser script hit `Promise was collected` during dynamic import; injecting a module script allowed all eight cases to pass.
+- Seen 1× (2026-11-01). Status: Local fix and verification complete; not committed, pushed or released.
+
 ### MIOT-026: Snapshot group members and persist target switches separately from the master switch
 
 - Scope: group DLNA and per-target switches associated with [songloft-org/songloft-plugin-miot#128](https://github.com/songloft-org/songloft-plugin-miot/issues/128), plugin baseline `3f7a5420186b3756f078427e1c5aa6fc98d1f576`.

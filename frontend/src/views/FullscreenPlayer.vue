@@ -28,6 +28,10 @@ const mobilePager = ref<HTMLElement | null>(null);
 const mobilePage = computed(() => navigation.playerPage);
 const desktopLyrics = ref<HTMLElement | null>(null);
 const mobileLyrics = ref<HTMLElement | null>(null);
+const songArtist = computed(() => {
+  const song = state.player.current_song;
+  return song ? song.artist?.trim() || '未知歌手' : '选择一首歌曲开始播放';
+});
 let touchStartX = 0;
 let touchStartY = 0;
 let touchStartPage = 0;
@@ -359,7 +363,7 @@ watch(() => navigation.playerPage, showMobilePage);
               </div>
               <div class="fullscreen-song-meta fullscreen-song-meta-desktop">
                 <span class="fullscreen-song-title">{{ state.player.current_song?.title || '暂无播放' }}</span>
-                <span class="fullscreen-song-artist">{{ state.player.current_song?.artist || '选择一首歌曲开始播放' }}</span>
+                <span class="fullscreen-song-artist">{{ songArtist }}</span>
                 <span v-if="state.player.current_song?.album" class="fullscreen-song-album">{{ state.player.current_song.album }}</span>
               </div>
             </section>
@@ -409,7 +413,7 @@ watch(() => navigation.playerPage, showMobilePage);
         <div class="fullscreen-playback">
           <div class="fullscreen-song-meta fullscreen-song-meta-mobile">
             <span class="fullscreen-song-title">{{ state.player.current_song?.title || '暂无播放' }}</span>
-            <span class="fullscreen-song-artist">{{ state.player.current_song?.artist || '选择一首歌曲开始播放' }}</span>
+            <span class="fullscreen-song-artist">{{ songArtist }}</span>
           </div>
           <PlayerProgress
             :position="Number(state.player.position || 0)"
