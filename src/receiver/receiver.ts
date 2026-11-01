@@ -1,6 +1,7 @@
 import type { HTTPRequest, HTTPResponse, NetDataEvent } from '@songloft/plugin-sdk';
 import type { ConfigManager } from '../config/manager';
 import type { MinaService } from '../service/service';
+import type { DeviceTargetRef } from '../types';
 import type { PlaylistManager, PlaylistManagerMap } from '../player/manager';
 import { child, escapeXML, parseXML } from './xml';
 import type { SSDPDiscovery } from './discovery';
@@ -12,6 +13,8 @@ export interface ReceiverConfig {
   base_url: string;
   account_id: string;
   device_id: string;
+  group_id: string;
+  members: DeviceTargetRef[];
 }
 interface Subscription {
   sid: string; service: ServiceName; callback: string; peer: string; expires: number; seq: number;
@@ -53,7 +56,7 @@ export function newUUID(): string {
 }
 
 export class DLNAReceiver {
-  private config: ReceiverConfig = { enabled: false, name: '', base_url: '', account_id: '', device_id: '' };
+  private config: ReceiverConfig = { enabled: false, name: '', base_url: '', account_id: '', device_id: '', group_id: '', members: [] };
   private socket = '';
   private accepting = false;
   private generation = 0;
@@ -110,7 +113,7 @@ export class DLNAReceiver {
 
   async configure(input: ReceiverConfig): Promise<void> {
     return this.serial(async () => {
-      const next: ReceiverConfig = { enabled: input.enabled, name: input.name?.trim(), base_url: input.base_url?.trim().replace(/\/+$/, ''), account_id: input.account_id, device_id: input.device_id };
+      const next: ReceiverConfig = { enabled: input.enabled, name: input.name?.trim(), base_url: input.base_url?.trim().replace(/\/+$/, ''), account_id: input.account_id, device_id: input.device_id, group_id: input.group_id, members: input.members.map(m => ({ ...m })) };
       await this.validate(next);
       const previous = this.config;
       this.lastError = '';
@@ -136,10 +139,18 @@ export class DLNAReceiver {
     if (!config.enabled) return;
     const base = httpURL(config.base_url);
     if (!config.base_url.startsWith('http://') || !isLAN(base.host) || base.host.startsWith('127.') || base.path.includes('?')) throw new Error('服务器地址须为局域网 HTTP IPv4 地址，可包含部署子路径');
-    const devices = await this.configs.getDevices(config.account_id);
-    if (!devices.some(d => d.device_id === config.device_id && d.managed)) throw new Error('请选择已启用管理的目标音箱');
-    const groups = await this.configs.getDeviceGroups();
-    if (groups.some(g => g.members.some(m => m.account_id === config.account_id && m.device_id === config.device_id))) throw new Error('首版仅支持独立音箱，请先将目标音箱移出设备分组');
+    if (!config.members.length || config.members[0].account_id !== config.account_id || config.members[0].device_id !== config.device_id) throw new Error('接收器成员无效');
+    for (const member of config.members) {
+      const devices = await this.configs.getDevices(member.account_id);
+      if (!devices.some(d => d.device_id === member.device_id && d.managed)) throw new Error('目标音箱须全部存在且已启用管理');
+    }
+    const groups = (await this.configs.getDeviceGroups()).filter(g => g.members.length >= 2);
+    if (config.group_id) {
+      const group = groups.find(g => g.id === config.group_id);
+      if (!group || JSON.stringify(group.members) !== JSON.stringify(config.members)) throw new Error('分组成员已变更，请重新投放');
+    } else if (config.members.length !== 1 || groups.some(g => g.members.some(m => m.account_id === config.account_id && m.device_id === config.device_id))) {
+      throw new Error('音箱分组已变更，请重新选择接收器');
+    }
   }
 
   private endpoint(): string { return `${this.config.base_url}/api/v1/jsplugin/miot`; }
@@ -220,12 +231,12 @@ export class DLNAReceiver {
     this.subscriptions.clear();
     if (this.ownsPlayback && this.manager) {
       try {
-        const stopped = await this.manager.runExternalPlayback(() => this.mina.stopPlay(this.config.account_id, this.config.device_id));
+        const stopped = await this.manager.runExternalPlayback(() => this.allMembers(m => this.mina.stopPlay(m.account_id, m.device_id)));
         if (!stopped) this.lastError = '接收器已关闭，但音箱拒绝停止，请在音箱上停止播放';
       } catch (e) { this.lastError = '停止音箱失败：' + String(e); }
       if (this.lastError) songloft.log.warn('[DLNA] ' + this.lastError);
     }
-    this.manager?.endExternalPlayback();
+    if (this.ownsPlayback) this.manager?.endExternalPlayback();
     this.manager = null;
     this.ownsPlayback = false;
     this.uri = this.metadata = this.title = '';
@@ -256,6 +267,7 @@ export class DLNAReceiver {
     try {
       return await this.serial(async () => {
         if (!this.accepting) throw new UPnPError(501, 'Receiver disabled');
+        await this.validate(this.config);
         if (type !== TYPES[service] || !Object.prototype.hasOwnProperty.call(SCHEMAS[service].actions, action)) throw new UPnPError(401, 'Invalid Action');
         let args: Record<string, string>;
         try {
@@ -282,16 +294,18 @@ export class DLNAReceiver {
         if ('InstanceID' in args && args.InstanceID !== '0') throw new UPnPError(service === 'RenderingControl' ? 702 : 718, 'Invalid InstanceID');
         const before = this.eventBody(service);
         let values;
-        try { values = await this.action(service, action, args); }
+        try { values = await this.action(service, action, args); await this.validate(this.config); }
         finally { if (before !== this.eventBody(service)) this.publish(); }
-        if (service === 'AVTransport' && (action === 'SetAVTransportURI' || action === 'Play')) this.lastError = '';
+        if ((service === 'AVTransport' && (action === 'SetAVTransportURI' || action === 'Play'))
+          || (service === 'RenderingControl' && action === 'SetVolume' && this.lastError.startsWith('SetVolume 失败'))) this.lastError = '';
         return soapResult(service, action, values);
       });
     } catch (e) {
       const fault = e instanceof UPnPError ? e : new UPnPError(501, 'Action Failed');
       const actionName = /^[A-Za-z][A-Za-z0-9_]{0,63}$/.test(action || '') ? action : '(invalid)';
       songloft.log.warn('[DLNA] SOAP fault ' + JSON.stringify({ service, action: actionName, code: fault.code, reason: fault.message }));
-      if (service === 'AVTransport' && ['SetAVTransportURI', 'Play', 'Pause', 'Stop'].includes(actionName)) {
+      if ((service === 'AVTransport' && ['SetAVTransportURI', 'Play', 'Pause', 'Stop'].includes(actionName))
+        || (service === 'RenderingControl' && actionName === 'SetVolume')) {
         const reasons: Record<number, string> = {
           401: '不支持该操作', 402: '请求参数或媒体元数据无效', 501: '音箱操作失败',
           701: '没有可播放的媒体或当前状态不允许该操作',
@@ -315,12 +329,22 @@ export class DLNAReceiver {
     await this.validate(this.config);
     this.manager = await this.players.getOrCreate(this.config.account_id, this.config.device_id);
     const manager = this.manager;
+    await this.validate(this.config);
+    if (JSON.stringify(manager.getTargets()) !== JSON.stringify(this.config.members)) throw new UPnPError(501, 'Playback targets changed');
+    const members = this.config.members.map(m => ({ ...m }));
     this.ownsPlayback = true;
-    const acquired = await manager.beginExternalPlayback(() => {
+    const acquired = await manager.beginExternalPlayback(targetsChanged => {
       if (this.manager !== manager) return;
       this.ownsPlayback = false;
       this.transport = this.uri ? 'STOPPED' : 'NO_MEDIA_PRESENT';
       this.publish();
+      if (targetsChanged) return this.serial(async () => {
+        const results = await Promise.allSettled(members.map(m => this.mina.stopPlay(m.account_id, m.device_id)));
+        if (!results.every(r => r.status === 'fulfilled' && r.value)) {
+          this.lastError = '分组变更后部分音箱未确认停止，请检查音箱';
+          songloft.log.warn('[DLNA] ' + this.lastError);
+        }
+      }, true);
     });
     if (!acquired) throw new UPnPError(501, 'Playback superseded');
   }
@@ -329,7 +353,24 @@ export class DLNAReceiver {
     if (!this.ownsPlayback || !this.manager) throw new UPnPError(701, 'Playback superseded');
     const result = await this.manager.runExternalPlayback(operation);
     if (!this.ownsPlayback) throw new UPnPError(701, 'Playback superseded');
+    await this.validate(this.config);
     return result;
+  }
+
+  private async allMembers(operation: (member: DeviceTargetRef) => Promise<boolean>): Promise<boolean> {
+    const results = await Promise.allSettled(this.config.members.map(operation));
+    return results.every(r => r.status === 'fulfilled' && r.value === true);
+  }
+
+  private async startMedia(resume = false): Promise<void> {
+    const ok = await this.playbackCommand(() => this.allMembers(m => resume
+      ? this.mina.resumePlay(m.account_id, m.device_id)
+      : this.mina.playURL(m.account_id, m.device_id, this.uri, this.title)));
+    if (ok) return;
+    // A partially started group must not be reported as playing successfully.
+    if (this.ownsPlayback) await this.playbackCommand(() => this.allMembers(m => this.mina.stopPlay(m.account_id, m.device_id)));
+    this.transport = 'STOPPED'; this.position = 0;
+    throw new UPnPError(501, 'Playback rejected');
   }
 
   private setURI(uri: string, metadata: string): void {
@@ -371,7 +412,7 @@ export class DLNAReceiver {
       if (args.Channel !== 'Master') throw new UPnPError(402, 'Invalid Channel');
       if (action === 'SetVolume') {
         if (!/^\d+$/.test(args.DesiredVolume) || +args.DesiredVolume > 100) throw new UPnPError(402, 'Invalid volume');
-        if (!await this.mina.setVolume(account, device, +args.DesiredVolume)) throw new UPnPError(501, 'Volume rejected');
+        if (!await this.allMembers(m => this.mina.setVolume(m.account_id, m.device_id, +args.DesiredVolume))) throw new UPnPError(501, 'Volume rejected');
         this.volume = +args.DesiredVolume;
         return {};
       }
@@ -389,10 +430,10 @@ export class DLNAReceiver {
         try {
           await this.takePlayback();
           if (this.uri && previousState === 'PLAYING') {
-            if (!await this.playbackCommand(() => this.mina.playURL(account, device, this.uri, this.title))) throw new UPnPError(501, 'Playback rejected');
+            await this.startMedia();
             this.transport = 'PLAYING'; this.playStartedAt = Date.now(); this.stoppedHits = 0;
           } else {
-            if (!await this.playbackCommand(() => this.mina.stopPlay(account, device))) throw new UPnPError(501, 'Stop rejected');
+            if (!await this.playbackCommand(() => this.allMembers(m => this.mina.stopPlay(m.account_id, m.device_id)))) throw new UPnPError(501, 'Stop rejected');
             this.transport = this.uri ? (previousState === 'PAUSED_PLAYBACK' ? previousState : 'STOPPED') : 'NO_MEDIA_PRESENT';
           }
         } catch (e) {
@@ -409,23 +450,25 @@ export class DLNAReceiver {
         if (this.transport === 'PLAYING' && this.ownsPlayback) return {};
         await this.takePlayback();
         const resume = this.transport === 'PAUSED_PLAYBACK' && !this.hardPaused;
-        if (!await this.playbackCommand(() => resume ? this.mina.resumePlay(account, device) : this.mina.playURL(account, device, this.uri, this.title))) throw new UPnPError(501, 'Playback rejected');
+        await this.startMedia(resume);
         this.transport = 'PLAYING'; this.playStartedAt = Date.now(); this.stoppedHits = 0;
         if (!resume) this.position = 0;
         return {};
       }
       case 'Pause': {
         if (this.transport !== 'PLAYING' || !this.ownsPlayback) throw new UPnPError(701, 'Transition not available');
-        const result = await this.playbackCommand(() => this.mina.pausePlayVerified(account, device));
-        if (result === 'failed') throw new UPnPError(501, 'Pause rejected');
-        this.hardPaused = result === 'stopped';
+        const results = await this.playbackCommand(() => Promise.allSettled(this.config.members.map(m => this.mina.pausePlayVerified(m.account_id, m.device_id))));
+        const failed = results.some(r => r.status === 'rejected' || r.value === 'failed');
+        this.hardPaused = failed || results.some(r => r.status === 'fulfilled' && r.value === 'stopped');
+        if (this.hardPaused && !await this.playbackCommand(() => this.allMembers(m => this.mina.stopPlay(m.account_id, m.device_id)))) throw new UPnPError(501, 'Stop rejected');
+        if (failed) { this.transport = 'STOPPED'; this.position = 0; throw new UPnPError(501, 'Pause rejected'); }
         // A firmware stop cannot resume at the old position without a media proxy.
         this.transport = this.hardPaused ? 'STOPPED' : 'PAUSED_PLAYBACK';
         if (this.hardPaused) this.position = 0;
         return {};
       }
       case 'Stop':
-        if (this.ownsPlayback && !await this.playbackCommand(() => this.mina.stopPlay(account, device))) throw new UPnPError(501, 'Stop rejected');
+        if (this.ownsPlayback && !await this.playbackCommand(() => this.allMembers(m => this.mina.stopPlay(m.account_id, m.device_id)))) throw new UPnPError(501, 'Stop rejected');
         this.transport = this.uri ? 'STOPPED' : 'NO_MEDIA_PRESENT'; this.position = 0;
         return {};
       case 'GetTransportInfo': return { CurrentTransportState: this.transport, CurrentTransportStatus: 'OK', CurrentSpeed: '1' };

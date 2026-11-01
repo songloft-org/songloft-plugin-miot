@@ -486,13 +486,13 @@ export class PlaylistManager {
   }
 
   private externalPlayback = false;
-  private externalRelease: (() => void) | null = null;
+  private externalRelease: ((targetsChanged: boolean) => void | Promise<void>) | null = null;
   private playbackEpoch = 0;
   private pendingPlayback = new Set<Promise<unknown>>();
   private externalOperations = new Set<Promise<unknown>>();
 
   /** DLNA 接管前作废歌单驱动，并等已在途的推送结束，避免云端请求反向覆盖。 */
-  async beginExternalPlayback(onRelease: () => void): Promise<boolean> {
+  async beginExternalPlayback(onRelease: (targetsChanged: boolean) => void | Promise<void>): Promise<boolean> {
     this.invalidateInteraction();
     this.minaService.notifyControl?.(this.accountId, this.deviceId);
     this.externalPlayback = true;
@@ -511,14 +511,20 @@ export class PlaylistManager {
   }
 
   /** 结束外部接管后仍保持歌单停止；只有新的用户播放操作才恢复驱动。 */
-  endExternalPlayback(): void {
+  endExternalPlayback(targetsChanged = false): void | Promise<void> {
     this.invalidateInteraction();
-    if (!this.externalPlayback) return;
+    if (!this.externalPlayback) return targetsChanged && this.externalOperations.size
+      ? Promise.allSettled(Array.from(this.externalOperations)).then(() => undefined) : undefined;
     this.externalPlayback = false;
     this.playbackEpoch++;
     const release = this.externalRelease;
     this.externalRelease = null;
-    release?.();
+    const cleanup = release?.(targetsChanged);
+    if (cleanup) {
+      this.externalOperations.add(cleanup);
+      void cleanup.then(() => this.externalOperations.delete(cleanup), () => this.externalOperations.delete(cleanup));
+      return cleanup;
+    }
   }
 
   isExternalPlayback(): boolean { return this.externalPlayback; }
@@ -984,6 +990,11 @@ export class PlaylistManager {
     this.targets = (targets && targets.length > 0)
       ? targets.slice()
       : [{ account_id: this.accountId, device_id: this.deviceId }];
+  }
+
+  /** 返回目标快照，用于外部投放校验与分组变更时的所有权清理。 */
+  getTargets(): DeviceTargetRef[] {
+    return this.targets.map(t => ({ account_id: t.account_id, device_id: t.device_id }));
   }
 
   /** 主设备（分组时为成员列表第一个）：用于持久化与自动切歌定时器的进度校准参考。 */
@@ -2736,8 +2747,10 @@ export class PlaylistManager {
       previous.sampledAt = sampleAt;
       previous.stopHits = st.status === 1 ? 0 : previous.stopHits + 1;
       // 流长失准时，playing 下的冻结可能是缓冲，交给 30 秒宽限而非 6 秒停滞判据。
-      return { advancing: false, ended: position >= song.duration - TAIL_STALL_NEAR_END_SEC &&
-        previous.stopHits >= TAIL_STOP_CONFIRM_COUNT };
+      return {
+        advancing: false, ended: position >= song.duration - TAIL_STALL_NEAR_END_SEC &&
+          previous.stopHits >= TAIL_STOP_CONFIRM_COUNT
+      };
     }
     // 位置跳跃、回拨或未确认前的停止打断连续性，不能延长旧流宽限。
     this.deadlineTailEvidence = null;
@@ -3985,7 +3998,7 @@ export class PlaylistManagerMap {
         // 组 manager：key 即 groupId
         const group = this.groupsSnapshot.find(g => g.id === key);
         if (!group) {
-          manager.endExternalPlayback();
+          await manager.endExternalPlayback(true);
           manager.cleanup();
           this.managers.delete(key);
           continue;
@@ -3993,9 +4006,10 @@ export class PlaylistManagerMap {
         const p = manager.getPrimary();
         const head = group.members[0];
         if (p.account_id === head.account_id && p.device_id === head.device_id) {
+          if (JSON.stringify(manager.getTargets()) !== JSON.stringify(group.members)) await manager.endExternalPlayback(true);
           manager.setTargets(group.members.slice()); // 主设备不变：仅刷新成员，保留播放状态
         } else {
-          manager.endExternalPlayback();
+          await manager.endExternalPlayback(true);
           manager.cleanup(); // 主设备变了（primary 不可变）→ 丢弃，下次 getOrCreate 以新首位重建
           this.managers.delete(key);
         }
@@ -4003,7 +4017,7 @@ export class PlaylistManagerMap {
         // 独立 manager：若其设备现已属某分组，则应由共享 manager 接管
         const p = manager.getPrimary();
         if (!this.resolveTargetSync(p.account_id, p.device_id).managerKey.includes(':')) {
-          manager.endExternalPlayback();
+          await manager.endExternalPlayback(true);
           manager.cleanup();
           this.managers.delete(key);
         }
@@ -4045,6 +4059,8 @@ export class PlaylistManagerMap {
 
     const existing = this.managers.get(managerKey);
     if (existing) {
+      const currentPrimary = existing.getPrimary();
+      if (currentPrimary.account_id !== primary.account_id || currentPrimary.device_id !== primary.device_id) throw new Error('设备分组正在变更，请稍后重试');
       existing.setTargets(targets); // 刷新成员（成员可能已变更）
       return existing;
     }
@@ -4055,7 +4071,7 @@ export class PlaylistManagerMap {
         const dk = this.makeKey(t.account_id, t.device_id);
         const stale = this.managers.get(dk);
         if (stale) {
-          stale.endExternalPlayback();
+          await stale.endExternalPlayback(true);
           stale.cleanup();
           this.managers.delete(dk);
         }
@@ -4074,6 +4090,8 @@ export class PlaylistManagerMap {
     if (concurrent) {
       manager.endExternalPlayback();
       manager.cleanup();
+      const currentPrimary = concurrent.getPrimary();
+      if (currentPrimary.account_id !== primary.account_id || currentPrimary.device_id !== primary.device_id) throw new Error('设备分组正在变更，请稍后重试');
       concurrent.setTargets(targets);
       return concurrent;
     }

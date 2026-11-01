@@ -10,6 +10,16 @@ Include rule, scope, full owner/repo#number, failure/fix commit SHAs, actual val
 
 ## Entries
 
+### MIOT-026: Snapshot group members and persist target switches separately from the master switch
+
+- Scope: group DLNA and per-target switches associated with [songloft-org/songloft-plugin-miot#128](https://github.com/songloft-org/songloft-plugin-miot/issues/128), plugin baseline `3f7a5420186b3756f078427e1c5aa6fc98d1f576`.
+- Evidence: on 2026-11-01, group members shared a playback manager, so copying standalone receivers would duplicate ownership. Group refresh released external ownership before receiver shutdown, preventing it from stopping the old cast. Constructed regressions cover membership changes with the same primary, primary replacement, dissolution, and pending commands. Removing group dispatch in an isolated copy fails because only one member receives the URL; this is not a hardware reproduction.
+- Rule and implementation: one persistent identity per group, with members hidden. Drain pending casting operations and stop the old member snapshot before changing targets. Track cleanup promises as external operations so a new playlist waits; a receiver that lost ownership cannot send stale stops. Dispatch controls to all members in parallel and return a protocol error for explicit failures. Position and queried volume use the first member; sample-level synchronization is not promised.
+- Switches: as confirmed by the user, the master switch and every new device/group switch default to off. Persist selections independently, without inheriting member choices into groups; leaving a group restores device choices, and turning off the master switch preserves selections. Missing or unmanaged members make a group ineligible while retaining its visible reason and choice. Temporary unreachability is reported as a control failure, separately from configuration eligibility.
+- Done right: 39 DLNA cases, including real ConfigManager / PlaylistManagerMap integration, 1351 plugin tests, 76 frontend tests, both type checks, QuickJS build and package validation passed. Parent DLNA/UDP/Timer and full checks passed. Browser results and the working-tree identity are in `/tmp/miot-dlna-groups/verification.json`; Mina and UDP are simulated and do not prove audible output.
+- Not run: real-phone SSDP discovery, speaker firmware and audible output, acoustic synchronization, fnOS coexistence, or long-running operation. The on-site #128 discovery failure is still not established as fixed.
+- Seen 1× (2026-11-01). Status: local implementation and automated verification; release status must be checked against its source commit.
+
 ### MIOT-024: Isolate DLNA identities and controls while sharing discovery across speakers
 
 - Scope: the multi-speaker extension associated with [songloft-org/songloft-plugin-miot#128](https://github.com/songloft-org/songloft-plugin-miot/issues/128); plugin baseline `bb1641ea54e69a61fdbfab6b0b655078bf12c88f`.

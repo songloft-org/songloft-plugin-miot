@@ -1,24 +1,26 @@
 import type { HTTPRequest, HTTPResponse } from '@songloft/plugin-sdk';
 import type { ConfigManager } from '../config/manager';
 import type { MinaService } from '../service/service';
+import type { DeviceTargetRef } from '../types';
 import type { PlaylistManagerMap } from '../player/manager';
 import { SSDPDiscovery } from './discovery';
 import { DLNAReceiver, httpURL, isLAN, newUUID, peerIP } from './receiver';
 
-interface Settings { enabled: boolean; name: string; base_url: string; }
+interface Settings { enabled: boolean; name: string; base_url: string; enabled_ids: string[]; }
 interface Identity { key: string; uuid: string; }
-interface Target { key: string; account_id: string; device_id: string; name: string; }
+interface Target { key: string; account_id: string; device_id: string; name: string; group_id: string; members: DeviceTargetRef[]; available: boolean; error: string; }
 const CONFIG_KEY = 'dlna_receiver_config';
 const IDENTITIES_KEY = 'dlna_receiver_devices';
 const keyOf = (account: string, device: string) => JSON.stringify([account, device]);
 
 export class DLNAReceivers {
-  private config: Settings = { enabled: false, name: 'Songloft 小爱音箱', base_url: '' };
+  private config: Settings = { enabled: false, name: 'Songloft 小爱音箱', base_url: '', enabled_ids: [] };
   private identities: Identity[] = [];
   private receivers = new Map<string, DLNAReceiver>();
   private discovery = new SSDPDiscovery();
   private queue = Promise.resolve();
   private error = '';
+  private targetsSnapshot = new Map<string, Target>();
   private closed = false;
   private timer: ReturnType<typeof setTimeout> | null = null;
 
@@ -47,7 +49,9 @@ export class DLNAReceivers {
   private validate(input: Settings): Settings {
     if (!input || typeof input.enabled !== 'boolean' || typeof input.name !== 'string' || !input.name.trim()
       || input.name.trim().length > 80 || typeof input.base_url !== 'string') throw new Error('接收器配置无效');
-    const next = { enabled: input.enabled, name: input.name.trim(), base_url: input.base_url.trim().replace(/\/+$/, '') };
+    const enabledIds = input.enabled_ids ?? [];
+    if (!Array.isArray(enabledIds) || enabledIds.length > 4096 || enabledIds.some(id => typeof id !== 'string' || !this.identities.some(i => i.uuid === 'uuid:' + id))) throw new Error('DLNA 目标开关配置无效，请刷新设备列表');
+    const next = { enabled: input.enabled, name: input.name.trim(), base_url: input.base_url.trim().replace(/\/+$/, ''), enabled_ids: [...new Set(enabledIds)] };
     if (next.enabled) {
       const base = httpURL(next.base_url);
       if (!next.base_url.startsWith('http://') || !isLAN(base.host) || base.host.startsWith('127.') || base.path.includes('?')) throw new Error('服务器地址须为局域网 HTTP IPv4 地址，可包含部署子路径');
@@ -58,9 +62,22 @@ export class DLNAReceivers {
   private async targets(): Promise<Target[]> {
     const accounts = await this.configs.getAccounts();
     const groups = await this.configs.getDeviceGroups();
-    const grouped = new Set(groups.flatMap(g => g.members.map(m => keyOf(m.account_id, m.device_id))));
-    return accounts.flatMap(a => a.devices.filter(d => d.managed && !grouped.has(keyOf(a.id, d.device_id)))
-      .map(d => ({ key: keyOf(a.id, d.device_id), account_id: a.id, device_id: d.device_id, name: d.device_name || d.device_id })));
+    const grouped = new Set(groups.filter(g => g.members.length >= 2).flatMap(g => g.members.map(m => keyOf(m.account_id, m.device_id))));
+    const managed = new Set(accounts.flatMap(a => a.devices.filter(d => d.managed).map(d => keyOf(a.id, d.device_id))));
+    const targets: Target[] = accounts.flatMap(a => a.devices.filter(d => d.managed && !grouped.has(keyOf(a.id, d.device_id)))
+      .map(d => ({
+        key: keyOf(a.id, d.device_id), account_id: a.id, device_id: d.device_id, name: d.device_name || d.device_id,
+        group_id: '', members: [{ account_id: a.id, device_id: d.device_id }], available: true, error: ''
+      })));
+    for (const group of groups) {
+      if (group.members.length < 2) continue;
+      const available = group.members.every(m => managed.has(keyOf(m.account_id, m.device_id)));
+      targets.push({
+        key: JSON.stringify(['group', group.id, '']), ...group.members[0], name: group.name,
+        group_id: group.id, available, error: available ? '' : '分组成员须全部存在且已启用管理', members: group.members.map(m => ({ account_id: m.account_id, device_id: m.device_id }))
+      });
+    }
+    return targets;
   }
 
   private async reconcile(): Promise<void> {
@@ -79,6 +96,7 @@ export class DLNAReceivers {
     for (const [key, receiver] of this.receivers) {
       if (!keys.has(key)) { await receiver.close(); this.receivers.delete(key); }
     }
+    this.targetsSnapshot = new Map(targets.map(t => [t.key, t]));
     for (const target of targets) {
       const identity = this.identities.find(i => i.key === target.key)!;
       let receiver = this.receivers.get(target.key);
@@ -88,9 +106,9 @@ export class DLNAReceivers {
       }
       const duplicate = targets.some(t => t.key !== target.key && t.name.slice(0, 36) === target.name.slice(0, 36));
       const name = `${this.config.name.slice(0, 30)} · ${target.name.slice(0, 36)}${duplicate ? ` (${identity.uuid.slice(-8)})` : ''}`;
-      const next = { ...this.config, name, account_id: target.account_id, device_id: target.device_id };
+      const next = { enabled: this.config.enabled && this.config.enabled_ids.includes(identity.uuid.slice(5)) && target.available, base_url: this.config.base_url, name, account_id: target.account_id, device_id: target.device_id, group_id: target.group_id, members: target.members };
       const status = receiver.status();
-      if (Object.entries(next).some(([key, value]) => key !== 'name' && status[key as keyof typeof next] !== value) || (next.enabled && !status.running)) {
+      if (Object.entries(next).some(([key, value]) => key !== 'name' && JSON.stringify(status[key as keyof typeof next]) !== JSON.stringify(value)) || (next.enabled && !status.running)) {
         await receiver.configure(next);
       } else if (status.name !== name) {
         // Discovery labels may change when a duplicate speaker name appears or disappears.
@@ -101,9 +119,14 @@ export class DLNAReceivers {
   }
 
   status(hostSupported = true) {
-    const receivers = [...this.receivers.entries()].map(([key, receiver]) => ({
-      ...receiver.status(), id: this.identities.find(i => i.key === key)!.uuid.slice(5),
-    }));
+    const receivers = [...this.receivers.entries()].map(([key, receiver]) => {
+      const id = this.identities.find(i => i.key === key)!.uuid.slice(5);
+      const target = this.targetsSnapshot.get(key)!;
+      return {
+        ...receiver.status(), id, enabled: this.config.enabled_ids.includes(id), available: target.available,
+        error: target.error || receiver.status().error
+      };
+    });
     return { ...this.config, host_supported: hostSupported, running: receivers.some(r => r.running), error: this.error, receivers };
   }
 
@@ -172,6 +195,7 @@ export class DLNAReceivers {
       } catch (error) { return json({ error: error instanceof Error ? error.message : String(error) }, 400); }
     }
     if (!isLAN(peerIP(String(req.remoteAddr || '')))) return json({ error: 'DLNA 仅允许局域网访问，需支持对端地址的新版宿主' }, 403);
+    await this.refresh();
     const match = req.path.match(/^\/dlna\/([\da-f-]{36})(\/.*)$/);
     if (!match) return { statusCode: 404, body: '' };
     const identity = this.identities.find(i => i.uuid === 'uuid:' + match[1]);
