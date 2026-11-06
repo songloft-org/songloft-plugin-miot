@@ -10,6 +10,16 @@ Include rule, scope, full owner/repo#number, failure/fix commit SHAs, actual val
 
 ## Entries
 
+### MIOT-027: Verify the full search call chain and terminal events
+
+- Scope: songloft-org/songloft-plugin-miot#131, baseline `c2eccd167adc20291fd0b5efd02fc128b0517b44`; reference repository `wyrt000/mi-song-gpt@48cf6fc791621eb2f30594d38d74a497cf308feb`.
+- Evidence: On 2026-11-06, checking only the reference project's `src/ai/client.ts` missed Responses search in `src/voicecmd/qa_fallback.ts`. Repository-wide search located its custom-address `web_search` request. Isolated HTTP experiments also showed `used_search=true` after search failure followed by ordinary-chat fallback, and when no search event was returned; this flag does not prove actual web search.
+- Rule and fix: Trace configuration, routing, and the actual request path. Centralize protocol-specific construction and parsing while sharing transport, queue bounds, deadlines, and cancellation. Responses requires a completion event; failed/truncated responses or unfinished search output cannot count as success, and must not automatically fall back to ordinary chat. Provider/model capability cannot be inferred from “OpenAI compatible” or a search switch. Existing configurations retain their protocol. See [AI chat](docs/en/ai-chat.md#web-search).
+- Done right: Focused Responses HTTP/SSE, configuration, background-search isolation, cancellation/timeout, and TTS lifecycle regressions passed on the uncommitted worktree. Docker Chrome 121 at 1200px/390px selected protocols, saved, and reloaded, verified through the real configuration handler and ConfigManager disk storage. Removing search tools or the completion guard in isolated copies made the corresponding tests fail as expected. Final commands, source identity, and results are in `/tmp/miot-responses-20261106/verification.json`.
+- Same-day UI follow-up: Protocol and headers moved into advanced settings. Draft connection tests neither save nor operate devices/history. Search tests distinguish a normal reply, unconfirmed search, and a returned completion record; connection edits/navigation invalidate stale results. All 1,412 plugin tests, 84 frontend tests, both type checks, build, and validation passed. Docker Chrome 121 at 1200px/390px verified interaction and persisted state. Isolated false search-completion flags and removed result freshness checks caused their regressions to fail as expected. Final evidence: `/tmp/miot-ui-20261106/verification.json`. Live services/speakers remain untested; Seen is unchanged.
+- Not run: Authenticated/paid Model Studio, Ark, or workbuddy2api endpoints, real-speaker playback, and native WebViews. Simulated protocol tests and bytecode compilation do not prove a deployed gateway's capabilities. No commit, push, or release.
+- Seen 1× (2026-11-06). Status: local implementation and validation; MIOT-021 retains the original search integration evidence.
+
 ### UI-003: A missing song field does not mean there is no current song
 
 - Scope: Artist text in the fullscreen player; baseline `c39f1bf8b201813305a81508bf5cbf3cfb3884ba`.

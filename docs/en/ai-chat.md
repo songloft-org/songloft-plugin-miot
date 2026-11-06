@@ -16,6 +16,15 @@ External song searches first collapse consecutive whitespace in the keyword and 
 
 “停止回答”, “退出对话”, and “结束对话” cancel the answer and close the window, optionally restoring music after a safe stop. “停止播放” keeps music stopped. New questions invalidate old tasks so late model responses cannot speak.
 
+## Testing the Model Connection
+
+The conversation model card focuses on the model, web search, and test actions. Connection mode and custom headers are under advanced settings; ordinary connections need no changes. Enabling search for a custom service selects Responses mode for the current draft when necessary. Advanced settings retain manual selection. A saved search preference incompatible with the current mode offers an action to enable the search connection.
+
+- **Test connection** sends one short prompt using the draft URL, key, model, and headers, without enabling search tools.
+- **Test web search** is available when search is enabled and sends a real-time question. Only a successful Responses result containing a completed `web_search_call` is labeled as having received a search completion record. An answer without that record is labeled as unconfirmed. Model Studio Chat Completions search metadata is currently not parsed, so a normal reply cannot be labeled as confirmed search.
+
+Tests require neither saving nor enabling AI chat or selecting a speaker. They do not interrupt playback or write history, preferences, or configuration. Model/search charges may apply. Results apply only to the tested connection: related edits clear them, and late results after navigation are discarded. Failures suggest checks for URLs/modes, key permissions, or timeouts. Apply edits separately with Save settings.
+
 ## Custom Request Headers
 
 Both the default model connection and the independent chat connection accept optional custom request headers as a JSON object, for example:
@@ -32,11 +41,16 @@ The API fields are `ai_config.custom_headers` for the default connection (`POST 
 
 ## Web Search
 
-Enable and save “联网搜索” under the conversation model settings to send `enable_search: true` to the official Alibaba Cloud Model Studio API for chat requests. The model decides whether to search on each turn; enabling the option does not guarantee a search. It defaults to off for both fresh and upgraded configurations. A Model Studio model with web search support is required, and additional charges may apply; see the [official documentation](https://help.aliyun.com/en/model-studio/web-search).
+Select `Chat Completions` or `Responses` under the conversation model settings. Both fresh and upgraded configurations default to Chat Completions to preserve existing provider/model behavior. The selection applies to conversation, summaries, and memory extraction; command analysis keeps its existing endpoint. A shared default connection reuses the URL, key, and headers, while the conversation protocol is selected independently.
 
-The switch supports official DashScope endpoints (including international and US endpoints) and workspace addresses under `*.maas.aliyuncs.com`. Availability follows the effective conversation connection, whether shared or independent. For other connections the switch is disabled; the saved preference is retained but inactive. The independent DeepSeek search API is not integrated. Command analysis, summaries, and memory extraction do not enable search.
+- **Chat Completions** calls `<API URL>/chat/completions` for existing OpenAI-compatible services. Search sends `enable_search: true` only to official DashScope endpoints (including international and US endpoints) and workspace addresses under `*.maas.aliyuncs.com`. For other addresses, the search switch is disabled and its preference is retained.
+- **Responses** calls `<API URL>/responses`, including custom addresses. Enter a versioned base URL such as `https://example.com/v1` or Ark's `https://ark.cn-beijing.volces.com/api/v3`, rather than a full endpoint. Search adds `tools: [{"type":"web_search"}]`; disabling it omits the tools. The provider, model, and gateway must support Responses and its server-side search tool. Chat Completions or a standalone search endpoint alone is insufficient.
 
-Search uses the existing timeout, streaming, and cancellation mechanisms. API errors are shown without automatically retrying with search disabled. This initial implementation does not provide forced search, search strategies, or a separate source list.
+Search defaults to off and applies only to conversation, never summaries, memory extraction, or command analysis. It allows the model to search when needed; it neither guarantees a search on each turn nor treats a tool declaration as proof of successful search. Additional charges may apply; consult your provider's documentation, including [Model Studio](https://help.aliyun.com/en/model-studio/web-search). Responses retains provider-default thinking behavior instead of copying the DashScope Chat Completions non-thinking parameter. Output-token caps are 8,192 for conversation and 4,096 for background requests, allowing for reasoning and tool processing that may count against the output budget; reaching the cap surfaces a truncation error.
+
+Both protocols share the existing timeout (up to 30 seconds), streaming transport, bounded queues, and cancellation. Unsupported endpoints, search errors, and timeouts surface as errors without switching protocols or retrying ordinary chat, preventing duplicate charges and misleading real-time answers. Responses streams require `response.completed`; failure, truncation, text-done events alone, or disconnects cannot complete a turn. Partial text remains available but is excluded from successful context and speech. A final completed response with text also works without delta events.
+
+Responses sends `store: false` and keeps history locally without `previous_response_id`, preserving context-disable, history-clear, and memory semantics. Actual remote retention follows the provider's policy. Client-executed function/custom tools and standalone search APIs are not implemented.
 
 ## Speech and Music Recovery
 
@@ -76,6 +90,7 @@ All paths below are relative to `/api/v1/jsplugin/miot` and require a host JWT. 
 |---|---|
 | `GET/PUT /chat/config` | Read or partially update chat configuration; disabled by default |
 | `GET /chat/capabilities` | Report incremental HTTP availability (`streaming`) |
+| `POST /chat/test-connection` | `{config: draft chat config, search?: boolean}`; no persistence or device operations; returns `{connected, search: not_requested/unconfirmed/completed}`, or an error on failure |
 | `GET /chat/models` | List models using the effective chat connection |
 | `POST /chat/messages` | `{account_id, device_id, text, speak?}`; returns 202 `{task_id, phase}`; questions limited to 2,000 characters |
 | `GET /chat/status` | Device query parameters; returns task phase, follow-up window, and latest answer |

@@ -45,6 +45,12 @@ export function aiChatCompletionsUrl(apiUrl: string): string {
   return base ? `${base}/chat/completions` : '';
 }
 
+/** Responses endpoint on the same versioned connection base. */
+export function aiResponsesUrl(apiUrl: string): string {
+  const base = normalizeAiBaseUrl(apiUrl);
+  return base ? `${base}/responses` : '';
+}
+
 /**
  * 脱敏 URL：去掉 query 与 hash，仅保留「协议+主机+路径」。
  * 用于错误提示/日志展示实际请求地址，避免把 query 里可能带的 token 泄露出去

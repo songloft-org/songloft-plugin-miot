@@ -7,7 +7,7 @@ export class SSEParser {
   private eventSize = 0;
   private skipLF = false;
   private first = true;
-  constructor(private event: (data: string) => void) { }
+  constructor(private event: (data: string) => void, private maxEventSize = 65536) { }
   feed(bytes: Uint8Array): void {
     for (const byte of bytes) {
       if (this.skipLF) {
@@ -20,7 +20,7 @@ export class SSEParser {
       }
       else {
         this.line.push(byte);
-        if (this.line.length + this.eventSize > 65536) throw new Error('AI 流式事件超过长度限制');
+        if (this.line.length + this.eventSize > this.maxEventSize) throw new Error('AI 流式事件超过长度限制');
       }
     }
   }
@@ -39,7 +39,7 @@ export class SSEParser {
     let value = colon < 0 ? '' : line.slice(colon + 1);
     if (value.startsWith(' ')) value = value.slice(1);
     this.eventSize += value.length + 1;
-    if (this.eventSize > 65536) throw new Error('AI 流式事件超过长度限制');
+    if (this.eventSize > this.maxEventSize) throw new Error('AI 流式事件超过长度限制');
     this.data.push(value);
   }
 }

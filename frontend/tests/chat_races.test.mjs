@@ -209,10 +209,10 @@ function pageOf(options = {}) {
     query: value => JSON.stringify(value), managedDevices: { value: [] },
     watch: (_get, fn) => watches.push(fn), onMounted() { }, onUnmounted: fn => { unmount = fn; }, messageOf: error => error.message,
     get: options.get || (async (path) => path.includes('/chat/history') ? { history: [], total: 0, summary: '' } : { memories: [{ id: 'm', content: '来自服务器' }] }),
-    put: async (path, value) => { calls.push([path, structuredClone(value)]); return value; }, post: async (...args) => calls.push(args), del: async (path) => calls.push(path),
+    put: async (path, value) => { calls.push([path, structuredClone(value)]); return value; }, post: options.post || (async (...args) => calls.push(args)), del: async (path) => calls.push(path),
     notify: (...args) => notifications.push(args), confirmAction: options.confirm || (async () => ({ confirmed: true })),
   };
-  const page = script('views/settings/ChatSettings.vue', env, 'action, safeAction, refresh, refreshSafely, clear, removeTurn, save, submit, config, triggers, history, memories, memoryDrafts, busy, error, refreshError, loaded, question, speak, webSearchAvailable, customHeaders, dirty');
+  const page = script('views/settings/ChatSettings.vue', env, 'action, safeAction, refresh, refreshSafely, clear, removeTurn, save, submit, config, triggers, history, memories, memoryDrafts, busy, error, refreshError, loaded, question, speak, webSearchAvailable, customHeaders, dirty, setWebSearch, testConnection, connectionTest, connectionIdentity');
   return { ...page, state, calls, notifications, watches, unmount: () => unmount() };
 }
 test('independent chat saves and clears custom headers, rejecting invalid JSON before HTTP', async () => {
@@ -334,4 +334,69 @@ test('search availability follows effective chat connection and preserves saved 
   h.config.web_search_enabled = false;
   await h.save();
   assert.equal(h.calls[1][1].web_search_enabled, false);
+});
+
+test('Responses allows custom search, saves the protocol and preserves preference when switching back', async () => {
+  const h = pageOf();
+  h.loaded.value = true;
+  h.config.connection = 'independent';
+  h.config.api_url = 'https://custom.test/v1';
+  h.config.api_protocol = 'responses';
+  h.config.web_search_enabled = true;
+  assert.equal(h.webSearchAvailable.value, true);
+  await h.save();
+  assert.equal(h.calls[0][1].api_protocol, 'responses');
+  assert.equal(h.calls[0][1].web_search_enabled, true);
+  h.config.api_protocol = 'chat_completions';
+  assert.equal(h.webSearchAvailable.value, false);
+  assert.equal(h.config.web_search_enabled, true);
+  h.config.api_protocol = 'responses';
+  assert.equal(h.webSearchAvailable.value, true);
+});
+
+test('enabling custom web search selects the supported wire format without saving', () => {
+  const h = pageOf();
+  h.config.connection = 'independent';
+  h.config.api_url = 'https://custom.test/v1';
+  h.config.api_protocol = 'chat_completions';
+  h.setWebSearch(true);
+  assert.equal(h.config.api_protocol, 'responses');
+  assert.equal(h.config.web_search_enabled, true);
+  h.setWebSearch(false);
+  assert.equal(h.config.api_protocol, 'responses');
+  assert.equal(h.config.web_search_enabled, false);
+  assert.deepEqual(h.calls, []);
+});
+for (const search of [false, true]) test('connection test sends draft fields without saving: ' + search, async () => {
+  const requests = [];
+  const h = pageOf({ post: async (path, body) => { requests.push([path, structuredClone(body)]); return { connected: true, search: search ? 'unconfirmed' : 'not_requested' }; } });
+  h.config.connection = 'independent';
+  h.config.model = 'unsaved-model';
+  h.customHeaders.value = '{"x-session":"draft-session"}';
+  await h.testConnection(search);
+  assert.equal(requests[0][0], '/chat/test-connection');
+  assert.equal(requests[0][1].config.model, 'unsaved-model');
+  assert.equal(requests[0][1].config.custom_headers['x-session'], 'draft-session');
+  assert.equal(requests[0][1].search, search);
+  assert.equal(h.connectionTest.value.search, search ? 'unconfirmed' : 'not_requested');
+  assert.deepEqual(h.calls, []);
+});
+test('invalid draft headers display a local test failure without saving or sending', async () => {
+  const h = pageOf({ post: async () => assert.fail('invalid headers must not send') });
+  h.config.connection = 'independent'; h.customHeaders.value = '{bad';
+  await h.testConnection(false);
+  assert.equal(h.connectionTest.value.connected, false);
+  assert.match(h.connectionTest.value.error, /JSON/);
+  assert.deepEqual(h.calls, []);
+});
+for (const late of ['success', 'failure', 'unmount']) test('stale connection test result is ignored after ' + late, async () => {
+  const wait = deferred(), h = pageOf({ post: () => wait.promise });
+  h.config.connection = 'independent';
+  const pending = h.testConnection(false);
+  if (late === 'unmount') h.unmount();
+  else { h.config.model = 'replacement'; h.watches[2](); }
+  if (late === 'failure') wait.reject(new Error('old failure'));
+  else wait.resolve({ connected: true, search: 'not_requested' });
+  await pending;
+  assert.equal(h.connectionTest.value, null);
 });

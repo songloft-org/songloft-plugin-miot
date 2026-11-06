@@ -24,7 +24,7 @@ const cfg = { ...DEFAULT_CHAT_CONFIG, enabled: true, waiting_feedback: false, me
 const turn = (id, user = '你好', phase = 'completed') => ({ id, user, assistant: '你好！', phase, created_at: Date.now() });
 test('chat defaults preserve old feature flags and analysis connection remains independent', () => {
   assert.equal(DEFAULT_CHAT_CONFIG.enabled, false);
-  assert.deepEqual(chatConnection(cfg, { enabled: false, api_url: 'https://a/v1', api_key: 'secret', model: 'analysis', timeout: 6 }), { enabled: true, api_url: 'https://a/v1', api_key: 'secret', model: 'analysis', timeout: 30 });
+  assert.deepEqual(chatConnection(cfg, { enabled: false, api_url: 'https://a/v1', api_key: 'secret', model: 'analysis', timeout: 6 }), { enabled: true, api_protocol: 'chat_completions', api_url: 'https://a/v1', api_key: 'secret', model: 'analysis', timeout: 30 });
   assert.equal(chatConnection({ ...cfg, model: 'chat' }, { model: 'analysis' }).model, 'chat');
   for (const bad of [{ timeout: 31 }, { timeout: NaN }, { followup_seconds: -1 }, { enabled: 'true' }, { trigger_words: [''] }, { connection: 'bad' }, { api_url: 'file:///tmp/a' }, { system_prompt: '' }])
     assert.throws(() => validateChatConfig(bad));

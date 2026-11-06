@@ -1,18 +1,15 @@
-import type { AIConfig } from '../types';
-import { aiChatCompletionsUrl, isDashScopeEndpoint } from '../utils/ai_url';
+import { createAIRequest } from './protocol';
+import type { AIConnection, AIMessage } from './protocol';
+export type { AIMessage } from './protocol';
 import { requestAI } from '../utils/ai_request';
 import { aiRequestHeaders } from '../utils/ai_headers';
-import { canDisableDashScopeThinking } from '../utils/ai_thinking';
 import type { HTTPStream } from '@songloft/plugin-sdk';
-import { readChatStream, readStreamJSON, readStreamText } from './sse';
+import { readStreamJSON, readStreamText } from './sse';
 export interface AIRequestControl {
   streaming?: boolean;
   webSearch?: boolean;
+  onSearchCompleted?: () => void;
   onProgress?: (text: string) => void;
-}
-export interface AIMessage {
-  role: 'system' | 'user' | 'assistant';
-  content: string;
 }
 type Job<T> = {
   run: () => Promise<T>;
@@ -74,7 +71,7 @@ export class AIClient {
       this.drain();
     });
   }
-  request(config: AIConfig, messages: AIMessage[], kind: 'chat' | 'summary' | 'memory', current = () => true, scope = '', control: AIRequestControl = {}): Promise<string> {
+  request(config: AIConnection, messages: AIMessage[], kind: 'chat' | 'summary' | 'memory', current = () => true, scope = '', control: AIRequestControl = {}): Promise<string> {
     if (!config.api_url || !config.api_key || !config.model)
       return Promise.reject(new Error('AI 配置不完整'));
     return new Promise((resolve, reject) => {
@@ -85,30 +82,23 @@ export class AIClient {
       }
       queue.push({
         scope, current, resolve: v => resolve(v as string), reject, run: async () => {
-          const endpoint = aiChatCompletionsUrl(config.api_url);
-          const thinkingDisabled = canDisableDashScopeThinking(endpoint, config.model);
           const streaming = kind === 'chat' && control.streaming !== false && typeof songloft.net?.httpStream === 'function';
+          const request = createAIRequest(config, messages, kind, streaming, control.webSearch === true);
+          const { endpoint, thinkingDisabled } = request;
           let stream: HTTPStream | undefined;
+          let streamAnswer: string | undefined;
           const id = Symbol();
           const cancel = () => { void stream?.cancel().catch(() => { }); };
           this.activeRequests.set(id, { scope, cancel });
           try {
             const value = await requestAI(endpoint, {
               method: 'POST', headers: aiRequestHeaders(config),
-              body: JSON.stringify({
-                model: config.model, stream: streaming, messages,
-                max_tokens: kind === 'chat' ? 2048 : 1200,
-                ...(thinkingDisabled ? { enable_thinking: false } : {}),
-                ...(kind === 'chat' && control.webSearch === true && isDashScopeEndpoint(endpoint) ? { enable_search: true } : {}),
-              }),
+              body: JSON.stringify(request.body),
             }, config.timeout, { kind, model: config.model, thinkingDisabled }, async (response) => {
               if (!response.ok)
                 throw new Error(`AI API error: ${response.status}`);
               const data = await response.json();
-              const content = data.choices?.[0]?.message?.content;
-              if (typeof content !== 'string' || !content.trim())
-                throw new Error('AI 返回了空回答');
-              return content.trim().slice(0, 16000);
+              return streamAnswer ?? request.readJSON(data, control.onSearchCompleted);
             }, streaming ? async init => {
               stream = songloft.net.httpStream!(endpoint, { ...init, timeoutMs: config.timeout * 1000 });
               const response = await stream.response;
@@ -116,9 +106,11 @@ export class AIClient {
               return {
                 text: () => readStreamText(stream!, current),
                 ok: response.status >= 200 && response.status < 300, status: response.status,
-                json: async () => /text\/event-stream/i.test(contentType)
-                  ? { choices: [{ message: { content: await readChatStream(stream!, current, text => { if (current()) control.onProgress?.(text); }) } }] }
-                  : await readStreamJSON(stream!, current),
+                json: async () => {
+                  if (!/text\/event-stream/i.test(contentType)) return await readStreamJSON(stream!, current);
+                  streamAnswer = await request.readStream(stream!, current, text => { if (current()) control.onProgress?.(text); }, control.onSearchCompleted);
+                  return null;
+                },
               };
             } : undefined);
             if (!current())

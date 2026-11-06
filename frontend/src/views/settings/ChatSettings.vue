@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue';
 import { DEFAULT_CHAT_CONFIG } from '../../../../src/chat/types';
+import type { ConnectionTestResult } from '../../../../src/chat/connection_test';
 import type { ChatConfig, ChatMemory, ChatTurn } from '../../../../src/chat/types';
 import { isDashScopeEndpoint } from '../../../../src/utils/ai_url';
 import { del, get, messageOf, post, put, query } from '../../api';
@@ -18,6 +19,9 @@ import { parseAIHeaders } from '../../../../src/utils/ai_headers';
 const config = reactive<ChatConfig>({ ...DEFAULT_CHAT_CONFIG, trigger_words: [...DEFAULT_CHAT_CONFIG.trigger_words] });
 const triggers = ref(config.trigger_words.join('、'));
 const customHeaders = ref(JSON.stringify(config.custom_headers || {}, null, 2));
+const connectionTest = ref<(ConnectionTestResult & { error?: string; }) | null>(null);
+const connectionTesting = ref(false);
+let testVersion = 0;
 const savedConfig = ref(''), streamingAvailable = ref<boolean | null>(null);
 const loaded = ref(false), busy = ref(false), error = ref(''), refreshError = ref(''), question = ref(''), speak = ref(true);
 const history = ref<ChatTurn[]>([]), memories = ref<ChatMemory[]>([]), summary = ref(''), offset = ref(0), total = ref(0);
@@ -28,7 +32,29 @@ const target = computed(() => ({ account_id: state.currentAccountId, device_id: 
 const targetQuery = computed(() => query(target.value));
 const lastContextTurns = ref(3);
 const contextEnabled = computed(() => config.context_turns > 0);
-const webSearchAvailable = computed(() => isDashScopeEndpoint(config.connection === 'independent' ? config.api_url : state.config.ai_config.api_url || ''));
+const webSearchAvailable = computed(() => config.api_protocol === 'responses' || isDashScopeEndpoint(config.connection === 'independent' ? config.api_url : state.config.ai_config.api_url || ''));
+const connectionIdentity = computed(() => JSON.stringify({
+  connection: config.connection, api_url: config.api_url, api_key: config.api_key,
+  model: config.model, timeout: config.timeout, api_protocol: config.api_protocol,
+  customHeaders: customHeaders.value, web_search_enabled: config.web_search_enabled,
+  shared: config.connection === 'analysis' ? state.config?.ai_config : undefined,
+}));
+function setWebSearch(enabled: boolean) {
+  config.web_search_enabled = enabled;
+  if (enabled && !webSearchAvailable.value) config.api_protocol = 'responses';
+}
+async function testConnection(search: boolean) {
+  const version = ++testVersion, identity = connectionIdentity.value;
+  const current = () => alive && version === testVersion && identity === connectionIdentity.value;
+  connectionTest.value = null; connectionTesting.value = true;
+  try {
+    const draft = { ...config, custom_headers: config.connection === 'independent' ? parseAIHeaders(customHeaders.value) : config.custom_headers };
+    const result = await post<ConnectionTestResult>('/chat/test-connection', { config: draft, search });
+    if (current()) connectionTest.value = result;
+  } catch (e) {
+    if (current()) connectionTest.value = { connected: false, search: 'not_requested', error: messageOf(e) };
+  } finally { connectionTesting.value = false; }
+}
 const dirty = computed(() => loaded.value && (JSON.stringify({ ...config, trigger_words: triggers.value.split(/[、,，\n]/).map(v => v.trim()).filter(Boolean) }) !== savedConfig.value || customHeaders.value !== JSON.stringify(config.custom_headers || {}, null, 2)));
 function setContextEnabled(enabled: boolean) {
   if (!enabled && config.context_turns > 0) lastContextTurns.value = config.context_turns;
@@ -102,6 +128,7 @@ watch([
   () => state.chatStatus?.phase,
   () => state.chatStatus?.memory_revision,
 ], () => { void refreshSafely(); });
+watch(connectionIdentity, () => { testVersion++; connectionTest.value = null; }, { flush: 'sync' });
 onMounted(() => { void action(async () => { Object.assign(config, await get<ChatConfig>('/chat/config')); triggers.value = config.trigger_words.join('、'); customHeaders.value = JSON.stringify(config.custom_headers || {}, null, 2); savedConfig.value = JSON.stringify(config); lastContextTurns.value = config.context_turns || 3; loaded.value = true; void get<{ streaming: boolean; }>('/chat/capabilities').then(value => { if (alive) streamingAvailable.value = value.streaming; }).catch(() => { }); await refresh(); }); });
 let alive = true;
 onUnmounted(() => { alive = false; refreshVersion++; });
@@ -139,19 +166,47 @@ const safeAction = (run: () => Promise<void>) => { if (alive) void action(run); 
       <div class="form-body">
       <SlSelect :disabled="busy || !loaded" v-model="config.connection" :options="[{ value: 'analysis', label: '复用默认模型连接' }, { value: 'independent', label: '独立连接' }]" aria-label="对话模型连接" />
       <template v-if="config.connection === 'independent'">
-        <label class="chat-field">API 地址<SlInput v-model="config.api_url" type="url" aria-label="问答 API 地址" /></label>
+        <label class="chat-field">服务地址<SlInput v-model="config.api_url" type="url" aria-label="问答 API 地址" placeholder="粘贴服务商提供的 API 基础地址" /><small>例如 https://example.com/v1，请勿粘贴聊天或搜索请求的完整地址。</small></label>
         <label class="chat-field">API 密钥<SlInput v-model="config.api_key" type="password" aria-label="问答 API 密钥" /></label>
-        <AIHeadersField v-model="customHeaders" label="问答自定义请求头" />
       </template>
       <p v-if="config.connection === 'analysis'">默认模型：{{ state.config.ai_config.model || '尚未配置' }}。同时复用默认连接的自定义请求头。启用对话不需要开启口令分析。</p>
       <label class="chat-field">问答模型<SlInput v-model="config.model" aria-label="问答模型" placeholder="留空则使用默认模型" /></label>
       <SlButton v-if="config.connection === 'independent'" label="保存并获取模型" variant="outlined" :disabled="busy || !loaded" @click="safeAction(async () => { await save(); models = (await get<{ models: Array<{ id: string }> }>('/chat/models')).models; })" />
       <SlSelect :disabled="busy || !loaded" v-if="models.length" v-model="config.model" :options="models.map(m => ({ value: m.id, label: m.id }))" aria-label="可用问答模型" />
-      <SettingRow title="联网搜索" subtitle="由模型判断是否搜索，需使用支持该能力的百炼模型，可能产生额外费用。">
-        <SlSwitch v-model="config.web_search_enabled" :disabled="!webSearchAvailable" aria-label="联网搜索" />
+      <SettingRow title="联网搜索" subtitle="回答实时问题时，允许 AI 搜索资料。可能产生额外费用。">
+        <SlSwitch :model-value="config.web_search_enabled" aria-label="联网搜索" @update:model-value="setWebSearch($event)" />
       </SettingRow>
-      <p v-if="!webSearchAvailable">当前连接不支持此开关，仅适用于百炼官方 API；已保存的联网搜索设置暂不生效。</p>
-      <SlDisclosure title="高级设置" description="超时、角色、追问和模型兼容">
+      <p v-if="config.web_search_enabled && webSearchAvailable">由模型决定是否搜索。建议先测试，确认当前服务和模型是否支持。</p>
+      <div v-if="config.web_search_enabled && !webSearchAvailable" class="chat-search-help">
+        <p>当前连接方式尚未启用搜索支持。</p>
+        <SlButton label="启用搜索连接" variant="outlined" @click="config.api_protocol = 'responses'" />
+      </div>
+      <div class="chat-actions">
+        <SlButton label="测试连接" variant="outlined" :disabled="busy || !loaded" @click="safeAction(() => testConnection(false))" />
+        <SlButton v-if="config.web_search_enabled" label="测试联网搜索" variant="outlined" :disabled="busy || !loaded || !webSearchAvailable" @click="safeAction(() => testConnection(true))" />
+      </div>
+      <p class="chat-help">使用当前填写的内容发送一次简短提问，无需先保存，不播放也不保存聊天记录。</p>
+      <p v-if="connectionTesting" role="status">正在测试当前连接，请稍候……</p>
+      <div v-if="connectionTest" class="chat-connection-result" role="status" aria-live="polite">
+        <template v-if="connectionTest.connected">
+          <strong>{{ connectionTest.search === 'completed' ? '连接正常 · 已收到搜索完成记录' : connectionTest.search === 'unconfirmed' ? '连接正常 · 本次搜索未确认' : '连接正常 · 模型已回复' }}</strong>
+          <p v-if="connectionTest.search === 'completed'">服务返回了搜索完成记录。正式问答时仍由模型决定是否搜索。</p>
+          <p v-else-if="connectionTest.search === 'unconfirmed'">已允许模型搜索，但服务未返回搜索完成记录，不能确认本次实际联网。请核对服务商和模型的搜索支持。</p>
+          <p v-else>可以继续配置或保存。连接正常不代表已验证联网搜索。</p>
+        </template>
+        <template v-else>
+          <strong class="chat-error">测试未通过</strong>
+          <p class="chat-text">{{ connectionTest.error }}</p>
+          <p v-if="/401|403/.test(connectionTest.error || '')">请核对 API 密钥是否有效，以及账号是否有权使用此模型。</p>
+          <p v-else-if="/404|405/.test(connectionTest.error || '')">请核对服务地址。当前服务可能不支持此连接方式，可在高级设置中切换后重试。</p>
+          <p v-else-if="/timed out|超时/i.test(connectionTest.error || '')">请检查网络，尝试响应更快的模型，或在高级设置中调整超时时间。</p>
+          <p v-else>请检查服务地址、密钥和模型；需要调整连接方式时展开高级设置。</p>
+        </template>
+      </div>
+      <SlDisclosure title="高级设置" description="连接方式、自定义请求头、角色与其他选项">
+      <label class="chat-field">连接方式<SlSelect v-model="config.api_protocol" :options="[{ value: 'chat_completions', label: '兼容模式（Chat Completions）' }, { value: 'responses', label: '搜索工具模式（Responses）' }]" aria-label="问答接口协议" /></label>
+      <p>普通连接可保留兼容模式。自定义服务的内置搜索可尝试搜索工具模式，需服务商和模型支持 Responses。切换后请重新测试。</p>
+      <AIHeadersField v-if="config.connection === 'independent'" v-model="customHeaders" label="问答自定义请求头" />
       <label class="chat-field">请求超时（1–30 秒）<SlInput :model-value="String(config.timeout)" type="number" aria-label="问答超时" @update:model-value="config.timeout = Number($event)" /></label>
       <label class="chat-field">角色提示词<textarea v-model="config.system_prompt" class="sl-input chat-textarea" aria-label="角色提示词" maxlength="4000"></textarea></label>
       <SettingRow title="音乐口令未命中后交给 AI"><SlSwitch v-model="config.fallback_enabled" aria-label="兜底问答" /></SettingRow>
@@ -230,5 +285,8 @@ const safeAction = (run: () => Promise<void>) => { if (alive) void action(run); 
 .chat-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-block: 12px; }
 .chat-turn { padding-block: 12px; border-bottom: 1px solid var(--md-outline-variant); }
 .chat-text { white-space: pre-wrap; overflow-wrap: anywhere; }
+.chat-connection-result { padding: 12px 16px; border: 1px solid var(--md-outline-variant); border-radius: 12px; background: var(--md-surface-container); overflow-wrap: anywhere; }
+.chat-connection-result p { margin-block: 6px 0; }
+.chat-help { color: var(--md-on-surface-variant); font-size: 0.875rem; }
 .chat-error { color: var(--md-error); }
 </style>

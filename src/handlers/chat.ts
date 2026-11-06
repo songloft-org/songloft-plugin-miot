@@ -2,7 +2,8 @@ import { jsonResponse, parseQuery } from '@songloft/plugin-sdk';
 import type { Router, HTTPRequest, HTTPResponse } from '@songloft/plugin-sdk';
 import type { ConfigManager } from '../config/manager';
 import type { AIChatService } from '../chat/service';
-import { chatConnection, chatScope } from '../chat/types';
+import { testChatConnection } from '../chat/connection_test';
+import { chatConnection, chatScope, validateChatConfig } from '../chat/types';
 import type { ChatConfig } from '../chat/types';
 import { aiModelsUrl } from '../utils/ai_url';
 import { requestAI } from '../utils/ai_request';
@@ -52,6 +53,13 @@ export function registerChatHandlers(router: Router, config: ConfigManager, chat
     chat.configurationChanged();
     onConfigChanged?.(next);
     return jsonResponse(next);
+  }));
+  router.post('/chat/test-connection', wrap(async (req) => {
+    const body = chatBody(req);
+    if (body.search !== undefined && typeof body.search !== 'boolean')
+      throw new Error('search 必须是布尔值');
+    const draft = validateChatConfig(body.config as Partial<ChatConfig>);
+    return jsonResponse(await testChatConnection(chat.client, draft, await config.getAIConfig(), body.search === true));
   }));
   router.get('/chat/models', wrap(async () => {
     const connection = chatConnection(await config.getChatConfig(), await config.getAIConfig());
