@@ -10,6 +10,16 @@ Include rule, scope, full owner/repo#number, failure/fix commit SHAs, actual val
 
 ## Entries
 
+### MIOT-028: Interrupting an answer does not authorize the next AI turn
+
+- Scope: songloft-org/songloft-plugin-miot#137; baseline `9eb7eb3756631027ca35183ddac734960cd27661`.
+- Evidence: routing accepted an unprefixed message solely because the previous turn was generating or speaking, even with a zero follow-up duration. The screenshots fit follow-up timing, but missing initial history/configuration prevents identifying the reporter's first entry path.
+- Rule and fix: separate interruption from new-turn authorization. New configurations require a trigger each turn; continuous follow-ups require an explicit switch and a valid window after completion. Fallback remains independent. Migrate legacy windows while preserving explicit saved choices.
+- Done right: 11 targeted assertions fail against an isolated baseline; all 1423 plugin tests, 84 frontend tests, both type checks, bytecode build and package validation pass after the change. Coverage includes disabled/zero windows, all active phases, legacy migration and persistence. Evidence: `/tmp/miot137-{negative,tests,front-tests}.log`; browser records: `/tmp/miot137-ui/`.
+- Not run: real speakers, native WebView, remote CI and release. Status: local uncommitted worktree.
+- Seen 1× (2026-11-09).
+
+
 ### MIOT-027: Verify the full search call chain and terminal events
 
 - Scope: songloft-org/songloft-plugin-miot#131, baseline `c2eccd167adc20291fd0b5efd02fc128b0517b44`; reference repository `wyrt000/mi-song-gpt@48cf6fc791621eb2f30594d38d74a497cf308feb`.

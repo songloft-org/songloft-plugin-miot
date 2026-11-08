@@ -54,7 +54,7 @@ export class AIChatService {
     // 旧任务只更新自己的历史，不覆盖新任务的状态。
     if (this.statuses.get(task.scope)?.task_id !== task.turn.id)
       return;
-    const status = { task_id: task.turn.id, phase, followup_until: phase === 'completed' ? Date.now() + task.config.followup_seconds * 1000 : 0, ...(task.turn.assistant ? { answer: task.turn.assistant } : {}), memory_revision: this.statuses.get(task.scope)?.memory_revision || 0, ...(error ? { error } : {}) };
+    const status = { task_id: task.turn.id, phase, followup_until: phase === 'completed' && task.config.followup_enabled && task.config.followup_seconds > 0 ? Date.now() + task.config.followup_seconds * 1000 : 0, ...(task.turn.assistant ? { answer: task.turn.assistant } : {}), memory_revision: this.statuses.get(task.scope)?.memory_revision || 0, ...(error ? { error } : {}) };
     this.statuses.set(task.scope, status);
     for (const listener of this.listeners) {
       try {

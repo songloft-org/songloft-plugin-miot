@@ -93,7 +93,7 @@ export class VoiceDispatcher {
     try {
       if (!current())
         return;
-      const canChatFallback = () => config.enabled && (config.fallback_enabled || active.followup_until > Date.now() || ['queued', 'preparing', 'generating', 'speaking', 'resuming'].includes(active.phase));
+      const canChatFallback = () => config.enabled && (config.fallback_enabled || config.followup_enabled && config.followup_seconds > 0 && active.followup_until > Date.now());
       const handled = await this.music.handleMessage(message, { deferResume: true, current, suppressAnalysisFailureHint: canChatFallback });
       if (!current() || handled)
         return;

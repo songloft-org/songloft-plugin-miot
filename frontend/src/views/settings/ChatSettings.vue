@@ -138,11 +138,14 @@ const safeAction = (run: () => Promise<void>) => { if (alive) void action(run); 
 <template>
   <fieldset class="chat-settings" :disabled="busy || !loaded">
     <p v-if="error" role="alert" class="chat-error">{{ error }}</p>
-    <SectionCard title="AI 对话" description="与音乐口令分析分别启用。默认说“请问……”开始，回答后可继续追问。">
+    <SectionCard title="AI 对话" description="与音乐口令分析分别启用。默认每轮说“请问……”开始；可开启连续追问。">
       <div class="form-body">
       <SettingRow title="启用 AI 对话"><SlSwitch v-model="config.enabled" :disabled="!loaded || busy" aria-label="启用 AI 对话" /></SettingRow>
       <p v-if="!state.config.conversation_monitor_enabled">语音问答需要对话监听。<SlButton label="一并开启监听" variant="outlined" @click="safeAction(async () => { await saveConfig({ conversation_monitor_enabled: true }); })" /></p>
       <label class="chat-field">触发词（用顿号或逗号分隔）<SlInput v-model="triggers" aria-label="问答触发词" /></label>
+      <SettingRow title="允许连续追问" subtitle="开启后，回答播报完成后的窗口内可不带触发词；仍需唤醒音箱。"><SlSwitch v-model="config.followup_enabled" aria-label="允许连续追问" /></SettingRow>
+      <label v-if="config.followup_enabled" class="chat-field">追问窗口（秒，0 关闭）<SlInput :model-value="String(config.followup_seconds)" type="number" aria-label="追问窗口" @update:model-value="config.followup_seconds = Number($event)" /></label>
+      <p v-if="!config.followup_enabled && !config.fallback_enabled">每轮提问都需要触发词，包括上一轮仍在回答时。</p>
       <SettingRow title="每轮回答后恢复原音乐"><SlSwitch v-model="config.resume_music" aria-label="回答后恢复音乐" /></SettingRow>
       <SettingRow title="等待时播报提示" subtitle="提问后说“收到，正在思考”，模型请求同时开始。"><SlSwitch v-model="config.waiting_feedback" aria-label="等待时播报提示" /></SettingRow>
       <p>追问仍需唤醒音箱。分组播放时全组暂停，仅提问设备回答；播报结束无法确认时保持暂停。DLNA 投放中请先停止投放。</p>
@@ -209,8 +212,7 @@ const safeAction = (run: () => Promise<void>) => { if (alive) void action(run); 
       <AIHeadersField v-if="config.connection === 'independent'" v-model="customHeaders" label="问答自定义请求头" />
       <label class="chat-field">请求超时（1–30 秒）<SlInput :model-value="String(config.timeout)" type="number" aria-label="问答超时" @update:model-value="config.timeout = Number($event)" /></label>
       <label class="chat-field">角色提示词<textarea v-model="config.system_prompt" class="sl-input chat-textarea" aria-label="角色提示词" maxlength="4000"></textarea></label>
-      <SettingRow title="音乐口令未命中后交给 AI"><SlSwitch v-model="config.fallback_enabled" aria-label="兜底问答" /></SettingRow>
-      <label class="chat-field">追问窗口（秒，0 关闭）<SlInput :model-value="String(config.followup_seconds)" type="number" aria-label="追问窗口" @update:model-value="config.followup_seconds = Number($event)" /></label>
+      <SettingRow title="音乐口令未命中后交给 AI" subtitle="开启后，无触发词的普通问题也可能交给 AI，不受连续追问开关限制。"><SlSwitch v-model="config.fallback_enabled" aria-label="兜底问答" /></SettingRow>
       <p>追问窗口决定哪些话交给 AI；历史上下文决定 AI 能参考哪些问答。</p>
       <SettingRow title="实时显示回答" subtitle="逐步显示模型生成的文字，音箱仍等待完整回答后播报。接口不支持时可关闭。"><SlSwitch v-model="config.streaming_enabled" aria-label="实时显示回答" /></SettingRow>
       <p v-if="streamingAvailable === false">当前服务端尚不支持实时接收，将等待完整回答。升级服务端后可用。</p>

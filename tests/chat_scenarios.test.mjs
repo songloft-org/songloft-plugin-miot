@@ -49,9 +49,12 @@ for (const phase of ['queued', 'preparing', 'generating', 'speaking', 'resuming'
   });
 }
 for (const [name, config, active, expected] of [
-  ['window open', {}, { followup_until: Date.now() + 60000 }, true], ['window expired', {}, { followup_until: 1 }, false],
+  ['window open', { followup_enabled: true }, { followup_until: Date.now() + 60000 }, true], ['window expired', {}, { followup_until: 1 }, false],
+  ['window disabled', {}, { followup_until: Date.now() + 60000 }, false],
+  ['zero window', { followup_enabled: true, followup_seconds: 0 }, { followup_until: Date.now() + 60000 }, false],
+  ...['queued', 'preparing', 'generating', 'speaking', 'resuming'].map(phase => [`in progress ${phase}`, { followup_enabled: true }, { phase }, false]),
   ['fallback', { fallback_enabled: true }, {}, true], ['default no fallback', {}, {}, false],
-  ['chat disabled', { enabled: false, fallback_enabled: true }, { phase: 'speaking' }, false], ['during answering', {}, { phase: 'speaking' }, true],
+  ['chat disabled', { enabled: false, fallback_enabled: true }, { phase: 'speaking' }, false], ['during answering', {}, { phase: 'speaking' }, false],
 ]) {
   test(`unmatched routing: ${name}`, async (t) => {
     const h = dispatcherOf(t, { config, active });

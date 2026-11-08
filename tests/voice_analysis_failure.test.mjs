@@ -102,8 +102,8 @@ test('legacy direct message path also hints and preserves smart resume', async t
 
 for (const [name, chat, active] of [
   ['fallback', { enabled: true, fallback_enabled: true }, {}],
-  ['followup', { enabled: true }, { followup_until: Date.now() + 60000 }],
-  ['answer in progress', { enabled: true }, { phase: 'speaking' }],
+  ['followup', { enabled: true, followup_enabled: true }, { followup_until: Date.now() + 60000 }],
+  ['answer in progress with fallback', { enabled: true, fallback_enabled: true }, { phase: 'speaking' }],
 ]) {
   test(`AI failure hands off to chat without a duplicate hint: ${name}`, async t => {
     const f = fixture(t, { chat, active });
@@ -136,7 +136,7 @@ test('cancelled AI failure sends no stale hint or resume', async t => {
 
 test('followup expiry during analysis still produces a failure hint', async t => {
   t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 10000 });
-  const f = fixture(t, { chat: { enabled: true }, active: { followup_until: 11000 } });
+  const f = fixture(t, { chat: { enabled: true, followup_enabled: true }, active: { followup_until: 11000 } });
   const response = deferred();
   t.mock.method(globalThis, 'fetch', () => response.promise);
   const pending = f.dispatcher.dispatch(message, '来点适合现在听的音乐', () => true);
@@ -245,8 +245,8 @@ test('ambiguous input stays silent on AI failure but still permits successful AI
 
 for (const [name, chat, active] of [
   ['fallback', { enabled: true, fallback_enabled: true }, {}],
-  ['followup', { enabled: true }, { followup_until: Date.now() + 60000 }],
-  ['answer in progress', { enabled: true }, { phase: 'speaking' }],
+  ['followup', { enabled: true, followup_enabled: true }, { followup_until: Date.now() + 60000 }],
+  ['answer in progress with fallback', { enabled: true, fallback_enabled: true }, { phase: 'speaking' }],
 ]) {
   test(`non-music request still reaches configured chat: ${name}`, async t => {
     const f = fixture(t, { chat, active });
