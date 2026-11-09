@@ -21,15 +21,21 @@
 | Docker Chrome 121，1200px / 390px | 无需展开高级设置即可看到新名称及说明；切换、保存、刷新后状态一致；连续追问保持关闭；两项均关闭时显示每轮需触发词；无横向溢出或页面异常 |
 | `git diff --check` | 通过 |
 
-浏览器使用真实配置 handler、ConfigManager 和独立磁盘存储；账号、模型、设备接口为夹具，不调用真实设备或模型。此轮为界面语义调整，不新增文案断言测试。Not run：真实音箱发声、原生 WebView、长期运行、父仓库 Go 检查（公共宿主未改），以及本次远端 CI/发布（尚未提交或推送）。历史首次回访证据和已发表回复保留如下。
+浏览器使用真实配置 handler、ConfigManager 和独立磁盘存储；账号、模型、设备接口为夹具，不调用真实设备或模型。此轮为界面语义调整，不新增文案断言测试。Not run：真实音箱发声、原生 WebView、长期运行、父仓库 Go 检查（公共宿主未改）。本次远端 CI 与发布已完成，见下节。历史首次回访证据和已发表回复保留如下。
 
-待回复草稿（未获本轮评论授权，未发表；目标 `songloft-org/songloft-plugin-miot#137`）：
+## 提交、发布与评论（2026-11-09）
 
-> 确认了，旧名称确实容易理解成“点歌查询失败才交给 AI”。实际行为是：开启后，天气、闲聊等未被识别为音乐指令的语音，无需触发词就会进入 AI；已经识别的音乐指令仍优先处理。
+用户明确授权「提交推送回复评论」后，已推送源码提交 [5947732](https://github.com/songloft-org/songloft-plugin-miot/commit/5947732db70ec8caabf8ba70cdb115e8685d247b)；同一 SHA 的 [Release Plugin](https://github.com/songloft-org/songloft-plugin-miot/actions/runs/42625676891) 全部通过，自动发布 [v2026.11.9.1](https://github.com/songloft-org/songloft-plugin-miot/releases/tag/v2026.11.9.1)，版本元数据提交 `5862dcc`。下载发布包后已核对 `plugin.json` 版本、`releaseSource`、规范化内容 SHA-256 `zipHash`（排除 `plugin.json`，并非 ZIP 文件字节哈希） 及包内新文案；证据为 `/tmp/miot137-wording-20261109/package-verification.json` 和 `ci-complete.log`。
+
+发表前重新核对最新评论，已向 `songloft-org/songloft-plugin-miot#137` [发表并回读以下评论](https://github.com/songloft-org/songloft-plugin-miot/issues/137#issuecomment-6741283403)，正文与草稿一致，证据为同目录 `reply-published.json`。Issue 保持打开；真实音箱与原生 WebView 未验收。
+
+> 确认了，原名称确实容易理解成“点歌查询失败才交给 AI”。实际行为是：开启后，天气、闲聊等未被识别为音乐指令的语音，无需触发词就会进入 AI；已识别的音乐指令仍优先处理，已识别但播放失败的点歌请求也不会转成聊天。
 >
-> 如果只希望说“我要你……”才进入 AI，请关闭「音乐口令未命中后交给 AI」和「允许连续追问」并保存。你已确认关闭后按触发词工作，这条配置入口现已确认。
+> 已将该项改名为「无需触发词也交给 AI」，从高级设置移到触发词、连续追问旁，并补充说明。已发布 [v2026.11.9.1](https://github.com/songloft-org/songloft-plugin-miot/releases/tag/v2026.11.9.1)，可升级「智能音箱」插件使用；原有开关值会保留。
 >
-> 我已在本地把它改名为「无需触发词也交给 AI」，移到触发词、连续追问旁，并补充说明。插件 1,423 项测试、前端 84 项测试、类型检查、构建、包校验及桌面/手机浏览器保存刷新检查通过；尚未提交、发布或进行真实音箱验收。
+> 如果只希望说“我要你……”才进入 AI，请关闭「无需触发词也交给 AI」（旧版名为「音乐口令未命中后交给 AI」）和「允许连续追问」，保留触发词“我要你”，点击保存。你已确认关闭兜底后按触发词工作，这条配置入口现已确认。
+>
+> 修复提交：[5947732](https://github.com/songloft-org/songloft-plugin-miot/commit/5947732db70ec8caabf8ba70cdb115e8685d247b)。本地 1,423 项插件测试、84 项前端测试、两层类型检查、构建与包校验通过；桌面和手机宽度下验证了开关显示、保存与刷新，自动发布检查通过。真实音箱及原生 WebView 尚未验收，暂不关闭 Issue。
 
 ## 首次回访：结论与现场证据（确认前）
 

@@ -21,15 +21,21 @@ Validation target: plugin baseline `a161d3a1d6cc3159219b15f215d0c3f865442c85` pl
 | Docker Chrome 121, 1200px / 390px | New label and description visible without opening advanced settings; toggle/save/reload preserved state, continuous follow-ups stayed off, trigger-required hint returned with both switches off; no horizontal overflow or page errors |
 | `git diff --check` | Passed |
 
-Browser checks use real configuration handlers, ConfigManager, and isolated disk storage; accounts, model, and device interfaces are fixtures, with no live model/device calls. This is a UI wording change, so no new copy-assertion tests were added. Not run: audible hardware playback, native WebView, long-running use, parent Go checks (shared host unchanged), or new remote CI/release (not committed/pushed). Initial investigation evidence and the previously published reply remain below.
+Browser checks use real configuration handlers, ConfigManager, and isolated disk storage; accounts, model, and device interfaces are fixtures, with no live model/device calls. This is a UI wording change, so no new copy-assertion tests were added. Not run: audible hardware playback, native WebView, long-running use, parent Go checks (shared host unchanged). Remote CI and release are now complete; see below. Initial investigation evidence and the previously published reply remain below.
 
-Pending reply draft (not posted; no comment authorization for this round; target `songloft-org/songloft-plugin-miot#137`). English translation of the Chinese draft:
+## Commit, release, and comment (2026-11-09)
 
-> Confirmed: the old label can indeed sound like fallback after a failed song lookup. In practice, enabling it sends speech not recognized as music commands, such as weather questions and casual conversation, to AI without a trigger. Recognized music commands retain priority.
+After the user explicitly authorized committing, pushing, and replying, source commit [5947732](https://github.com/songloft-org/songloft-plugin-miot/commit/5947732db70ec8caabf8ba70cdb115e8685d247b) was pushed. The [Release Plugin run](https://github.com/songloft-org/songloft-plugin-miot/actions/runs/42625676891) passed for that exact SHA and automatically published [v2026.11.9.1](https://github.com/songloft-org/songloft-plugin-miot/releases/tag/v2026.11.9.1); release metadata commit: `5862dcc`. The downloaded package was checked for its manifest version, `releaseSource`, canonical-content SHA-256 `zipHash` (excluding `plugin.json`, distinct from the ZIP file byte hash), and new UI wording. Evidence: `/tmp/miot137-wording-20261109/package-verification.json` and `ci-complete.log`.
+
+Latest comments were checked before posting. The [reply to songloft-org/songloft-plugin-miot#137](https://github.com/songloft-org/songloft-plugin-miot/issues/137#issuecomment-6741283403) was posted and read back against its draft; evidence: `reply-published.json` in the same directory. The Issue remains open; real speakers and native WebView are not verified. English translation:
+
+> Confirmed: the old label can indeed sound like fallback after a failed song lookup. In practice, enabling it sends speech not recognized as music commands, such as weather questions and casual conversation, to AI without a trigger. Recognized music commands retain priority, and failed playback of recognized song requests does not become chat.
 >
-> To enter AI only with “我要你…”, disable both unmatched-music-command fallback and continuous follow-ups, then save. Your confirmation that triggers work with fallback disabled identifies this configuration entry.
+> Renamed it to “无需触发词也交给 AI”, moved it from advanced settings next to triggers and continuous follow-ups, and clarified its description. Version v2026.11.9.1 is released; upgrade the Smart Speaker plugin. Existing switch values are preserved.
 >
-> Locally renamed it to “无需触发词也交给 AI”, placed it next to triggers and continuous follow-ups, and clarified its description. All 1,423 plugin tests, 84 frontend tests, type checks, build, package validation, and desktop/mobile browser save/reload checks pass. Not committed, released, or verified on a real speaker yet.
+> To enter AI only with “我要你…”, disable both this option (formerly unmatched-music-command fallback) and continuous follow-ups, retain “我要你” as the trigger, and save. Your confirmation that triggers work with fallback disabled identifies this configuration entry.
+>
+> Source commit: 5947732. All 1,423 local plugin tests, 84 frontend tests, both type checks, build and package validation passed. Desktop/mobile browser checks covered visibility, saving, and reloading. Automated release checks passed. Real speakers and native WebView remain unverified, so the Issue stays open.
 
 ## Initial follow-up: findings and field evidence (before confirmation)
 
