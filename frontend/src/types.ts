@@ -127,6 +127,7 @@ export interface DeviceGroup {
 export interface Playlist {
   id: number;
   name: string;
+  is_virtual?: boolean;
   song_count?: number;
   type?: string;
   sort_by?: string;

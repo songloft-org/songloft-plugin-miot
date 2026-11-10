@@ -13,6 +13,9 @@ function loadSource(path, dependencies) {
   });
   const exports = {};
   new Function('require', 'exports', outputText)(name => {
+    if (name === './library_playlist' || name === '../player/library_playlist') {
+      return loadSource('../src/player/library_playlist.ts', {});
+    }
     assert.ok(Object.hasOwn(dependencies, name), `unexpected dependency: ${name}`);
     return dependencies[name];
   }, exports);

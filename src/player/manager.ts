@@ -10,6 +10,7 @@ import { URLBuilder, playbackOptionsOf, playbackOptionsFromConfig } from './url_
 import { hasLostDeviceMedia, isDeviceIdle, isDeviceStatusKnown } from '../playback/device_state';
 import { getHostBaseUrl, callHostAPI } from '../utils/http';
 import { isDebugLog } from '../utils/debug';
+import { ALL_SONGS_PLAYLIST_NAME, isAllSongsPlaylist, loadAllSongs } from './library_playlist';
 import type { PlayState, PlayMode, PlayerStatus, DeviceTargetRef, DeviceGroup } from '../types';
 
 /** 分配临时歌单唯一负数 ID（每个设备/歌手各一个，互不冲突） */
@@ -1023,7 +1024,7 @@ export class PlaylistManager {
       position: this.getPosition(),
       duration: duration,
       is_playing: this.state === 'playing',
-      playlist_name: this.tempPlaylistName || undefined,
+      playlist_name: isAllSongsPlaylist(this.playlistId) ? ALL_SONGS_PLAYLIST_NAME : this.tempPlaylistName || undefined,
       speed: this.playbackSpeed,
     };
   }
@@ -1711,6 +1712,18 @@ export class PlaylistManager {
   private async loadPlaylistSongs(playlistId: number, taskCurrent?: () => boolean): Promise<boolean> {
     const generation = this.checkTimerGeneration, epoch = this.playbackEpoch;
     const isCurrent = () => taskCurrent?.() !== false && generation === this.checkTimerGeneration && epoch === this.playbackEpoch && !this.externalPlayback;
+    if (isAllSongsPlaylist(playlistId)) {
+      try {
+        const songs = await loadAllSongs(isCurrent);
+        if (!isCurrent()) return false;
+        this.songs = songs as any;
+        this.totalSongs = songs.length;
+        return songs.length > 0;
+      } catch (e) {
+        songloft.log.error('[PlaylistManager] Failed to load all songs: ' + String(e));
+        return false;
+      }
+    }
     // 获取歌单排序偏好
     let sortBy = '';
     let sortOrder = '';
@@ -4262,17 +4275,21 @@ export class PlaylistManagerMap {
       let songs: Song[] = [];
       let sortBy = '';
       let sortOrder = '';
-      try {
-        const pl: any = await songloft.playlists.getById(devCfg.playlist_id);
-        if (pl && pl.sort_by) {
-          sortBy = pl.sort_by;
-          sortOrder = pl.sort_order || 'asc';
+      if (!isAllSongsPlaylist(devCfg.playlist_id)) {
+        try {
+          const pl: any = await songloft.playlists.getById(devCfg.playlist_id);
+          if (pl && pl.sort_by) {
+            sortBy = pl.sort_by;
+            sortOrder = pl.sort_order || 'asc';
+          }
+        } catch (e) {
+          songloft.log.warn(`[PlaylistManagerMap] restoreFromConfig: getById for sort failed: ${String(e)}`);
         }
-      } catch (e) {
-        songloft.log.warn(`[PlaylistManagerMap] restoreFromConfig: getById for sort failed: ${String(e)}`);
       }
       try {
-        const result = await songloft.playlists.getSongs(devCfg.playlist_id, { limit: 100000, sort: sortBy, order: sortOrder } as any);
+        const result = isAllSongsPlaylist(devCfg.playlist_id)
+          ? await loadAllSongs()
+          : await songloft.playlists.getSongs(devCfg.playlist_id, { limit: 100000, sort: sortBy, order: sortOrder } as any);
         const desc = result ? (Array.isArray(result) ? String(result.length) : 'non-array') : 'null';
         songloft.log.info(`[PlaylistManagerMap] restoreFromConfig playlistId=${devCfg.playlist_id} sort=${sortBy} order=${sortOrder} songs=${desc}`);
         if (result && Array.isArray(result)) {
@@ -4283,7 +4300,11 @@ export class PlaylistManagerMap {
       }
 
       if (songs.length > 0) {
-        const startIndex = devCfg.current_song_index || 0;
+        // 虚拟歌单随曲库变化，优先用持久化歌曲身份定位，避免增删歌曲后落到另一首。
+        const restoredSongIndex = isAllSongsPlaylist(devCfg.playlist_id)
+          ? songs.findIndex(song => song.id === devCfg.resume_song_id)
+          : -1;
+        const startIndex = restoredSongIndex >= 0 ? restoredSongIndex : devCfg.current_song_index || 0;
         const playMode = normalizePlayMode(devCfg.play_mode);
         manager.initWithSongs(songs, startIndex, playMode, devCfg.playlist_id);
         // 恢复持久化的倍速（缺省 1.0）。仅设字段，不触发重推——恢复时本就不在播。

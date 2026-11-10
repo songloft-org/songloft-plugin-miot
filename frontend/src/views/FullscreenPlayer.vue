@@ -147,11 +147,12 @@ const currentPlaylistId = computed(() => {
   const id = Number(state.player.playlist_id);
   return Number.isFinite(id) ? id : 0;
 });
-const canRemoveCurrent = computed(() => currentPlaylistId.value > 0 && !!state.player.current_song);
+const canRemoveCurrent = computed(() => currentPlaylistId.value > 0 && !!state.player.current_song
+  && !state.playlists.find(p => p.id === currentPlaylistId.value)?.is_virtual);
 async function removeCurrentSong(): Promise<void> {
   const song = state.player.current_song;
   const playlistId = currentPlaylistId.value;
-  if (!song || playlistId <= 0) return;
+  if (!song || !canRemoveCurrent.value) return;
   const result = await confirmAction(
     '删除当前歌曲',
     `确定从当前歌单删除《${song.title || '未知歌曲'}》吗？`,

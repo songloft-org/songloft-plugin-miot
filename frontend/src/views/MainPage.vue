@@ -274,7 +274,7 @@ async function play(song: Song, index: number) {
 // 用户想要的语义只对真实歌单成立。songRemovable 也据此隐藏 SongRow 的按钮。
 const songRemovable = computed(() => {
   const id = Number(state.selectedPlaylistId);
-  return Number.isFinite(id) && id > 0;
+  return Number.isFinite(id) && id > 0 && !state.playlists.find(p => p.id === id)?.is_virtual;
 });
 async function removeSong(song: Song) {
   const result = await confirmAction(

@@ -5,6 +5,7 @@
 
 import { segmentQuery, toPinyin } from './segmenter';
 import { traditionalToSimplifiedMap } from '../data/traditional-to-simplified-map';
+import { allSongsPlaylist, ALL_SONGS_PLAYLIST_NAME, isAllSongsPlaylist, loadAllSongs } from '../player/library_playlist';
 
 // ===== 类型定义 =====
 
@@ -876,6 +877,7 @@ export class IndexingManager {
    */
   async findPlaylistByNameWithRefresh(name: string): Promise<IndexedPlaylist | null> {
     if (!name) return null;
+    if (name.trim() === ALL_SONGS_PLAYLIST_NAME) return this.loadAllSongsPlaylist();
 
     let result = this.findPlaylistByName(name);
     if (result) return result;
@@ -916,6 +918,7 @@ export class IndexingManager {
    */
   async getPlaylistByIdWithRefresh(id: number): Promise<IndexedPlaylist | null> {
     if (!id || isNaN(id)) return null;
+    if (isAllSongsPlaylist(id)) return this.loadAllSongsPlaylist();
 
     let result = this.getPlaylistById(id);
     if (result) return result;
@@ -935,6 +938,11 @@ export class IndexingManager {
     return result;
   }
 
+  private async loadAllSongsPlaylist(): Promise<IndexedPlaylist> {
+    const playlist = allSongsPlaylist((await loadAllSongs()).length);
+    return { id: playlist.id, name: playlist.name, nameLower: playlist.name, songCount: playlist.song_count };
+  }
+
   /**
    * 在指定歌单中按歌曲名称查找索引位置
    * 先精确匹配（忽略大小写），再回退模糊搜索
@@ -943,17 +951,18 @@ export class IndexingManager {
    * @returns { index, found }，index 为歌曲在歌单中的位置
    */
   async findSongInPlaylist(playlistId: number, songName: string): Promise<{ index: number; found: boolean; songId?: number }> {
-    if (!this.indexReady || !songName) {
+    const isLibrary = isAllSongsPlaylist(playlistId);
+    if ((!isLibrary && !this.indexReady) || !songName) {
       return { index: 0, found: false };
     }
 
     // 同 findSongByName：位置信息只能靠这份缓存，没到位就等一等（#62）。
-    const cacheReady = await this.waitForPlaylistCache();
+    const cacheReady = isLibrary || await this.waitForPlaylistCache();
 
-    const songs = this.playlistSongsCache.get(playlistId) ?? [];
+    const songs = isLibrary ? await loadAllSongs() : this.playlistSongsCache.get(playlistId) ?? [];
     if (songs.length === 0) {
       // 「歌单真的空」与「缓存还没加载到这个歌单」表现相同，但后者是个 bug 现场，要能区分。
-      if (!cacheReady || !this.playlistCacheLoadedIds.has(playlistId)) {
+      if (!isLibrary && (!cacheReady || !this.playlistCacheLoadedIds.has(playlistId))) {
         songloft.log.warn(`[IndexingManager] findSongInPlaylist: 歌单 ${playlistId} 的歌曲缓存未就绪，无法定位「${songName}」，将从第 0 首开始`);
       }
       return { index: 0, found: false };
@@ -980,6 +989,10 @@ export class IndexingManager {
    * 按歌曲 ID 在指定歌单中查找索引位置
    */
   async findSongIndexInPlaylistById(playlistId: number, songId: number): Promise<{ index: number; found: boolean }> {
+    if (isAllSongsPlaylist(playlistId)) {
+      const index = (await loadAllSongs()).findIndex(song => song.id === songId);
+      return { index: Math.max(0, index), found: index >= 0 };
+    }
     if (!this.indexReady || !songId) {
       return { index: 0, found: false };
     }

@@ -9,6 +9,7 @@ import { MinaService } from '../service/service';
 import { ConfigManager, playlistProgressScope } from '../config/manager';
 import { callHostAPI } from '../utils/http';
 import { findFavoritesPlaylist } from '../utils/favorites';
+import { allSongsPlaylist, isAllSongsPlaylist, loadAllSongs } from '../player/library_playlist';
 import type { PlayMode, PlayState } from '../types';
 
 /** 解析请求体（兼容 Uint8Array 和 string） */
@@ -339,6 +340,7 @@ export function registerPlaylistHandlers(
       const playlists = await songloft.playlists.list();
       const tempPlaylists = playlistManagerMap.getTempPlaylists();
       const allPlaylists = [
+        allSongsPlaylist((await loadAllSongs()).length),
         ...(playlists || []),
         ...tempPlaylists.map(tp => ({ id: tp.id, name: tp.name, song_count: tp.songCount })),
       ];
@@ -354,6 +356,9 @@ export function registerPlaylistHandlers(
       const playlistId = Number(params.id);
       if (!playlistId || isNaN(playlistId)) {
         return jsonResponse({ success: false, error: 'invalid playlist id' });
+      }
+      if (isAllSongsPlaylist(playlistId)) {
+        return jsonResponse({ success: true, data: await loadAllSongs() });
       }
       if (isTempPlaylistId(playlistId)) {
         const manager = playlistManagerMap.findByPlaylistId(playlistId);
@@ -878,6 +883,9 @@ export function registerPlaylistHandlers(
       const fromLibrary = body.from_library === true;
       const account_id = String(body.account_id || '');
       const device_id = String(body.device_id || '');
+      if (isAllSongsPlaylist(playlistId)) {
+        return jsonResponse({ success: false, error: '全部歌曲是只读虚拟歌单，请在曲库中管理歌曲' });
+      }
       if (!playlistId || isNaN(playlistId)) {
         return jsonResponse({ success: false, error: 'playlist_id is required' });
       }

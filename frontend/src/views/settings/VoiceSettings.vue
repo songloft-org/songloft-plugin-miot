@@ -101,15 +101,16 @@ const searchPriorityOptions: SelectOption[] = [
 ];
 
 const appendPlaylistEnabled = computed(() => !!state.config.external_search_playlist_id);
+const writablePlaylists = computed(() => state.playlists.filter(p => p.id > 0 && !p.is_virtual));
 const playlistOptions = computed<SelectOption[]>(() =>
-  state.playlists.map((p) => ({ value: String(p.id), label: playlistLabel(p), searchText: p.name })),
+  writablePlaylists.value.map((p) => ({ value: String(p.id), label: playlistLabel(p), searchText: p.name })),
 );
 
 function setAppendPlaylistEnabled(enabled: boolean): void {
   if (!enabled) {
     void saveConfig({ external_search_playlist_id: '' });
-  } else if (state.playlists.length) {
-    void saveConfig({ external_search_playlist_id: String(state.playlists[0].id) });
+  } else if (writablePlaylists.value.length) {
+    void saveConfig({ external_search_playlist_id: String(writablePlaylists.value[0].id) });
   }
 }
 
