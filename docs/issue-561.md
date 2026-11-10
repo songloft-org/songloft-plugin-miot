@@ -30,4 +30,12 @@
 
 浏览器使用构建后的真实前端、歌单 handler 与播放管理器，曲库桥接、账号、音箱控制为测试夹具。断言不只依赖截图；`/tmp/miot-561-browser-report.json` 记录实际歌曲 ID、模式、持久化状态和下发 URL，截图为 `/tmp/miot-561-{desktop,mobile}.png`。日志为 `/tmp/miot-561-{tests,before,mutation,frontend-tests,typecheck,frontend-typecheck,build-final,validate}.log`。
 
-Not run：真实音箱/固件、实际发声、长期连续播放、远端 CI 与正式发布。未修改宿主接口或 Go 代码，父仓库 Go 检查不适用。本次未提交、推送或发布，父仓库子模块指针未更新。
+提交前的 Not run：真实音箱/固件、实际发声、长期连续播放、远端 CI 与正式发布。未修改宿主接口或 Go 代码，父仓库 Go 检查不适用；后续交付状态见下节。
+
+## 提交与发布
+
+- 修复提交：[0ef69c6](https://github.com/songloft-org/songloft-plugin-miot/commit/0ef69c6f30f346f62d6d909e86fece03f3706de6)，已推送 main；版本元数据提交 `5680642ff6f826b8c357e1479ca2e7cd6b4895a8`。
+- 同一修复 SHA 的 [Release Plugin CI](https://github.com/songloft-org/songloft-plugin-miot/actions/runs/42926589532) 全部通过，自动发布 [v2026.11.11.0](https://github.com/songloft-org/songloft-plugin-miot/releases/tag/v2026.11.11.0)。
+- 已下载正式包并确认 `plugin.json.releaseSource=0ef69c6f30f346f62d6d909e86fece03f3706de6`、版本 `2026.11.11.0`；文件 SHA-256 为 `0eedc56968658d3a1b7072f03c697d606a9edce60462d59ca9e69f4ffbad6fb4`，与 GitHub 资产摘要一致。
+- 使用方式：升级 MIoT 插件，在播放页选择「全部歌曲」，将播放模式切为「随机播放」即可随机播放曲库歌曲，无需新建歌单。此次不需要升级宿主后端。
+- 真实音箱/固件、实际发声和长期运行仍为 Not run；发布成功不代表报告人的设备已验收。

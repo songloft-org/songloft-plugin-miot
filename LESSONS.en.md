@@ -16,7 +16,7 @@ Include rule, scope, full owner/repo#number, failure/fix commit SHAs, actual val
 - Rule: listing, playback, scheduled song lookup and reload use the same library reader. Library types are local/remote/radio; `type=song` is invalid. Pagination ends on the raw page length: filtering a full radio page to zero does not mean the library is exhausted. Fixed virtual identities never use stored playlist member APIs; exclude them from removal and append targets in the UI.
 - Evidence and Done right: 7 new targeted cases fail against an isolated baseline; removing radio filtering causes 6 failures. All 1432 plugin tests, 84 frontend tests, type checks, QuickJS build and package validation pass. Desktop/mobile browser clicks are checked against actual manager song IDs, modes and URLs. Object digests, logs and device limitations: [verification](docs/en/issue-561.md).
 - Not run: physical speaker audio and long-running playback. This verifies new feature boundaries, not a confirmed production pagination incident.
-- Seen 1× (2026-11-11). Status: local implementation and verification, uncommitted and unpublished.
+- Seen 1× (2026-11-11). Status: fix pushed and v2026.11.11.0 released; CI passed for the exact fix SHA, physical device acceptance remains pending.
 
 ### MIOT-028: Interrupting an answer does not authorize the next AI turn
 
