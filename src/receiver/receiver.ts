@@ -363,9 +363,9 @@ export class DLNAReceiver {
   }
 
   private async startMedia(resume = false): Promise<void> {
-    const ok = await this.playbackCommand(() => this.allMembers(m => resume
-      ? this.mina.resumePlay(m.account_id, m.device_id)
-      : this.mina.playURL(m.account_id, m.device_id, this.uri, this.title)));
+    const ok = await this.playbackCommand(async () => resume
+      ? this.allMembers(m => this.mina.resumePlay(m.account_id, m.device_id))
+      : (await this.mina.playURLs(this.config.members, this.uri, this.title)).every(Boolean));
     if (ok) return;
     // A partially started group must not be reported as playing successfully.
     if (this.ownsPlayback) await this.playbackCommand(() => this.allMembers(m => this.mina.stopPlay(m.account_id, m.device_id)));

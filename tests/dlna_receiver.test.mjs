@@ -43,6 +43,10 @@ async function harness(run, { multi = false, saved = [] } = {}) {
     getVolume: async () => 40,
     getPlayState: async () => ({ status: 1, position: 12, duration: 100, hasPosition: true }),
   };
+  service.playURLs = async (targets, ...args) => Promise.all(targets.map(async t => {
+    try { return await service.playURL(t.account_id, t.device_id, ...args); }
+    catch { return false; }
+  }));
   const manager = {
     getTargets: () => [{ account_id: 'a', device_id: 'd' }],
     beginExternalPlayback: async callback => { external = true; released = callback; return true; },

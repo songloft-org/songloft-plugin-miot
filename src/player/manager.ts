@@ -1927,10 +1927,11 @@ export class PlaylistManager {
 
     // 下发到所有目标设备（分组时为组内全部音箱；传结构化歌曲信息供触屏歌词模式匹配曲库）。
     // 至少一台成功即视为成功；个别成员离线/失败不影响整组继续（自动切歌定时器仍以本机时长驱动）。
-    const ok = await this.forEachTarget('playURL', t => this.minaService.playURL(t.account_id, t.device_id, songURL, {
+    const results = await this.minaService.playURLs(this.targets, songURL, {
       title: song.title,
       artist: song.artist,
-    }, isCurrent));
+    }, isCurrent);
+    const ok = results.some(Boolean);
     if (this.externalPlayback || epoch !== this.playbackEpoch || !isCurrent()) return false;
     // 下发报失败不等于设备没播：3012「远程控制超时」是假失败，指令往往已经生效（#98）。
     // 回读设备核实，确认在播我们的流就按成功走，避免上层重试/跳歌/停摆。

@@ -177,6 +177,12 @@ export class MinaHTTPClient {
    *   参考 xiaomusic：player_play_music 有兼容性风险，非兼容型号仍走 player_play_url。
    */
   async playByUrl(deviceId: string, url: string, hardware = '', disabledModels?: string[], keepLight = false, customAudioId?: string, lyricsMode?: { enabled: boolean; songName?: string; metadata?: PlayMetadata }, current?: () => boolean): Promise<boolean> {
+    return (await this.preparePlayByUrl(deviceId, url, hardware, disabledModels, keepLight, customAudioId, lyricsMode, current))();
+  }
+
+  /** 先完成歌词搜索或直链预停；分组等待所有成员准备后，再一起调用返回的下发函数。 */
+  async preparePlayByUrl(deviceId: string, url: string, hardware = '', disabledModels?: string[], keepLight = false, customAudioId?: string, lyricsMode?: { enabled: boolean; songName?: string; metadata?: PlayMetadata }, current?: () => boolean): Promise<() => Promise<boolean>> {
+    if (current?.() === false) return async () => false;
     const useMusicAPI = hardware ? needUsePlayMusicAPI(hardware, disabledModels) : false;
     if (isDebugLog()) {
       const disabled = Array.isArray(disabledModels) ? disabledModels.join(',') : '';
@@ -188,33 +194,52 @@ export class MinaHTTPClient {
         const audioId = await this.searchAudioId(lyricsMode.metadata || lyricsMode.songName || '', fallbackAudioId);
         const displayName = this.formatPlayMetadataForLog(lyricsMode.metadata || lyricsMode.songName || '');
         songloft.log.info(`[MinaClient] touchscreen lyrics selected audioID=${audioId} fallbackAudioID=${fallbackAudioId} song=${displayName}`);
-        // xiaomusic 的 continue_play 通过 _type=1 设置 audio_type=MUSIC；这是触屏歌词/封面的前提。
-        const ok = await this.playByMusicURL(deviceId, url, true, audioId, 'play-music:lyrics', current);
-        if (ok) {
-          return true;
-        }
-
-        if (audioId !== fallbackAudioId) {
-          songloft.log.warn(`[MinaClient] searched audioID failed, retrying default audioID=${fallbackAudioId} in touchscreen lyrics mode`);
-          const defaultLyricsOK = await this.playByMusicURL(deviceId, url, true, fallbackAudioId, 'play-music:lyrics-default', current);
-          if (defaultLyricsOK) {
-            return true;
-          }
-        }
-
-        songloft.log.warn('[MinaClient] playByMusicURL failed in touchscreen lyrics mode, retrying normal Music API playback');
-        const normalMusicOK = await this.playByMusicURL(deviceId, url, keepLight, fallbackAudioId, 'play-music:fallback', current);
-        if (normalMusicOK) {
-          return true;
-        }
-
-        songloft.log.warn('[MinaClient] normal Music API fallback failed, trying player_play_url');
-        return this.playURL(deviceId, url, keepLight, current);
+        return () => this.playWithLyrics(deviceId, url, audioId, fallbackAudioId, keepLight, current);
       }
 
-      return this.playByMusicURL(deviceId, url, keepLight, fallbackAudioId, 'play-music', current);
+      // REPLACE_ALL 替换旧播放；预停会让各设备的云端往返差异累积到起播时差（#138）。
+      return () => this.playByMusicURL(deviceId, url, keepLight, fallbackAudioId, 'play-music', current);
     }
-    return this.playURL(deviceId, url, keepLight, current);
+    return this.prepareDirectPlay(deviceId, url, keepLight, current);
+  }
+
+  private async playWithLyrics(deviceId: string, url: string, audioId: string, fallbackAudioId: string, keepLight: boolean, current?: () => boolean): Promise<boolean> {
+    // xiaomusic 的 continue_play 通过 _type=1 设置 audio_type=MUSIC；这是触屏歌词/封面的前提。
+    const ok = await this.playByMusicURL(deviceId, url, true, audioId, 'play-music:lyrics', current);
+    if (ok) {
+      return true;
+    }
+
+    if (audioId !== fallbackAudioId) {
+      songloft.log.warn(`[MinaClient] searched audioID failed, retrying default audioID=${fallbackAudioId} in touchscreen lyrics mode`);
+      const defaultLyricsOK = await this.playByMusicURL(deviceId, url, true, fallbackAudioId, 'play-music:lyrics-default', current);
+      if (defaultLyricsOK) {
+        return true;
+      }
+    }
+
+    songloft.log.warn('[MinaClient] playByMusicURL failed in touchscreen lyrics mode, retrying normal Music API playback');
+    const normalMusicOK = await this.playByMusicURL(deviceId, url, keepLight, fallbackAudioId, 'play-music:fallback', current);
+    if (normalMusicOK) {
+      return true;
+    }
+
+    songloft.log.warn('[MinaClient] normal Music API fallback failed, trying player_play_url');
+    return (await this.prepareDirectPlay(deviceId, url, keepLight, current))();
+  }
+
+  /** player_play_url 没有 REPLACE_ALL，保留 #481 的 pause → stop 清理旧媒体上下文。 */
+  private async prepareDirectPlay(deviceId: string, url: string, keepLight: boolean, current?: () => boolean): Promise<() => Promise<boolean>> {
+    if (current?.() === false) return async () => false;
+    try {
+      const startedAt = Date.now();
+      const stopped = current ? (await this.playerStopGuarded(deviceId, current)) === 'stopped' : await this.playerStop(deviceId);
+      songloft.log.info(`[MinaClient] Pre-stop before play device=${deviceId} accepted=${stopped} elapsedMs=${Date.now() - startedAt}`);
+      if (!stopped) songloft.log.warn('[MinaClient] Pre-stop rejected, continuing with replacement URL');
+    } catch (e) {
+      songloft.log.warn('[MinaClient] Pre-stop before play failed, continuing: ' + String(e));
+    }
+    return () => current?.() === false ? Promise.resolve(false) : this.playURL(deviceId, url, keepLight, current);
   }
 
   /**
@@ -780,6 +805,20 @@ export class MinaHTTPClient {
     return this.enqueueUbus(deviceId, false, () => isCurrent?.() === false
       ? Promise.resolve(null)
       : this.doUbusRequest(deviceId, method, path, message, logLabel, isCurrent, preserveErrors));
+  }
+
+  /** 等队列轮到播放后占位；分组把播放全部入队，再统一释放，避免后台查询插入。 */
+  reservePlaybackQueue(deviceId: string): { ready: Promise<void>; release: () => void } {
+    let markReady!: () => void;
+    let release!: () => void;
+    const ready = new Promise<void>(resolve => { markReady = resolve; });
+    const released = new Promise<void>(resolve => { release = resolve; });
+    void this.enqueueUbus(deviceId, false, async () => {
+      markReady();
+      await released;
+      return null;
+    });
+    return { ready, release };
   }
 
   private enqueueUbus(deviceId: string, status: boolean, run: UbusTask['run']): Promise<UbusResponse | null> {

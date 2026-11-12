@@ -10,7 +10,7 @@ import { MinaAuth } from '../mina/auth';
 import { MinaHTTPClient } from '../mina/client';
 import type { PlayMetadata, StatusQueryOptions } from '../mina/client';
 import { getTTSCommand, XIAOMI_IO_SID, LoginState } from '../mina/constants';
-import type { DeviceConfig, MinaDevice } from '../types';
+import type { DeviceConfig, DeviceTargetRef, MinaDevice } from '../types';
 
 // ===== 导出类型 =====
 
@@ -18,6 +18,11 @@ export interface InterruptResult {
   status: 'accepted' | 'failed' | 'cancelled';
   /** 应答成功的停止轮数，不代表音箱已静音。 */
   stop_rounds: number;
+}
+
+interface PreparedPlayback {
+  play: () => Promise<boolean>;
+  reserve: () => { ready: Promise<void>; release: () => void };
 }
 
 /** 两轮停止之间的间隔，只需覆盖固件转入媒体播放所需的落定时间。 */
@@ -166,46 +171,69 @@ export class MinaService {
 
   /**
    * 播放指定URL
-   * 先暂停并停止旧播放（清理旧媒体上下文），再根据设备型号选择播放接口
+   * 根据实际播放接口准备后下发；Music API 使用 REPLACE_ALL，直链保留预停。
    */
   async playURL(accountId: string, deviceId: string, url: string, song?: string | PlayMetadata, current?: () => boolean): Promise<boolean> {
-    if (current?.() === false) return false;
+    const play = await this.preparePlayURL(accountId, deviceId, url, song, current);
+    return play ? play.play() : false;
+  }
+
+  /** 分组先并发准备型号、歌词与必要的预停，再统一下发；返回值与成员顺序一致。 */
+  async playURLs(targets: DeviceTargetRef[], url: string, song?: string | PlayMetadata, current?: () => boolean): Promise<boolean[]> {
+    // 同一设备只能占位一次，否则第二个占位会等待第一个释放，形成死锁。
+    const keys = targets.map(t => this.playbackKey(t.account_id, t.device_id));
+    const members = new Map(keys.map((key, index) => [key, targets[index]]));
+    const prepared = await Promise.all(Array.from(members.values(), t => this.preparePlayURL(t.account_id, t.device_id, url, song, current)));
+    const reservations = prepared.flatMap(play => play ? [play.reserve()] : []);
+    let pending: Promise<boolean>[];
+    try {
+      await Promise.all(reservations.map(r => r.ready));
+      // 下发函数在第一次 await 前就把首条播放指令入队；必须先全部入队，再释放占位。
+      pending = prepared.map(play => play ? play.play() : Promise.resolve(false));
+    } finally {
+      for (const r of reservations) r.release();
+    }
+    const results = await Promise.all(pending);
+    const byMember = new Map(Array.from(members.keys(), (key, index) => [key, results[index]]));
+    return keys.map(key => byMember.get(key) === true);
+  }
+
+  private async preparePlayURL(accountId: string, deviceId: string, url: string, song?: string | PlayMetadata, current?: () => boolean): Promise<PreparedPlayback | null> {
+    if (current?.() === false) return null;
     this.cancelInterrupt(accountId, deviceId, current);
     const client = this.getClient(accountId);
     if (!client) {
       songloft.log.warn('[MinaService] playURL: no client for account: ' + accountId);
-      return false;
+      return null;
     }
-
+    const isCurrent = () => this.getClient(accountId) === client && current?.() !== false;
     try {
-      // pause 可能被固件忽略，或只保留一个可被语音/自然结束恢复的旧媒体上下文。
-      // 切歌本来就要替换旧流，复用 pause → stop 清掉它后再推新 URL（#481）。
-      const startedAt = Date.now();
-      const stopped = current ? (await client.playerStopGuarded(deviceId, current)) === 'stopped' : await client.playerStop(deviceId);
-      if (current?.() === false) return false;
-      songloft.log.info(`[MinaService] Pre-stop before play device=${deviceId} accepted=${stopped} elapsedMs=${Date.now() - startedAt}`);
-      if (!stopped) {
-        songloft.log.warn('[MinaService] Pre-stop rejected, continuing with replacement URL');
-      }
-    } catch (e) {
-      songloft.log.warn('[MinaService] Pre-stop before play failed, continuing: ' + String(e));
-    }
-
-    try {
-      // 获取设备硬件型号用于选择播放接口
-      const { hardware } = await this.getDeviceIdentity(client, deviceId);
-      const config = await this.configManager.getConfig();
-      const disabledModels = config.music_api_model_disabled || [];
-      const keepLight = !!config.indicator_light_enabled;
-      const customAudioId = config.default_cover_id;
-      const lyricsEnabled = !!config.touchscreen_lyrics_enabled;
-      return await client.playByUrl(deviceId, url, hardware, disabledModels, keepLight, customAudioId,
+      const [{ hardware }, config] = await Promise.all([
+        this.getDeviceIdentity(client, deviceId),
+        this.configManager.getConfig(),
+      ]);
+      if (!isCurrent()) return null;
+      const play = await client.preparePlayByUrl(deviceId, url, hardware, config.music_api_model_disabled || [],
+        !!config.indicator_light_enabled, config.default_cover_id,
         typeof song === 'string'
-          ? { enabled: lyricsEnabled, songName: song || '' }
-          : { enabled: lyricsEnabled, metadata: song }, current);
+          ? { enabled: !!config.touchscreen_lyrics_enabled, songName: song || '' }
+          : { enabled: !!config.touchscreen_lyrics_enabled, metadata: song }, isCurrent);
+      if (!isCurrent()) return null;
+      return {
+        reserve: () => client.reservePlaybackQueue(deviceId),
+        play: async () => {
+          if (!isCurrent()) return false;
+          try {
+            return await play();
+          } catch (e) {
+            songloft.log.error('[MinaService] playURL failed: ' + String(e));
+            return false;
+          }
+        }
+      };
     } catch (e) {
-      songloft.log.error('[MinaService] playURL failed: ' + String(e));
-      return false;
+      songloft.log.error('[MinaService] playURL preparation failed: ' + String(e));
+      return null;
     }
   }
 

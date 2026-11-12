@@ -161,6 +161,8 @@ function player({ mode = 'loop', config = {}, service = {}, initialSongs = songs
     updateDevice: async () => { },
     savePlaylistProgress: async () => { },
   });
+  manager.minaService.playURLs = async (targets, ...args) => Promise.all(targets.map(t =>
+    manager.minaService.playURL(t.account_id, t.device_id, ...args)));
   manager.initWithSongs(initialSongs, 0, mode, 1);
   manager.state = 'playing';
   return { manager, pushes, tts };

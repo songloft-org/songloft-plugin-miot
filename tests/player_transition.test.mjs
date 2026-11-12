@@ -849,7 +849,7 @@ for (const mode of ['negative offset', 'voice suspended']) {
   });
 }
 
-for (const hardware of ['L15A', 'unlisted-model']) {
+for (const hardware of ['unlisted-model', 'L15A']) {
   test(`replacement waits for pause and stop before pushing URL (${hardware})`, async () => {
     await withClock(async () => {
       const client = new MinaHTTPClient({ device_id: 'test-device' });
@@ -861,7 +861,7 @@ for (const hardware of ['L15A', 'unlisted-model']) {
         // Simulate a firmware that accepts pause but keeps the old track playing.
         return { code: 0, data: { code: 0 } };
       };
-      const service = new MinaService({ getMinaClient: () => client }, { getConfig: async () => ({}) });
+      const service = new MinaService({ getMinaClient: () => client }, { getConfig: async () => ({ music_api_model_disabled: [hardware] }) });
       service.deviceModelCache.set('speaker', hardware);
       service.deviceMiotDIDCache.set('speaker', 'test-did');
       const pending = service.playURL('account', 'speaker', 'http://example.test/song.mp3');
@@ -869,7 +869,7 @@ for (const hardware of ['L15A', 'unlisted-model']) {
       assert.deepEqual(calls, ['pause', 'stop']);
       stopped.resolve();
       assert.equal(await pending, true);
-      assert.deepEqual(calls, ['pause', 'stop', hardware === 'L15A' ? 'player_play_music' : 'player_play_url']);
+      assert.deepEqual(calls, ['pause', 'stop', 'player_play_url']);
     });
   });
 }
@@ -878,17 +878,15 @@ for (const failure of ['rejected', 'throws']) {
   test(`failed pre-stop still attempts replacement URL (${failure})`, async () => {
     await withClock(async h => {
       const calls = [];
-      const service = new MinaService({
-        getMinaClient: () => ({
-          playerStop: async () => {
-            calls.push('stop');
-            if (failure === 'throws') throw new Error('timeout');
-            return false;
-          },
-          playByUrl: async () => { calls.push('play'); return true; },
-        })
-      }, { getConfig: async () => ({}) });
-      service.deviceModelCache.set('speaker', 'L15A');
+      const client = new MinaHTTPClient({ device_id: 'test-device' });
+      client.playerStopGuarded = async () => {
+        calls.push('stop');
+        if (failure === 'throws') throw new Error('timeout');
+        return 'failed';
+      };
+      client.ubusRequest = async () => { calls.push('play'); return { code: 0 }; };
+      const service = new MinaService({ getMinaClient: () => client }, { getConfig: async () => ({}) });
+      service.deviceModelCache.set('speaker', 'unlisted-model');
       service.deviceMiotDIDCache.set('speaker', 'test-did');
       assert.equal(await service.playURL('account', 'speaker', 'http://example.test/song.mp3'), true);
       assert.deepEqual(calls, ['stop', 'play']);

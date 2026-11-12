@@ -113,11 +113,10 @@ export function registerDeviceHandlers(
       if (!device_id || !url) {
         return jsonResponse({ success: false, error: 'device_id and url are required' });
       }
-      const ok = await minaService.playURL(account_id, device_id, url);
+      const ok = await groupCoordinator.playURL(account_id, device_id, url);
       if (!ok) {
         return jsonResponse({ success: false, error: 'failed to play url' });
       }
-      await groupCoordinator.fanOutPlayURL(account_id, device_id, url);
       return jsonResponse({ success: true, data: { message: 'playing url' } });
     } catch (e: any) {
       return jsonResponse({ success: false, error: e.message || String(e) });

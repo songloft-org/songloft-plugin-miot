@@ -108,6 +108,8 @@ async function fixture(run) {
     stopPlay: async () => true,
     notifyControl() {},
   };
+  service.playURLs = async (targets, ...args) => Promise.all(targets.map(t =>
+    service.playURL(t.account_id, t.device_id, ...args)));
   const map = new PlaylistManagerMap(service, config);
   const routes = new Map();
   registerPlaylistHandlers(

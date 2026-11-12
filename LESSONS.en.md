@@ -10,6 +10,14 @@ Include rule, scope, full owner/repo#number, failure/fix commit SHAs, actual val
 
 ## Entries
 
+### MIOT-030: Group starts must align preparation and device queues, beyond concurrent service calls
+
+- Scope: [songloft-org/songloft-plugin-miot#138](https://github.com/songloft-org/songloft-plugin-miot/issues/138); baseline `0cc6b92ea4804de0814850acda5d900def789f4e`.
+- Rule: choose pre-stop by the actual API. Music API's `REPLACE_ALL` replaces directly; direct URLs and lyrics fallback retain pre-stop. Complete hardware/lyrics/pre-stop preparation, then wait for every device queue. Enqueue all initial play commands before releasing reservations together. Release in finally, deduplicate devices, and preserve cancellation and member failure semantics. Temporary URLs must not wait for the primary acknowledgement before dispatching followers.
+- Evidence and Done right: current pre-stop is `pause → stop`, not the two state verifications proposed in the report's analysis. Four cases fail against isolated old source; removing preparation, reservations or direct pre-stop causes 4/1/2 expected failures. All 1453 plugin tests, 84 frontend tests, type checks, QuickJS build and package validation pass. Simulated twenty-minute idle periods, 1800ms pre-stop delays and queries started during preparation dispatch both members in the same turn; this does not prove audible synchronization. Object identity, logs and limits: [verification](docs/en/issue-138.md).
+- Not run: physical LX06/OH2P, old-track tails, device behavior after voice interruption and long-running playback. Network delivery, cloud retries and firmware buffering may still introduce skew.
+- Seen 1× (2026-11-12). Status: local fix and verification passed; commit, push and release status follow the delivery record.
+
 ### MIOT-029: Virtual library playlists need shared read, restore and write boundaries
 
 - Scope: songloft-org/songloft#561; plugin baseline `1379528daab3841e7e3ca0edb05d14046ff14a17`.

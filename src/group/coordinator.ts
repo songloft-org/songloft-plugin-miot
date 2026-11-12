@@ -77,18 +77,18 @@ export class GroupCoordinator {
     });
   }
 
-  /**
-   * 让组内其他成员播放同一个 URL（用于 /mina/play-url、语音在线搜索直链推送这类
-   * 不经歌单队列的临时单曲播放，无共享 manager 队列可依赖，直接镜像 URL 到各成员）。
-   */
-  async fanOutPlayURL(
+  /** 临时 URL 也先准备全组再统一起播；保留主设备成功作为调用方的成功判据。 */
+  async playURL(
     accountId: string,
     deviceId: string,
     url: string,
     song?: string | PlayMetadata,
-  ): Promise<void> {
-    await this.forEachFollower(accountId, deviceId, 'playURL', async (m) => {
-      await this.minaService.playURL(m.account_id, m.device_id, url, song);
-    });
+  ): Promise<boolean> {
+    const followers = await this.resolveFollowers(accountId, deviceId);
+    const results = await this.minaService.playURLs([
+      { account_id: accountId, device_id: deviceId },
+      ...followers,
+    ], url, song);
+    return results[0] === true;
   }
 }

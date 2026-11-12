@@ -330,7 +330,7 @@ export class OnlineSearcher {
           // id=0 只存在于临时队列，不写曲库，也不对它发送已播放/收藏请求。
           return pm.playStandaloneSong({ ...song, id: 0, url: pushUrl, type: 'remote', duration: song.duration || 0 } as any, indexingManager);
         }
-        const played = await minaService.playURL(accountId, deviceId, pushUrl, {
+        const played = await (this.groupCoordinator || minaService).playURL(accountId, deviceId, pushUrl, {
           title: song.title,
           artist: song.artist,
         });
@@ -338,11 +338,6 @@ export class OnlineSearcher {
           songloft.log.error('[OnlineSearcher] No-import: failed to push URL to device: ' + pushUrl);
           return false;
         }
-        // 分组同步：让组内其他成员播放同一 URL
-        await this.groupCoordinator?.fanOutPlayURL(accountId, deviceId, pushUrl, {
-          title: song.title,
-          artist: song.artist,
-        });
         songloft.log.info('[OnlineSearcher] Playing online song (no-import)' + (transcoded ? ' [transcoded]' : '') + ': ' + song.title + ' - ' + song.artist + ' url=' + pushUrl);
         return true;
       }
@@ -425,7 +420,7 @@ export class OnlineSearcher {
     // 推送 URL 到音箱（传「歌名-歌手」供触屏歌词模式匹配曲库）
     const songName = song.artist ? `${song.title}-${song.artist}` : song.title;
     songloft.log.info('[OnlineSearcher] [Diag] Push to device: songName="' + songName + '" importedUrl="' + imported.url + '" playUrl="' + playUrl + '"');
-    const played = await minaService.playURL(accountId, deviceId, playUrl, {
+    const played = await (this.groupCoordinator || minaService).playURL(accountId, deviceId, playUrl, {
       title: song.title,
       artist: song.artist,
     });
@@ -433,12 +428,6 @@ export class OnlineSearcher {
       songloft.log.error('[OnlineSearcher] Failed to push URL to device: ' + playUrl);
       return false;
     }
-
-    // 分组同步：让组内其他成员播放同一 URL
-    await this.groupCoordinator?.fanOutPlayURL(accountId, deviceId, playUrl, {
-      title: song.title,
-      artist: song.artist,
-    });
 
     // 增量把这首独立远程歌曲加入内存索引，避免为一首歌重建全部歌单缓存。
     if (indexingManager) {
