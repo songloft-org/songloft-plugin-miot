@@ -43,3 +43,11 @@
 Not run：LX06/OH2P 实际固件、空闲十至二十分钟后的真机起播/发声、旧歌曲尾音与语音打断后的设备表现、长期连续播放；当前没有设备。浏览器交互未运行，本次无界面改动。未修改宿主 API、Range、转码或 Go 实现，父仓库 Go 检查不适用。
 
 以上为提交前验证记录：当时未提交、推送或正式发布，远端 CI 为 Not run，父仓库指针保持基线。提交、发布和同一 SHA 的 CI 结果在交付后补记。建议提交信息：`fix(player): 减少分组起播时差并跳过 Music API 预停 (#138)`。
+
+## 提交与发布
+
+- 修复提交：[3ff97c0](https://github.com/songloft-org/songloft-plugin-miot/commit/3ff97c06ef202f30a5a94ae3246d678ab9e7b61f)，已推送 main；版本元数据提交 `94241389a57ac44461108f6067590327090f92dd`。
+- 同一修复 SHA 的 [Release Plugin CI](https://github.com/songloft-org/songloft-plugin-miot/actions/runs/43195481406) 全部通过，自动发布 [v2026.11.12.0](https://github.com/songloft-org/songloft-plugin-miot/releases/tag/v2026.11.12.0)。
+- 已下载正式包，核对 `version=2026.11.12.0`、`releaseSource=3ff97c06ef202f30a5a94ae3246d678ab9e7b61f`。文件 SHA-256 为 `a3aee5f82a04cd988f8986d466c1af195051cf47595eb32d33c2ec9cdbf8a52e`，与 GitHub 资产摘要一致。下载包及清单位于 `/tmp/miot-138-release/`。
+- 更新 MIoT 插件到 `2026.11.12.0` 后，复测 LX06 + OH2P 同组连续切歌，以及静置十至二十分钟后再次播放。此次无需更改开关，单独升级宿主不会自动升级已安装插件。
+- 真机实际发声、旧歌曲尾音、语音打断后的设备行为与长期运行仍为 Not run；保留 Issue 打开等待反馈，发布成功不等于声学同步已验收。

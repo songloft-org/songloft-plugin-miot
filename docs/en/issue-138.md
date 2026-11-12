@@ -43,3 +43,11 @@ Logs: `/tmp/miot-138-{typecheck,tests-final,frontend-typecheck,frontend-tests,bu
 Not run: actual LX06/OH2P firmware, audible starts after ten to twenty minutes idle, old-track tails and device behavior after voice interruption, and long-running playback; no devices are available. Browser interaction was not run because there are no UI changes. Host APIs, Range, transcoding and Go implementations are unchanged, so parent Go checks are not applicable.
 
 The verification above describes the pre-commit worktree: no commit, push or official release at that point, remote CI Not run, and the parent gitlink at baseline. Commit, release and exact-SHA CI results will be recorded after delivery. Suggested commit: `fix(player): 减少分组起播时差并跳过 Music API 预停 (#138)`.
+
+## Commit and release
+
+- Fix: [3ff97c0](https://github.com/songloft-org/songloft-plugin-miot/commit/3ff97c06ef202f30a5a94ae3246d678ab9e7b61f), pushed to main; release metadata commit `94241389a57ac44461108f6067590327090f92dd`.
+- [Release Plugin CI](https://github.com/songloft-org/songloft-plugin-miot/actions/runs/43195481406) passed for the exact fix SHA and automatically published [v2026.11.12.0](https://github.com/songloft-org/songloft-plugin-miot/releases/tag/v2026.11.12.0).
+- Downloaded the official package and verified `version=2026.11.12.0` and `releaseSource=3ff97c06ef202f30a5a94ae3246d678ab9e7b61f`. Its SHA-256, `a3aee5f82a04cd988f8986d466c1af195051cf47595eb32d33c2ec9cdbf8a52e`, matches GitHub's asset digest. Package and manifest: `/tmp/miot-138-release/`.
+- Update the MIoT plugin to `2026.11.12.0`, then test LX06 + OH2P group track changes and playback after ten to twenty minutes idle. No new switch is required. Updating the host alone does not automatically update installed plugins.
+- Audible playback, old-track tails, device behavior after voice interruption and long-running operation remain Not run. Keep the Issue open for device feedback; release success does not establish acoustic synchronization.
