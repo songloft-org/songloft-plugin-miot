@@ -17,7 +17,7 @@ Include rule, scope, full owner/repo#number, failure/fix commit SHAs, actual val
 - Rule and Done right: only answer interruption may verify an outer-success/nonzero-device stop through at most two fresh statuses, 700ms apart. Require consecutive known idle states, bypass pre-control caching, and check status acknowledgements and cancellation. A verified first round still sends the second stop; one idle report cannot replace firmware settling protection. Cloud failures and ordinary controls retain their error semantics.
 - Validation: isolated old source has 21 expected failures; the working tree passes 51 interrupt cases, 1475 plugin tests, type checking, QuickJS build, and package validation. An actual chat call chain asserts no TTS before both rounds and answer dispatch afterward; cloud responses and audio completion remain fixtures. Object identity and logs: [verification](docs/en/issue-140.md).
 - Not run: physical HD/firmware, actual silence/TTS, physical follow-up and music recovery behavior, and long-running playback. Unavailable or persistently incorrect status reports still require device evidence.
-- Seen 1× (2026-11-15). Status: local fix and validation; not committed, pushed, or released.
+- Seen 1× (2026-11-15). Status: fix `341675e` pushed, CI passed for that exact SHA, v2026.11.15.0 released and its downloaded package verified. The authorized Issue reply is posted; physical HD acceptance awaits feedback.
 
 ### MIOT-030: Group starts must align preparation and device queues, beyond concurrent service calls
 

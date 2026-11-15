@@ -47,4 +47,12 @@ Evidence: `/tmp/miot-140/{baseline-final,interrupt-final,tests-final,typecheck-f
 
 Not run: physical HD/firmware, the reporter's account or live cloud requests, actual silence/TTS, physical follow-up and music recovery behavior, long-running playback; browser interaction (no UI changes), parent Go checks (host interfaces and implementation unchanged), and remote CI for this fix (not committed/pushed). The full plugin suite retains playback, transitions, status, and recovery regressions.
 
-Not committed, pushed, released, or posted to the Issue. The parent submodule is only dirty. Suggested commit: `fix(chat): 回读确认异常停止回执后继续 AI 接管 (#140)`. After release, ask the reporter to retest native-answer interruption, audible AI answers, and follow-up questions on HD; keep the Issue open pending hardware feedback.
+The preceding results describe pre-commit validation. At that time the changes were not committed, pushed, released, or posted to the Issue, and the parent submodule was only dirty.
+
+## Commit, release, and reply
+
+- Fix [341675e](https://github.com/songloft-org/songloft-plugin-miot/commit/341675ee09394d03dc7600cdb254af3dc7619ff0) is pushed to main; release metadata commit `b535e61`.
+- [Release Plugin CI](https://github.com/songloft-org/songloft-plugin-miot/actions/runs/43684033135) passed for that exact fix SHA: clean dependency installation, both type checks, 1475 plugin tests, 84 frontend tests, build, and package validation. It published [v2026.11.15.0](https://github.com/songloft-org/songloft-plugin-miot/releases/tag/v2026.11.15.0).
+- Downloaded the official package and verified `version=2026.11.15.0` and `releaseSource=341675ee09394d03dc7600cdb254af3dc7619ff0`. SHA-256 `75b164fa47b122735b65e4eb565174f1a44bc52bf1cbdc84aa5786392aaa0c9c` matches the GitHub asset digest. Package and manifest: `/tmp/miot-140/release/`; CI log: `/tmp/miot-140/ci.log`.
+- With user authorization, [posted and read back the Issue reply](https://github.com/songloft-org/songloft-plugin-miot/issues/140#issuecomment-6890187260), asking the reporter to update the MIoT plugin and retest native-answer interruption, audible AI answers, and follow-ups. Updating the server alone does not update installed plugins. If failure persists, provide the test time, logs, and HD firmware version.
+- Physical HD, actual silence/TTS, music recovery, and long-running behavior remain Not run. The Issue stays open; CI and release do not establish hardware acceptance. The parent pointer is synchronized in this delivery; consult the parent repository for its exact commit and CI.

@@ -47,4 +47,12 @@
 
 Not run：HD 真机/固件、报告人账号与云端实时请求、实际静音/TTS 发声、连续追问及音乐恢复的真机表现、长期播放；浏览器交互（未改 UI）、父仓库 Go 检查（未改宿主接口或实现）、本修复的远端 CI（尚未提交/推送）。完整插件测试保留播放、切歌、状态与恢复回归。
 
-当前未提交、推送、发布或回复 Issue，父仓库子模块仅为 dirty。建议提交信息：`fix(chat): 回读确认异常停止回执后继续 AI 接管 (#140)`。发布后应请报告人复测 HD 的原回答停止、AI 回答发声及连续追问，保留 Issue 打开等待真机反馈。
+以上为提交前验证记录；当时未提交、推送、发布或回复 Issue，父仓库子模块仅为 dirty。
+
+## 提交、发布与回复
+
+- 修复提交：[341675e](https://github.com/songloft-org/songloft-plugin-miot/commit/341675ee09394d03dc7600cdb254af3dc7619ff0)，已推送 main；版本元数据提交 `b535e61`。
+- 同一修复 SHA 的 [Release Plugin CI](https://github.com/songloft-org/songloft-plugin-miot/actions/runs/43684033135) 全部通过：干净依赖安装、两层类型检查、1475 项插件测试、84 项前端测试、构建与包校验，自动发布 [v2026.11.15.0](https://github.com/songloft-org/songloft-plugin-miot/releases/tag/v2026.11.15.0)。
+- 已下载正式包，核对 `version=2026.11.15.0`、`releaseSource=341675ee09394d03dc7600cdb254af3dc7619ff0`；SHA-256 `75b164fa47b122735b65e4eb565174f1a44bc52bf1cbdc84aa5786392aaa0c9c` 与 GitHub 资产摘要一致。包与清单在 `/tmp/miot-140/release/`，CI 日志在 `/tmp/miot-140/ci.log`。
+- 按用户授权[回复 Issue 并回读](https://github.com/songloft-org/songloft-plugin-miot/issues/140#issuecomment-6890187260)，请报告人升级 MIoT 插件后复测原回答停止、AI 发声和连续追问。仅升级服务端不会自动更新已安装插件；仍失败时补测试时间、日志和 HD 固件版本。
+- HD 真机、实际静音与 TTS、音乐恢复和长期表现仍为 Not run，Issue 保持打开；CI 与发布不代表设备已验收。父仓库指针在本批交付中同步，具体父提交与 CI 以主仓库记录为准。
