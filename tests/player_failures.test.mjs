@@ -30,6 +30,7 @@ const urls = loadSource('../src/player/url_builder.ts', { '../utils/http': http 
 const deviceState = loadSource('../src/playback/device_state.ts', {});
 const minaConstants = loadSource('../src/mina/constants.ts', { '../data/tts-commands.json': {} });
 const { MinaHTTPClient } = loadSource('../src/mina/client.ts', {
+  '../playback/device_state': loadSource('../src/playback/device_state.ts', {}),
   '../utils/cookie': {}, '../utils/http': {}, '../utils/crypto': {},
   '../utils/debug': { isDebugLog: () => false }, './constants': minaConstants, '../miio/client': {},
 });

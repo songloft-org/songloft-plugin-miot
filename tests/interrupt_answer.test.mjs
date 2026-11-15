@@ -2,6 +2,11 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import test from 'node:test';
+import { loader } from './chat_loader.mjs';
+
+const load = loader();
+const { AIChatService } = load('../src/chat/service.ts');
+const { DEFAULT_CHAT_CONFIG } = load('../src/chat/types.ts');
 
 const require = createRequire(import.meta.url);
 const ts = require('typescript');
@@ -19,6 +24,7 @@ function loadSource(path, dependencies) {
 const constants = loadSource('../src/mina/constants.ts', { '../data/tts-commands.json': { default: {} } });
 const http = {};
 const { MinaHTTPClient } = loadSource('../src/mina/client.ts', {
+  '../playback/device_state': loadSource('../src/playback/device_state.ts', {}),
   '../utils/cookie': { CookieJar: class { } }, '../utils/http': http,
   '../utils/crypto': {}, '../utils/debug': { isDebugLog: () => false },
   './constants': constants, '../miio/client': {},
@@ -49,7 +55,13 @@ async function harness(run) {
   const original = { songloft: globalThis.songloft, setTimeout, now: Date.now, fetch: http.fetchWithRedirects };
   let now = 100000, timerId = 0;
   const timers = new Map(), requests = [];
-  globalThis.songloft = { log: { info() { }, warn() { }, error() { } } };
+  const stored = new Map();
+  globalThis.songloft = {
+    log: { info() { }, warn() { }, error() { } }, storage: {
+      get: async key => stored.get(key) ?? null,
+      set: async (key, value) => { stored.set(key, value); },
+    }
+  };
   Date.now = () => now;
   globalThis.setTimeout = (fn, delay) => {
     const id = ++timerId;
@@ -148,7 +160,7 @@ for (const failingStop of [1, 2]) {
       await flush();
       if (failingStop === 2) await h.advance(600);
       assert.deepEqual(await pending, { status: 'failed', stop_rounds: failingStop - 1 });
-      assert.equal(h.requests.length, failingStop * 2);
+      assert.equal(h.requests.length, failingStop * 2 + 1, 'one inconclusive status read must not turn rejection into success');
     });
   });
 }
@@ -160,6 +172,153 @@ test('rejected pause still attempts stop for firmware compatibility', async () =
     await flush();
     await h.advance(2000);
     assert.deepEqual(await pending, { status: 'accepted', stop_rounds: 2 });
+  });
+});
+
+function statusResponse(status) {
+  return { response: { status: 200, text: () => JSON.stringify({ code: 0, data: { info: JSON.stringify({ status }) } }) } };
+}
+
+for (const code of [114, 123, 131]) {
+  for (const status of [0, 2, 3]) {
+    test(`nonzero stop code ${code} with two fresh idle ${status} reads still completes both interrupt rounds`, async () => {
+      await harness(async h => {
+        h.setFetch(r => r.method === 'player_get_play_status' ? statusResponse(status) : response(code));
+        const pending = h.service.interruptAnswer('a', 'd');
+        await flush();
+        assert.deepEqual(actions(h), ['pause', 'stop', 'player_get_play_status']);
+        await h.advance(700);
+        assert.deepEqual(actions(h), ['pause', 'stop', 'player_get_play_status', 'player_get_play_status']);
+        await h.advance(600);
+        await h.advance(700);
+        assert.deepEqual(await pending, { status: 'accepted', stop_rounds: 2 });
+        assert.equal(h.requests.filter(r => r.action === 'stop').length, 2);
+        assert.equal(h.requests.filter(r => r.method === 'player_get_play_status').length, 4);
+      });
+    });
+  }
+}
+
+for (const statuses of [[1], [-1], [9], [0, 1], [0, -1]]) {
+  test(`rejected stop remains failed for status sequence ${statuses}`, async () => {
+    await harness(async h => {
+      let reads = 0;
+      h.setFetch(r => r.method === 'player_get_play_status' ? statusResponse(statuses[reads++]) : response(123));
+      const pending = h.service.interruptAnswer('a', 'd');
+      await flush();
+      if (statuses.length > 1) await h.advance(700);
+      assert.deepEqual(await pending, { status: 'failed', stop_rounds: 0 });
+      assert.equal(reads, statuses.length);
+      assert.equal(h.requests.filter(r => r.action === 'stop').length, 1);
+    });
+  });
+}
+
+test('pre-stop idle cache cannot confirm a rejected interruption', async () => {
+  await harness(async h => {
+    h.setFetch(() => statusResponse(0));
+    await h.client.getPlayerStatus('d');
+    h.setFetch(r => r.method === 'player_get_play_status' ? statusResponse(1) : response(131));
+    assert.deepEqual(await h.service.interruptAnswer('a', 'd'), { status: 'failed', stop_rounds: 0 });
+    assert.deepEqual(actions(h), ['player_get_play_status', 'pause', 'stop', 'player_get_play_status']);
+  });
+});
+
+test('a new operation cancels rejected-stop verification before the next read and second stop', async () => {
+  await harness(async h => {
+    h.setFetch(r => r.method === 'player_get_play_status' ? statusResponse(0) : response(123));
+    let current = true;
+    const pending = h.service.interruptAnswer('a', 'd', () => current);
+    await flush();
+    current = false;
+    await h.advance(700);
+    assert.deepEqual(await pending, { status: 'cancelled', stop_rounds: 0 });
+    assert.deepEqual(actions(h), ['pause', 'stop', 'player_get_play_status']);
+  });
+});
+
+for (const cancelledRead of [1, 2]) {
+  test(`cancellation during rejected-stop status read ${cancelledRead} discards the late idle result`, async () => {
+    await harness(async h => {
+      const slow = deferred();
+      let reads = 0, current = true;
+      h.setFetch(r => r.method === 'player_get_play_status'
+        ? ++reads === cancelledRead ? slow.promise : statusResponse(0) : response(123));
+      const pending = h.service.interruptAnswer('a', 'd', () => current);
+      await flush();
+      if (cancelledRead === 2) await h.advance(700);
+      current = false;
+      slow.resolve(statusResponse(0));
+      await flush();
+      assert.deepEqual(await pending, { status: 'cancelled', stop_rounds: 0 });
+      assert.equal(reads, cancelledRead);
+      assert.equal(h.requests.filter(r => r.action === 'stop').length, 1);
+    });
+  });
+}
+
+test('ordinary stop and group interaction stop retain strict rejection semantics', async () => {
+  await harness(async h => {
+    h.setFetch(() => response(123));
+    assert.equal(await h.service.stopPlay('a', 'd'), false);
+    assert.equal(await h.service.stopForInteraction('a', 'd', () => true), 'failed');
+    assert.deepEqual(actions(h), ['pause', 'stop', 'pause', 'stop']);
+  });
+});
+
+test('cloud rejection does not probe idle to manufacture successful interruption', async () => {
+  await harness(async h => {
+    h.setFetch(() => ({ response: { status: 200, text: () => JSON.stringify({ code: 101, data: { code: 123 } }) } }));
+    assert.deepEqual(await h.service.interruptAnswer('a', 'd'), { status: 'failed', stop_rounds: 0 });
+    assert.deepEqual(actions(h), ['pause', 'stop']);
+  });
+});
+
+test('HD-style rejected stops reach AI answer dispatch only after both verified rounds', async () => {
+  await harness(async h => {
+    h.setFetch(r => r.method === 'player_get_play_status' ? statusResponse(0)
+      : response(r.action === 'stop' || r.action === 'pause' ? 123 : 0));
+    const config = {
+      findDeviceGroup: async () => null,
+      getChatConfig: async () => ({
+        ...DEFAULT_CHAT_CONFIG, enabled: true, waiting_feedback: false,
+        memory_enabled: false, summary_enabled: false, connection: 'independent',
+        api_url: 'https://model.test/v1', api_key: 'test-only', model: 'test'
+      }),
+      getAIConfig: async () => ({}),
+    };
+    const playback = new PlaybackCoordinator({ get: () => null }, h.service, config);
+    const speech = {
+      // Use the real TTS dispatch; speech completion itself remains simulated.
+      speak: async (text, token, current) => await h.service.textToSpeech(token.account, token.device, text, current) ? 'completed' : 'failed',
+      stop: async () => { },
+    };
+    const chat = new AIChatService(config, playback, speech);
+    chat.client.request = async () => '回归测试回答';
+    try {
+      await chat.submit('a', 'd', '测试问题');
+      await h.advance(0);
+      await h.advance(700);
+      await h.advance(600);
+      assert.equal(chat.status('a', 'd').phase, 'preparing');
+      assert.ok(!actions(h).includes('text_to_speech'));
+      await h.advance(700);
+      assert.equal(chat.status('a', 'd').phase, 'completed');
+      assert.equal(chat.status('a', 'd').answer, '回归测试回答');
+      assert.deepEqual(actions(h).filter(a => a === 'stop' || a === 'text_to_speech'), ['stop', 'stop', 'text_to_speech']);
+    } finally {
+      chat.close();
+      playback.close();
+    }
+  });
+});
+
+test('failed status device result cannot confirm a rejected stop even with an idle info field', async () => {
+  await harness(async h => {
+    h.setFetch(r => r.method === 'player_get_play_status'
+      ? { response: { status: 200, text: () => JSON.stringify({ code: 0, data: { code: 1, info: '{"status":0}' } }) } }
+      : response(131));
+    assert.deepEqual(await h.service.interruptAnswer('a', 'd'), { status: 'failed', stop_rounds: 0 });
   });
 });
 

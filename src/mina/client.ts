@@ -6,6 +6,7 @@ import { CookieJar } from '../utils/cookie';
 import { fetchWithRedirects } from '../utils/http';
 import { generateDeviceId } from '../utils/crypto';
 import { isDebugLog } from '../utils/debug';
+import { isDeviceIdle } from '../playback/device_state';
 import {
   MINA_API_BASE_URL,
   MINA_SID,
@@ -31,6 +32,9 @@ const PLAY_STATUS_PLAYING = 1;
 const PAUSE_VERIFY_ATTEMPTS = 2;
 /** 每次回读前的等待时间（ms），给设备状态上报留缓冲 */
 const PAUSE_VERIFY_DELAY_MS = 700;
+/** 非零停止回执的有限核验，仅供回答中断使用。 */
+const INTERRUPT_VERIFY_ATTEMPTS = 2;
+const INTERRUPT_VERIFY_DELAY_MS = 700;
 
 const UBUS_TIMEOUT_MS = 5000;
 const STATUS_INTERVAL_MS = 5000;
@@ -429,11 +433,27 @@ export class MinaHTTPClient {
    * 统一带日志标签，并按设备级返回码判定成功：只看 ubus 外层 code 会把
    * 「云端受理了但音箱拒绝执行」也当成功，导致暂停等操作静默失效。
    */
-  private async playerOperation(deviceId: string, action: 'play' | 'pause' | 'stop', isCurrent?: () => boolean): Promise<boolean> {
+  private async playerOperation(deviceId: string, action: 'play' | 'pause' | 'stop', isCurrent?: () => boolean, verifyRejectedStop = false): Promise<boolean> {
     const message = { action, media: 'app_ios' };
     const result = await this.ubusRequest(deviceId, 'player_play_operation', 'mediaplayer', message, 'play-op:' + action, isCurrent);
     if (isCurrent?.() === false) return false;
-    return this.isDeviceResultOK(result, 'player_play_operation:' + action);
+    if (this.isDeviceResultOK(result, 'player_play_operation:' + action)) return true;
+    // HD 在实际停止后仍可能给出非零设备回执（#140）；只在回答中断流程中回读，
+    // 不把未知错误码列为成功，也不改变普通播放控制的错误语义。
+    const code = Number((result?.data as { code?: unknown } | undefined)?.code);
+    if (!verifyRejectedStop || action !== 'stop' || result?.code !== 0 || !Number.isFinite(code) || code === 0) return false;
+    for (let i = 0; i < INTERRUPT_VERIFY_ATTEMPTS; i++) {
+      if (i > 0) await new Promise(resolve => setTimeout(resolve, INTERRUPT_VERIFY_DELAY_MS));
+      if (isCurrent?.() === false) return false;
+      // verify 绕过操作前缓存；每次串行读完后才发下一次，不重复使用在途采样。
+      const raw = await this.getPlayerStatus(deviceId, { verify: true });
+      if (isCurrent?.() === false || !this.isDeviceResultOK(raw, 'interrupt-stop-status')) return false;
+      const info = (raw?.data as { info?: string } | undefined)?.info;
+      const status = JSON.parse(info || '{}').status;
+      if (!isDeviceIdle(status)) return false;
+    }
+    songloft.log.warn(`[MinaClient] interrupt stop device=${deviceId} code=${code} confirmed idle by two fresh reads`);
+    return true;
   }
 
   /**
@@ -497,12 +517,12 @@ export class MinaHTTPClient {
     return this.playerOperation(deviceId, 'stop', isCurrent);
   }
 
-  /** 中断回答专用：每条指令在设备队列内发送前检查是否已被新操作取代。 */
-  async playerStopGuarded(deviceId: string, isCurrent: () => boolean): Promise<'stopped' | 'failed' | 'cancelled'> {
+  /** 每条指令在设备队列内检查取消；回答中断可对非零停止回执做有限回读。 */
+  async playerStopGuarded(deviceId: string, isCurrent: () => boolean, verifyRejectedStop = false): Promise<'stopped' | 'failed' | 'cancelled'> {
     if (!isCurrent()) return 'cancelled';
     await this.playerOperation(deviceId, 'pause', isCurrent);
     if (!isCurrent()) return 'cancelled';
-    const stopped = await this.playerOperation(deviceId, 'stop', isCurrent);
+    const stopped = await this.playerOperation(deviceId, 'stop', isCurrent, verifyRejectedStop);
     if (!isCurrent()) return 'cancelled';
     return stopped ? 'stopped' : 'failed';
   }

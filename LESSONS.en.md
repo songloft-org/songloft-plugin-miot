@@ -10,6 +10,15 @@ Include rule, scope, full owner/repo#number, failure/fix commit SHAs, actual val
 
 ## Entries
 
+### MIOT-031: Verify abnormal stop acknowledgements with bounded fresh statuses
+
+- Scope: [songloft-org/songloft-plugin-miot#140](https://github.com/songloft-org/songloft-plugin-miot/issues/140); baseline `cd4921fde37f8239878cf1bb0b44fa074f6b481b`.
+- Evidence: the reporter says HD was interrupted, but five AI tasks fail in the first round after outer stop success and device `123/131`, cancelling model work. Other stops on that device also return `114`; comparison-device responses are `0`. This identifies the software failure point, not error-code meanings or physical silence.
+- Rule and Done right: only answer interruption may verify an outer-success/nonzero-device stop through at most two fresh statuses, 700ms apart. Require consecutive known idle states, bypass pre-control caching, and check status acknowledgements and cancellation. A verified first round still sends the second stop; one idle report cannot replace firmware settling protection. Cloud failures and ordinary controls retain their error semantics.
+- Validation: isolated old source has 21 expected failures; the working tree passes 51 interrupt cases, 1475 plugin tests, type checking, QuickJS build, and package validation. An actual chat call chain asserts no TTS before both rounds and answer dispatch afterward; cloud responses and audio completion remain fixtures. Object identity and logs: [verification](docs/en/issue-140.md).
+- Not run: physical HD/firmware, actual silence/TTS, physical follow-up and music recovery behavior, and long-running playback. Unavailable or persistently incorrect status reports still require device evidence.
+- Seen 1× (2026-11-15). Status: local fix and validation; not committed, pushed, or released.
+
 ### MIOT-030: Group starts must align preparation and device queues, beyond concurrent service calls
 
 - Scope: [songloft-org/songloft-plugin-miot#138](https://github.com/songloft-org/songloft-plugin-miot/issues/138); baseline `0cc6b92ea4804de0814850acda5d900def789f4e`.

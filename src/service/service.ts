@@ -16,7 +16,7 @@ import type { DeviceConfig, DeviceTargetRef, MinaDevice } from '../types';
 
 export interface InterruptResult {
   status: 'accepted' | 'failed' | 'cancelled';
-  /** 应答成功的停止轮数，不代表音箱已静音。 */
+  /** 停止应答成功或经新状态回读确认的轮数，不代表音箱已静音。 */
   stop_rounds: number;
 }
 
@@ -155,7 +155,7 @@ export class MinaService {
         // 误报 idle（songloft-org/songloft#449），不能用它换掉这轮保护。但 2s 对 AI
         // 问答是纯延迟，缩到固件落定所需的时间即可（#119）。
         if (round > 0) await new Promise(resolve => setTimeout(resolve, INTERRUPT_SETTLE_DELAY_MS));
-        const result = await client.playerStopGuarded(deviceId, isCurrent);
+        const result = await client.playerStopGuarded(deviceId, isCurrent, true);
         songloft.log.info(`[MinaService] interrupt device=${deviceId} round=${round + 1} result=${result}`);
         if (result !== 'stopped') return { status: result === 'cancelled' ? 'cancelled' : 'failed', stop_rounds: stopRounds };
         stopRounds++;

@@ -27,6 +27,7 @@ const constants = loadSource('../src/mina/constants.ts', {
 });
 const debug = { isDebugLog: () => false };
 const { MinaHTTPClient } = loadSource('../src/mina/client.ts', {
+  '../playback/device_state': loadSource('../src/playback/device_state.ts', {}),
   '../utils/cookie': {},
   '../utils/http': {},
   '../utils/crypto': {},

@@ -19,6 +19,7 @@ function loadSource(path, dependencies) {
 const constants = loadSource('../src/mina/constants.ts', { '../data/tts-commands.json': {} });
 const http = { fetchWithRedirects: async () => { throw new Error('unconfigured'); } };
 const { MinaHTTPClient } = loadSource('../src/mina/client.ts', {
+  '../playback/device_state': loadSource('../src/playback/device_state.ts', {}),
   '../utils/cookie': { CookieJar: class { } }, '../utils/http': http,
   '../utils/crypto': {}, '../utils/debug': { isDebugLog: () => false },
   './constants': constants, '../miio/client': {},
