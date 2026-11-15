@@ -3,6 +3,7 @@
 
 /// <reference types="@songloft/plugin-sdk" />
 
+import { prepareSongMatch } from './song_match';
 import { segmentQuery, toPinyin } from './segmenter';
 import { traditionalToSimplifiedMap } from '../data/traditional-to-simplified-map';
 import { allSongsPlaylist, ALL_SONGS_PLAYLIST_NAME, isAllSongsPlaylist, loadAllSongs } from '../player/library_playlist';
@@ -285,6 +286,7 @@ const pinyinCache = new Map<string, string>();
 interface QueryTokens {
   tokens: string[];
   pys: string[];
+  voiceScore?: (title: string, artist: string) => number;
 }
 
 function yieldToRuntime(): Promise<void> {
@@ -332,11 +334,11 @@ function normalizeForMatch(s: string): string {
 }
 
 /** 对 query 分词并预算每个 token 的拼音，供跨字段匹配复用（每次搜索算一次） */
-function tokenizeQuery(query: string): QueryTokens {
+function tokenizeQuery(query: string, threshold?: number): QueryTokens {
   // token 与索引匹配字段用同一归一化，保证「明天你好」能命中装饰标题「明天，你好」。
   const tokens = segmentQuery(query).map(normalizeForMatch).filter(t => t.length > 0);
   const pys = tokens.map(t => (Array.from(t).length >= TOKEN_FUZZY_MIN_LEN ? getCachedPinyin(t) : ''));
-  return { tokens, pys };
+  return { tokens, pys, voiceScore: threshold === undefined ? undefined : prepareSongMatch(query) };
 }
 
 function isCJKRune(ch: string): boolean {
@@ -403,6 +405,7 @@ function scoreSongTokens(
   titleLower: string, artistLower: string, albumLower: string,
   titlePy: string, artistPy: string, albumPy: string,
 ): number {
+  if (q.voiceScore) return q.voiceScore(titleLower, artistLower);
   const { tokens, pys } = q;
   if (tokens.length === 0) return 0;
   if (!isCJKDirectMatch(tokens, titleLower, artistLower)) return 0;
@@ -812,10 +815,10 @@ export class IndexingManager {
    * @param query - 搜索关键词
    * @returns 最多10个匹配结果
    */
-  searchSong(query: string): IndexedSong[] {
+  searchSong(query: string, threshold?: number): IndexedSong[] {
     if (!query || !query.trim()) return [];
 
-    const q = tokenizeQuery(query);
+    const q = tokenizeQuery(query, threshold);
     if (q.tokens.length === 0) return [];
 
     const scored: ScoredResult<IndexedSong>[] = [];
@@ -825,7 +828,7 @@ export class IndexingManager {
         song.titleLower, song.artistLower, song.albumLower,
         song.titlePinyin, song.artistPinyin, song.albumPinyin,
       );
-      if (score > 0) {
+      if (score > 0 && score >= (threshold ?? 0)) {
         scored.push({ item: song, score });
       }
     }
@@ -1013,7 +1016,7 @@ export class IndexingManager {
    * @param songName - 歌曲名称关键词
    * @returns 匹配到的歌曲位置，未找到返回 null
    */
-  async findSongByName(songName: string): Promise<SongLocation | null> {
+  async findSongByName(songName: string, threshold?: number): Promise<SongLocation | null> {
     if (!this.indexReady || !songName) return null;
 
     // 歌单位置只能靠 playlistSongsCache 回答；缓存没到位就等一等，否则会把「查不到位置」
@@ -1023,10 +1026,10 @@ export class IndexingManager {
     const startMs = Date.now();
 
     // 分词一次，供全局搜索与歌单内直接评分复用
-    const q = tokenizeQuery(songName);
+    const q = tokenizeQuery(songName, threshold);
 
     // 1. 用内存歌曲索引模糊搜索匹配歌曲（按评分降序）
-    const matchedSongs = this.searchSong(songName);
+    const matchedSongs = this.searchSong(songName, threshold);
     const matchedSongIds = new Set(matchedSongs.map(s => s.id));
 
     songloft.log.info(`[IndexingManager] findSongByName query="${songName}" indexMatches=${matchedSongs.length}`);
@@ -1061,7 +1064,7 @@ export class IndexingManager {
           s.titleLower, s.artistLower, s.albumLower,
           s.titlePinyin, s.artistPinyin, s.albumPinyin,
         );
-        if (score >= MIN_MATCH_SCORE && score > bestDirectScore) {
+        if (score > 0 && score >= (threshold ?? MIN_MATCH_SCORE) && score > bestDirectScore) {
           bestDirectScore = score;
           bestDirectLoc = {
             songId: s.id,
@@ -1077,6 +1080,12 @@ export class IndexingManager {
 
     const elapsedMs = Date.now() - startMs;
 
+    // 语音匹配同样比较仅存在于歌单缓存中的候选，避免旧全局索引遮住更好的结果。
+    if (threshold !== undefined && bestDirectLoc && (!matchedSongs.length ||
+      bestDirectScore > (q.voiceScore?.(matchedSongs[0].title, matchedSongs[0].artist) ?? 0))) {
+      return bestDirectLoc;
+    }
+
     // 3. 优先返回全局索引命中（保持 searchSong 的评分排序）
     for (let i = 0; i < matchedSongs.length; i++) {
       const loc = songLocationMap.get(matchedSongs[i].id);
@@ -1090,7 +1099,7 @@ export class IndexingManager {
           const thisScore = scoreSongTokens(q,
             matchedSongs[i].titleLower, matchedSongs[i].artistLower, matchedSongs[i].albumLower,
             matchedSongs[i].titlePinyin, matchedSongs[i].artistPinyin, matchedSongs[i].albumPinyin);
-          if (bestScore > thisScore + 5) {
+          if (bestScore > thisScore + (threshold === undefined ? 5 : 0)) {
             songloft.log.warn(
               `[IndexingManager] findSongByName: 最佳全局匹配 "${matchedSongs[0].title}" (score=${bestScore.toFixed(1)}) 不在歌单，` +
               `跳过低分歌单匹配 "${matchedSongs[i].title}" (score=${thisScore.toFixed(1)})，转独立歌曲路径`);
@@ -1110,7 +1119,7 @@ export class IndexingManager {
         bestGlobal.titleLower, bestGlobal.artistLower, bestGlobal.albumLower,
         bestGlobal.titlePinyin, bestGlobal.artistPinyin, bestGlobal.albumPinyin,
       );
-      if (bestGlobalScore >= MIN_MATCH_SCORE) {
+      if (bestGlobalScore > 0 && bestGlobalScore >= (threshold ?? MIN_MATCH_SCORE)) {
         // 两种情形要分清：缓存覆盖不全时我们其实**不知道**这首歌在不在歌单里，
         // 只是拿不出更好的答案；日志必须说明白，否则下次排查又要从零猜（#62）。
         // 判据用「覆盖是否完整」而不是 cacheReady——闩锁只升不降，歌单集合变更后
@@ -1198,17 +1207,17 @@ export class IndexingManager {
   }
 
   /** 内存索引里的最佳匹配（含 MIN_MATCH_SCORE 阈值），未达标返回 null。 */
-  private bestIndexedMatch(songName: string): IndexedSong | null {
-    const matched = this.searchSong(songName);
+  private bestIndexedMatch(songName: string, threshold?: number): IndexedSong | null {
+    const matched = this.searchSong(songName, threshold);
     if (matched.length === 0) return null;
 
     const best = matched[0];
     const bestScore = scoreSongTokens(
-      tokenizeQuery(songName),
+      tokenizeQuery(songName, threshold),
       best.titleLower, best.artistLower, best.albumLower,
       best.titlePinyin, best.artistPinyin, best.albumPinyin,
     );
-    if (bestScore < MIN_MATCH_SCORE) {
+    if (bestScore <= 0 || bestScore < (threshold ?? MIN_MATCH_SCORE)) {
       songloft.log.info(`[IndexingManager] bestIndexedMatch: "${best.title}" by "${best.artist}" score=${bestScore.toFixed(1)} below threshold, skipping`);
       return null;
     }
@@ -1226,10 +1235,10 @@ export class IndexingManager {
    *
    * @returns 完整 Song（type/duration 供下游决定电台转码与自动切歌定时器），未找到返回 null
    */
-  async findStandaloneSongByName(songName: string): Promise<any | null> {
+  async findStandaloneSongByName(songName: string, threshold?: number): Promise<any | null> {
     if (!songName) return null;
 
-    let best = this.bestIndexedMatch(songName);
+    let best = this.bestIndexedMatch(songName, threshold);
 
     // 内存索引确实没有这首歌，才值得为「刚被外部搜索导入、索引还没见过」重建（仍带冷却）。
     if (!best) {
@@ -1238,7 +1247,7 @@ export class IndexingManager {
         this.lastStandaloneRefreshTime = now;
         songloft.log.warn(`[IndexingManager] findStandaloneSongByName: 内存索引未命中「${songName}」，触发全量刷新`);
         await this.refresh();
-        best = this.bestIndexedMatch(songName);
+        best = this.bestIndexedMatch(songName, threshold);
       } else {
         const remainingMs = Math.max(0, STANDALONE_REFRESH_COOLDOWN_MS - (now - this.lastStandaloneRefreshTime));
         songloft.log.info(`[IndexingManager] findStandaloneSongByName: skip refresh (refreshing=${this.isRefreshing}, cooldown=${remainingMs}ms)`);

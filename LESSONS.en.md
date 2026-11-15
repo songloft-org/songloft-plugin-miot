@@ -10,6 +10,14 @@ Include rule, scope, full owner/repo#number, failure/fix commit SHAs, actual val
 
 ## Entries
 
+### MIOT-032: Voice song matching must separate candidate quality from source priority
+
+- Scope: [songloft-org/songloft#569](https://github.com/songloft-org/songloft/issues/569); plugin baseline `48413d6abc2a34e8094bca3ec2f80457365b5abd`.
+- Evidence: the old Chinese literal guard rejects “cctv九记录” against “CCTV九纪录”; external topone has no match-score validation and parallel selection follows response speed. Against isolated old business code, 13 of 14 new regressions fail on intended behavior. The new scorer remains available to avoid false failures from missing dependencies.
+- Rule and Done right: apply one configurable quality score to voice candidates, validating external songs before import. Parallel mode compares quality, prefers local on ties, and reuses remaining candidates after playback failure. Preserve ordinary search and artist/playlist semantics separately; command previews and refresh retries must receive the threshold. Real index and HTTP fixtures cover all three priorities; desktop/mobile settings exercise actual handlers, persistence, and reload. See the [verification record](docs/en/issue-569.md).
+- Not run: the reporter's speaker/library, audible playback, and long-running behavior.
+- Seen 1× (2026-11-15). Status: implemented and verified locally; not committed, pushed, or released.
+
 ### MIOT-031: Verify abnormal stop acknowledgements with bounded fresh statuses
 
 - Scope: [songloft-org/songloft-plugin-miot#140](https://github.com/songloft-org/songloft-plugin-miot/issues/140); baseline `cd4921fde37f8239878cf1bb0b44fa074f6b481b`.

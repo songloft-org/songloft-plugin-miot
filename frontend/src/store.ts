@@ -48,6 +48,7 @@ const defaultConfig: MiotConfig = {
   external_search_timeout: 6,
   external_search_no_import: false,
   search_priority: 'parallel',
+  song_match_threshold: 70,
   music_api_model_disabled: [],
   music_api_model_defaults: [],
   indicator_light_enabled: false,

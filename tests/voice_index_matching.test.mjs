@@ -1,3 +1,5 @@
+import { loader as dependencyLoader } from './chat_loader.mjs';
+const loadDependency = dependencyLoader();
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
@@ -16,6 +18,7 @@ function loadSource(path, dependencies = {}) {
     if (name === './library_playlist' || name === '../player/library_playlist') {
       return loadSource('../src/player/library_playlist.ts', {});
     }
+    if (name.endsWith('/song_match')) return loadDependency('../src/indexing/song_match.ts');
     assert.ok(Object.hasOwn(dependencies, name), `unexpected dependency: ${name}`);
     return dependencies[name];
   }, exports);

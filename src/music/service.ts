@@ -11,6 +11,7 @@ import { ConfigManager } from '../config/manager';
 import { AccountManager } from '../account/manager';
 import { MinaService } from '../service/service';
 import { PlaylistManagerMap, resolvePlaylistResumeStart } from '../player/manager';
+import { normalizeSongMatchThreshold, songMatchScore } from '../indexing/song_match';
 import { IndexingManager } from '../indexing/manager';
 import { GroupCoordinator } from '../group/coordinator';
 import { URLBuilder } from '../player/url_builder';
@@ -685,7 +686,8 @@ export class MusicCommandService {
       if (!(await this.indexingManager.waitForReady(INDEX_READY_WAIT_MS))) {
         return { kind: 'song', found: false, detail: '索引未就绪，无法预览搜索结果' };
       }
-      const loc = await this.indexingManager.findSongByName(term);
+      const threshold = normalizeSongMatchThreshold((await this.configManager.getConfig()).song_match_threshold);
+      const loc = await this.indexingManager.findSongByName(term, threshold);
       if (loc) {
         const artistStr = loc.artist ? ` - ${loc.artist}` : '';
         return { kind: 'song', found: true, detail: `${loc.songTitle}${artistStr}（歌单：${loc.playlistName}）` };
@@ -1468,22 +1470,7 @@ export class MusicCommandService {
     return await this.playSongCandidate(local, pm, searchTerm, songName, accountId, deviceId);
   }
 
-  /**
-   * 响应优先（parallel）：本地与外部搜索同时开跑，谁先给出可用候选就先播谁。
-   *
-   * 胜出候选**播放失败时要接着试其余候选**，语义与 executePlaySongExternalFirst 的回落对齐：
-   * 旧实现拿到一个候选就 all-in，设备拒绝 / 直链失效 / 上游挂了都会让用户直接听到
-   * 「未找到歌曲」，而另一个源可能明明是好的——三种策略里只有 parallel 缺这一步。
-   *
-   * 回落用的是**同一批已经在跑的任务**（firstSuccessfulSongCandidate 把未 settle 的任务原样
-   * 交回来），不是重新调 findXxxSongCandidate：重搜会二次打外部搜索接口，更要紧的是
-   * external_search 的播放路径有导入副作用（playSearchResult → importSong + 追加歌单 + 增量
-   * 索引），重搜后同一首歌可能被导入两遍。每个 slot 在 settle 时即从 pending 剔除，
-   * 循环次数上界 = 任务数，每个候选最多只试一次，不存在循环重试。
-   *
-   * 回落时**刻意不再** pm.prepareForNewPlayback() / minaService.stopPlay()：executePlaySong
-   * 进搜索前已经打断过一次，这里重复打断会掐掉上一个候选可能已经开始出声的流。
-   */
+  /** 并行获取两端候选，按匹配分降序播放；同分优先本地，播放失败复用剩余候选。 */
   private async executePlaySongParallel(
     songName: string,
     searchTerm: string,
@@ -1492,10 +1479,18 @@ export class MusicCommandService {
     accountId: string,
     deviceId: string,
   ): Promise<PlayedSong | null> {
-    let pending = this.pendingCandidateTasks([
+    // Search once per source, then compare quality before any importing or playback side effects.
+    const tasks = this.pendingCandidateTasks([
       this.findLocalSongCandidate(searchTerm),
       this.findExternalSongCandidate(songName, hint),
     ]);
+    const results = await Promise.all(tasks.map(task => task.promise));
+    const score = (candidate: SongSearchCandidate): number => candidate.source === 'local_index'
+      ? songMatchScore(searchTerm, candidate.loc.songTitle, candidate.loc.artist)
+      : songMatchScore(searchTerm, candidate.song.title, candidate.song.artist);
+    const candidates = results.map(result => result.candidate).filter((candidate): candidate is SongSearchCandidate => !!candidate);
+    candidates.sort((a, b) => score(b) - score(a)); // Stable ties retain local preference.
+    let pending = this.pendingCandidateTasks(candidates.map(candidate => Promise.resolve(candidate)));
 
     // 上一个试过但播放失败的源；null 表示当前这次是首选而非回落。
     let failedSource: SongSearchCandidate['source'] | null = null;
@@ -1509,7 +1504,7 @@ export class MusicCommandService {
 
       if (failedSource === null) {
         // warn 级：这一行直接回答「为什么播的是外部搜索结果而不是本地歌曲」。
-        songloft.log.warn(`[MusicCommandService] Parallel search selected source=${race.candidate.source}`);
+        songloft.log.warn(`[MusicCommandService] Parallel search selected source=${race.candidate.source} score=${score(race.candidate).toFixed(1)}`);
       } else {
         // warn 级：回落必须能只凭 warn 日志看出「从哪个源换到哪个源、为什么换」。插件日志
         // 默认走 info，而宿主 log level 常被设成 error/warn，导出的日志里一条插件记录都没有
@@ -1647,13 +1642,14 @@ export class MusicCommandService {
 
     // 从索引中模糊匹配歌曲，获取歌单ID和歌曲索引（使用预加载缓存，纯内存操作）
     songloft.log.info(`[MusicCommandService] Searching local song: "${searchTerm}"`);
-    const loc = await this.indexingManager.findSongByName(searchTerm);
+    const threshold = normalizeSongMatchThreshold((await this.configManager.getConfig()).song_match_threshold);
+    const loc = await this.indexingManager.findSongByName(searchTerm, threshold);
     if (loc) {
       return { source: 'local_index', loc };
     }
 
     // 尝试查找独立远程歌曲（不在任何歌单中的外部导入歌曲）
-    const standalone = await this.indexingManager.findStandaloneSongByName(searchTerm);
+    const standalone = await this.indexingManager.findStandaloneSongByName(searchTerm, threshold);
     if (standalone) {
       return { source: 'remote_song', song: standalone };
     }
@@ -1676,6 +1672,14 @@ export class MusicCommandService {
       return null;
     }
 
+    // Only song requests have a title hint. Artist/playlist fallbacks retain their own semantics.
+    if (hint) {
+      const query = hint.artist ? `${hint.artist} ${hint.title}` : hint.title;
+      const score = songMatchScore(query, song.title, song.artist);
+      const threshold = normalizeSongMatchThreshold((await this.configManager.getConfig()).song_match_threshold);
+      songloft.log.info(`[MusicCommandService] External candidate "${song.title}" score=${score.toFixed(1)} threshold=${threshold}`);
+      if (score <= 0 || score < threshold) return null;
+    }
     return { source: 'external_search', song };
   }
 
@@ -1782,7 +1786,8 @@ export class MusicCommandService {
     if (pm.isLastPlayNotFound()) {
       songloft.log.warn(`[MusicCommandService] Stale playlist ID ${loc.playlistId}, refreshing index and retrying`);
       await this.indexingManager.refresh();
-      const newLoc = await this.indexingManager.findSongByName(searchTerm);
+      const threshold = normalizeSongMatchThreshold((await this.configManager.getConfig()).song_match_threshold);
+      const newLoc = await this.indexingManager.findSongByName(searchTerm, threshold);
       if (newLoc) {
         songloft.log.info(`[MusicCommandService] Re-matched after refresh: ${newLoc.songTitle} playlist="${newLoc.playlistName}" playlistId=${newLoc.playlistId} songIndex=${newLoc.songIndex}`);
         const retryOk = newLoc.songId

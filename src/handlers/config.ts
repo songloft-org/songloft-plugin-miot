@@ -15,6 +15,8 @@ import type { SearchPriority } from '../types';
 import { DEFAULT_MUSIC_API_MODELS } from '../mina/constants';
 import { validateAIHeaders } from '../utils/ai_headers';
 
+import { normalizeSongMatchThreshold } from '../indexing/song_match';
+
 const SEARCH_PRIORITIES: SearchPriority[] = ['parallel', 'local_first', 'external_first'];
 
 function normalizeSearchPriority(value: unknown): SearchPriority {
@@ -105,6 +107,7 @@ export function registerConfigHandlers(
           external_search_timeout: config.external_search_timeout ?? 6,
           external_search_no_import: !!config.external_search_no_import,
           search_priority: normalizeSearchPriority(config.search_priority),
+          song_match_threshold: normalizeSongMatchThreshold(config.song_match_threshold),
           music_api_model_disabled: config.music_api_model_disabled || [],
           music_api_model_defaults: [...DEFAULT_MUSIC_API_MODELS],
           indicator_light_enabled: !!config.indicator_light_enabled,
@@ -253,6 +256,10 @@ export function registerConfigHandlers(
       // 更新 external_search_no_import
       if (body.external_search_no_import !== undefined) {
         config.external_search_no_import = !!body.external_search_no_import;
+      }
+
+      if (body.song_match_threshold !== undefined) {
+        config.song_match_threshold = normalizeSongMatchThreshold(body.song_match_threshold);
       }
 
       // 更新 search_priority

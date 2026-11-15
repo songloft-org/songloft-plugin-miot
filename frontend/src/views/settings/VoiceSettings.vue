@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, reactive, ref } from 'vue';
+import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue';
 import SectionCard from '../../ui/SectionCard.vue';
 import SettingRow from '../../ui/SettingRow.vue';
 import SlButton from '../../ui/SlButton.vue';
@@ -35,7 +35,7 @@ const voicePanels: Array<{ id: VoicePanel; title: string; subtitle: string; icon
   { id: 'listen', title: '监听', subtitle: '对话与索引', icon: 'record_voice_over' },
   { id: 'commands', title: '口令', subtitle: '规则与测试', icon: 'mic' },
   { id: 'memory', title: '记忆', subtitle: '命中与歧义', icon: 'memory' },
-  { id: 'intelligence', title: '搜索', subtitle: '外部搜索源', icon: 'auto_awesome' },
+  { id: 'intelligence', title: '搜索', subtitle: '匹配与搜索源', icon: 'auto_awesome' },
 ];
 
 type VoicePanel = 'listen' | 'commands' | 'memory' | 'intelligence';
@@ -95,7 +95,7 @@ const parameterLabels: Record<string, string> = {
   remove: '取消收藏',
 };
 const searchPriorityOptions: SelectOption[] = [
-  { value: 'parallel', label: '并行搜索' },
+  { value: 'parallel', label: '并行搜索（匹配度优先）' },
   { value: 'local_first', label: '本地优先' },
   { value: 'external_first', label: '外部源优先' },
 ];
@@ -121,6 +121,8 @@ function setAppendPlaylistId(value: string): void {
 const pollInterval = ref(String(state.config.conversation_poll_interval));
 const maxIndex = ref(String(state.config.max_song_index));
 const maxMemory = ref(String(state.config.voice_memory_max_records));
+const songMatchThreshold = ref(String(state.config.song_match_threshold));
+watch(() => state.config.song_match_threshold, value => { songMatchThreshold.value = String(value); });
 const externalSearchTimeout = ref(String(state.config.external_search_timeout));
 const webhookName = ref('');
 const webhookUrl = ref('');
@@ -708,11 +710,12 @@ async function deleteMemoryRecord(id?: string): Promise<void> {
   </div>
 
   <div v-show="voicePanel === 'intelligence'" class="voice-panel" data-voice-panel="intelligence">
-  <SectionCard title="外部搜索" icon="search" description="本地曲库未命中时，按优先级调用已启用的搜索源。">
+  <SectionCard title="歌曲搜索" icon="search" description="本地与外部候选按匹配阈值筛选，再按搜索优先级选择。">
     <SettingRow title="启用外部搜索" :subtitle="state.config.voice_command_enabled ? '搜索源需要返回 topone 格式结果' : '需要先开启语音口令'"><SlSwitch aria-label="启用外部搜索" :model-value="state.config.external_search_enabled" :disabled="!state.config.voice_command_enabled" @update:model-value="setExternalSearchEnabled" /></SettingRow>
     <div v-if="!state.config.voice_command_enabled" class="dependency-hint"><SlIcon name="warning" :size="18" /><span>需要先开启"语音口令"才能使用外部搜索。</span></div>
     <div class="form-body">
       <div class="field"><label class="field-label">搜索优先级</label><SlSelect :model-value="state.config.search_priority" :options="searchPriorityOptions" aria-label="搜索优先级" @update:model-value="saveConfig({ search_priority: $event as 'parallel' | 'local_first' | 'external_first' })" /></div>
+      <div class="field"><label class="field-label">歌曲匹配阈值（0–100）</label><SlInput :model-value="songMatchThreshold" @update:model-value="songMatchThreshold = $event" type="number" aria-label="歌曲匹配阈值" @change="saveConfig({ song_match_threshold: Math.max(0, Math.min(100, Number(songMatchThreshold) || 0)) })" /><div class="field-help">默认 70，越高越严格；支持同音字与中阿数字容错，无需开启 AI。本地与外部歌曲都须达标；并行搜索等待两端后按匹配度选择，同分优先本地。该分数不是命中概率。</div></div>
       <div class="field-grid"><div class="field"><label class="field-label">超时（秒）</label><SlInput :model-value="externalSearchTimeout" type="number" aria-label="外部搜索超时" @update:model-value="externalSearchTimeout = $event" @change="saveConfig({ external_search_timeout: Math.max(3, Math.min(60, Number(externalSearchTimeout) || 6)) })" /></div><div class="field setting-field-control"><label class="field-label">不入库直接播放</label><SlSwitch :model-value="state.config.external_search_no_import" @update:model-value="setSwitch('external_search_no_import', $event)" /></div></div>
       <div class="field-grid"><div class="field setting-field-control"><label class="field-label">自动追加到歌单</label><SlSwitch :model-value="appendPlaylistEnabled" @update:model-value="setAppendPlaylistEnabled" /></div><div v-if="appendPlaylistEnabled" class="field"><label class="field-label">目标歌单</label><SlSelect :model-value="state.config.external_search_playlist_id" :options="playlistOptions" searchable search-placeholder="搜索歌单" aria-label="目标歌单" @update:model-value="setAppendPlaylistId" /></div></div>
       <h3 class="card-title">已安装搜索源</h3>

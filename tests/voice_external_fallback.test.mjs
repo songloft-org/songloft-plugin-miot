@@ -56,7 +56,7 @@ function fixture(t, options = {}) {
     if (url.endsWith('/search')) {
       if (options.searchError) throw new Error('source unavailable');
       if (options.whitespaceMiss && /\s/.test(body.keyword)) return { status: 200, text: async () => JSON.stringify({ code: 404, data: null }) };
-      return { status: 200, text: async () => JSON.stringify({ code: 0, data: options.miss || (options.firstMiss && url.includes('topone')) ? null : song }) };
+      return { status: 200, text: async () => JSON.stringify({ code: 0, data: options.miss || (options.firstMiss && url.includes('topone')) ? null : (options.searchSong || song) }) };
     }
     if (url === 'http://host/api/v1/songs/remote') {
       events.push('import');
@@ -238,7 +238,7 @@ test('search preview explains the external fallback without executing it', async
 for (const priority of ['local_first', 'external_first', 'parallel']) {
   for (const entry of ['ai', 'rule']) {
     test(`${entry} play_song imports and pushes after whitespace retry (${priority})`, async t => {
-      const f = fixture(t, { priority, whitespaceMiss: true });
+      const f = fixture(t, { priority, whitespaceMiss: true, searchSong: { ...song, title: '山峰山峰等等我 男生合唱版' } });
       const name = '山峰山峰等等我 男生合唱版';
       if (entry === 'ai') {
         await f.engine.executeAIResult({ action: 'play_song', params: { name }, confidence: 'high' }, 'account', 'speaker');
@@ -255,4 +255,26 @@ for (const priority of ['local_first', 'external_first', 'parallel']) {
       assert.equal(f.events.filter(e => e === 'stop').length, 1);
     });
   }
+}
+
+for (const priority of ['local_first', 'external_first', 'parallel']) {
+  test(`real index and HTTP search play the intended radio without importing unrelated topone (${priority})`, async t => {
+    const radio = { id: 1933, title: 'CCTV九纪录', artist: '', type: 'radio', url: '/api/v1/songs/1933/play' };
+    const f = fixture(t, { priority, localSongs: [radio], searchSong: { ...song, title: '记录', artist: '轻松频率' } });
+    globalThis.songloft.songs = { list: async () => [radio], getById: async () => radio };
+    globalThis.songloft.playlists.list = async () => [{ id: 7, name: '电台', song_count: 1 }];
+    const { IndexingManager } = load('../src/indexing/manager.ts');
+    f.engine.indexingManager = new IndexingManager();
+    await f.engine.indexingManager.refresh();
+    await f.engine.indexingManager.waitForPlaylistCache();
+    const result = await f.engine.executeCommand({ command: { type: 'play_song' }, keyword: '播放', argument: 'cctv9记录' }, 'account', 'speaker');
+    assert.equal(result.songId, 1933);
+    assert.equal(f.localPlays.length, 1);
+    assert.deepEqual(f.localPlays[0].slice(0, 2), [7, 1933]);
+    assert.deepEqual(f.queuePlays, []);
+    assert.equal(f.requests.filter(r => r.url.endsWith('/songs/remote')).length, 0);
+    assert.equal(f.requests.filter(r => r.url.endsWith('/search')).length, priority === 'local_first' ? 0 : 2);
+    assert.deepEqual(f.speech, []);
+    assert.equal(f.events.filter(e => e === 'stop').length, 1);
+  });
 }

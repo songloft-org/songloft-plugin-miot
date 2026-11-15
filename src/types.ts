@@ -179,6 +179,7 @@ export interface PluginConfig {
   external_search_timeout: number;     // 外部搜索超时（秒），默认 6
   external_search_no_import: boolean;   // 不入库直接播放：命中直链型结果时直接把原始 URL 推给音箱，不写入曲库（临时链接友好）
   search_priority: SearchPriority;     // 搜歌优先级策略
+  song_match_threshold: number; // 歌曲候选最低匹配分，0..100，默认 70
   music_api_model_disabled?: string[]; // 显式禁用 Music API 的型号（覆盖内置默认清单）
   indicator_light_enabled?: boolean;
   default_cover_id?: string;

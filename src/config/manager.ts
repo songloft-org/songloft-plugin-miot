@@ -3,6 +3,8 @@
 
 /// <reference types="@songloft/plugin-sdk" />
 
+import { normalizeSongMatchThreshold } from '../indexing/song_match';
+
 import type {
   PluginConfig,
   ExternalSearchSource,
@@ -84,6 +86,7 @@ function defaultPluginConfig(): PluginConfig {
     external_search_timeout: 6,
     external_search_no_import: false,
     search_priority: 'parallel',
+    song_match_threshold: 70,
     indicator_light_enabled: true,
     default_cover_id: '1732418460076477549',
     touchscreen_lyrics_enabled: false,
@@ -204,6 +207,7 @@ export class ConfigManager {
       migratedDebugLog = true;
     }
     const merged = { ...defaultPluginConfig(), ...stored };
+    merged.song_match_threshold = normalizeSongMatchThreshold(stored.song_match_threshold);
     merged.voice_memory_enabled = stored.voice_memory_enabled !== false;
     merged.voice_memory_max_records = normalizeMemoryMaxRecords(stored.voice_memory_max_records);
     if (migratedDebugLog) {

@@ -10,6 +10,14 @@
 
 ## 条目
 
+### MIOT-032：语音点歌必须分别校验候选质量与来源优先级
+
+- 范围：[songloft-org/songloft#569](https://github.com/songloft-org/songloft/issues/569)；插件基线 `48413d6abc2a34e8094bca3ec2f80457365b5abd`。
+- 证据：旧实现的中文逐字校验拒绝「cctv九记录」匹配「CCTV九纪录」，外部 topone 无匹配分校验，并行路径按响应速度选择。隔离旧业务源码的 14 项新回归中，13 项因目标行为失败；保留新评分模块以排除缺依赖假失败。
+- 规则与 Done right：语音候选使用同一可调分数筛选，外部校验须先于导入；并行模式先比较匹配分，同分本地优先，失败复用本轮候选。普通搜索与歌手/歌单语义单独保留；口令预览与刷新重试须传递阈值。真实索引与 HTTP 夹具覆盖三种优先级，桌面/手机配置经实际 handler 验证保存与刷新，详见[验证记录](docs/issue-569.md)。
+- Not run：报告人音箱、曲库、实际发声及长期运行。
+- Seen 1× (2026-11-15)。状态：本地实现与验证，未提交、推送或发布。
+
 ### MIOT-031：异常停止回执须用有限新状态核验，不能直接阻断问答或忽略错误
 
 - 范围：[songloft-org/songloft-plugin-miot#140](https://github.com/songloft-org/songloft-plugin-miot/issues/140)；基线 `cd4921fde37f8239878cf1bb0b44fa074f6b481b`。
