@@ -6,11 +6,11 @@
   "author": "Songloft Team",
   "homepage": "https://github.com/songloft-org/songloft-plugin-miot",
   "license": "Apache-2.0",
-  "icon": "frontend/public/icon.svg",
+  "icon": "icon.svg",
   "entryPath": "miot",
   "main": "main.js",
   "minHostVersion": "2.9.5",
-  "renderEngine": "webview",
+  "renderEngine": "lynx",
   "permissions": [
     "storage",
     "songs.read",
@@ -22,12 +22,11 @@
     "net",
     "websocket"
   ],
-  "publicPaths": [
-    "/dlna"
-  ],
+  "publicPaths": ["/dlna"],
   "updateUrl": "https://raw.githubusercontent.com/songloft-org/songloft-plugin-miot/main/plugin.json",
   "download_url": "https://github.com/songloft-org/songloft-plugin-miot/releases/download/v2026.11.15.1/miot.jsplugin.zip",
   "entryHash": "27d16407078c0bdd24acdd948c05d4eba43846b98512cf3f1fcc2b5bf75c5866",
   "zipHash": "761eb79bc3a293e4f8e6f25095263f50deb4a962a3e42175b5c237aba669ac43",
-  "releaseSource": "6b1bf4c2c2fcc03fdf0b43efb3e7c2d4a21f38af"
+  "releaseSource": "6b1bf4c2c2fcc03fdf0b43efb3e7c2d4a21f38af",
+  "staticHash": false
 }

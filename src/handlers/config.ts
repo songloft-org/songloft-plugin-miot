@@ -9,7 +9,7 @@ import { Scheduler } from '../schedule/scheduler';
 import { VoiceEngine } from '../voicecmd/engine';
 import { normalizeMemoryMaxRecords } from '../memory';
 import type { MemoryService } from '../memory';
-import { setHostBaseUrl, callHostAPI } from '../utils/http';
+import { setHostBaseUrl, callHostAPI, getHostAPIBaseUrl } from '../utils/http';
 import { setDebugLog } from '../utils/debug';
 import type { SearchPriority } from '../types';
 import { DEFAULT_MUSIC_API_MODELS } from '../mina/constants';
@@ -17,11 +17,16 @@ import { validateAIHeaders } from '../utils/ai_headers';
 
 import { normalizeSongMatchThreshold } from '../indexing/song_match';
 
-const SEARCH_PRIORITIES: SearchPriority[] = ['parallel', 'local_first', 'external_first'];
+const SEARCH_PRIORITIES: SearchPriority[] = [
+  'parallel',
+  'local_first',
+  'external_first',
+];
 
 function normalizeSearchPriority(value: unknown): SearchPriority {
-  return typeof value === 'string' && SEARCH_PRIORITIES.includes(value as SearchPriority)
-    ? value as SearchPriority
+  return typeof value === 'string' &&
+    SEARCH_PRIORITIES.includes(value as SearchPriority)
+    ? (value as SearchPriority)
     : 'parallel';
 }
 
@@ -29,9 +34,10 @@ function normalizeSearchPriority(value: unknown): SearchPriority {
 function parseBody(req: HTTPRequest): any {
   if (!req.body) return {};
   try {
-    const str = typeof req.body === 'string'
-      ? req.body
-      : String.fromCharCode.apply(null, Array.from(req.body as Uint8Array));
+    const str =
+      typeof req.body === 'string'
+        ? req.body
+        : String.fromCharCode.apply(null, Array.from(req.body as Uint8Array));
     return JSON.parse(str);
   } catch {
     return {};
@@ -47,10 +53,17 @@ function isLoopbackAddress(host: string): boolean {
     const rest = host.slice(protoIdx + 3);
     const slashIdx = rest.indexOf('/');
     const colonIdx = rest.indexOf(':');
-    hostname = rest.slice(0, slashIdx >= 0 ? slashIdx : (colonIdx >= 0 ? colonIdx : undefined));
+    hostname = rest.slice(
+      0,
+      slashIdx >= 0 ? slashIdx : colonIdx >= 0 ? colonIdx : undefined,
+    );
   }
   hostname = hostname.toLowerCase().trim();
-  return hostname === 'localhost' || hostname.startsWith('127.') || hostname === '::1';
+  return (
+    hostname === 'localhost' ||
+    hostname.startsWith('127.') ||
+    hostname === '::1'
+  );
 }
 
 /** 获取服务器地址状态 */
@@ -73,7 +86,6 @@ export function registerConfigHandlers(
   voiceEngine: VoiceEngine,
   memoryService: MemoryService,
 ): void {
-
   // GET /config - 获取配置
   router.get('/config', async (req: HTTPRequest) => {
     try {
@@ -107,15 +119,20 @@ export function registerConfigHandlers(
           external_search_timeout: config.external_search_timeout ?? 6,
           external_search_no_import: !!config.external_search_no_import,
           search_priority: normalizeSearchPriority(config.search_priority),
-          song_match_threshold: normalizeSongMatchThreshold(config.song_match_threshold),
+          song_match_threshold: normalizeSongMatchThreshold(
+            config.song_match_threshold,
+          ),
           music_api_model_disabled: config.music_api_model_disabled || [],
           music_api_model_defaults: [...DEFAULT_MUSIC_API_MODELS],
           indicator_light_enabled: !!config.indicator_light_enabled,
           interrupt_tts_hint_enabled: !!config.interrupt_tts_hint_enabled,
-          interrupt_tts_hint_text: config.interrupt_tts_hint_text || '正在搜索，请稍候',
+          interrupt_tts_hint_text:
+            config.interrupt_tts_hint_text || '正在搜索，请稍候',
           play_announcement_enabled: !!config.play_announcement_enabled,
-          play_announcement_template: config.play_announcement_template || '即将播放{artist}的{song}',
-          play_announcement_wait_mode: config.play_announcement_wait_mode || 'auto',
+          play_announcement_template:
+            config.play_announcement_template || '即将播放{artist}的{song}',
+          play_announcement_wait_mode:
+            config.play_announcement_wait_mode || 'auto',
           play_announcement_delay: config.play_announcement_delay ?? 3,
           play_announcement_scope: config.play_announcement_scope || 'voice',
           conversation_poll_interval: config.conversation_poll_interval ?? 2,
@@ -131,7 +148,10 @@ export function registerConfigHandlers(
         },
       });
     } catch (e: any) {
-      return jsonResponse({ success: false, error: e.message || String(e) }, 500);
+      return jsonResponse(
+        { success: false, error: e.message || String(e) },
+        500,
+      );
     }
   });
 
@@ -139,16 +159,30 @@ export function registerConfigHandlers(
   router.post('/config', async (req: HTTPRequest) => {
     try {
       const body = parseBody(req);
-      if (body.hourly_chime_resume_enabled !== undefined && typeof body.hourly_chime_resume_enabled !== 'boolean') {
-        return jsonResponse({ success: false, error: 'hourly_chime_resume_enabled must be boolean' }, 400);
+      if (
+        body.hourly_chime_resume_enabled !== undefined &&
+        typeof body.hourly_chime_resume_enabled !== 'boolean'
+      ) {
+        return jsonResponse(
+          {
+            success: false,
+            error: 'hourly_chime_resume_enabled must be boolean',
+          },
+          400,
+        );
       }
       const config = await configManager.getConfig();
       let memoryMaxChanged = false;
 
       // 更新 server_host
       if (body.server_host !== undefined) {
-        let serverHost = typeof body.server_host === 'string' ? body.server_host.trim() : '';
-        if (serverHost && !serverHost.startsWith('http://') && !serverHost.startsWith('https://')) {
+        let serverHost =
+          typeof body.server_host === 'string' ? body.server_host.trim() : '';
+        if (
+          serverHost &&
+          !serverHost.startsWith('http://') &&
+          !serverHost.startsWith('https://')
+        ) {
           serverHost = 'http://' + serverHost;
         }
         config.server_host = serverHost;
@@ -183,7 +217,9 @@ export function registerConfigHandlers(
       }
 
       if (body.voice_memory_max_records !== undefined) {
-        config.voice_memory_max_records = normalizeMemoryMaxRecords(body.voice_memory_max_records);
+        config.voice_memory_max_records = normalizeMemoryMaxRecords(
+          body.voice_memory_max_records,
+        );
         memoryMaxChanged = true;
       }
 
@@ -207,27 +243,43 @@ export function registerConfigHandlers(
       if (body.song_transition_offset !== undefined) {
         const offset = Number(body.song_transition_offset);
         if (Number.isFinite(offset)) {
-          config.song_transition_offset = Math.max(-30, Math.min(30, Math.round(offset)));
+          config.song_transition_offset = Math.max(
+            -30,
+            Math.min(30, Math.round(offset)),
+          );
         }
       }
 
       // 更新 external_search_url
       if (body.external_search_url !== undefined) {
-        config.external_search_url = typeof body.external_search_url === 'string' ? body.external_search_url.trim() : '';
+        config.external_search_url =
+          typeof body.external_search_url === 'string'
+            ? body.external_search_url.trim()
+            : '';
       }
 
       // 更新 external_search_token
       if (body.external_search_token !== undefined) {
-        config.external_search_token = typeof body.external_search_token === 'string' ? body.external_search_token.trim() : '';
+        config.external_search_token =
+          typeof body.external_search_token === 'string'
+            ? body.external_search_token.trim()
+            : '';
       }
 
       // 更新 external_search_sources（源列表，数组顺序即优先级）
       if (body.external_search_sources !== undefined) {
-        config.external_search_sources = Array.isArray(body.external_search_sources)
+        config.external_search_sources = Array.isArray(
+          body.external_search_sources,
+        )
           ? body.external_search_sources
-              .filter((s: any) => s && typeof s.url === 'string' && s.url.trim())
+              .filter(
+                (s: any) => s && typeof s.url === 'string' && s.url.trim(),
+              )
               .map((s: any) => ({
-                id: (typeof s.id === 'string' && s.id) ? s.id : `src_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+                id:
+                  typeof s.id === 'string' && s.id
+                    ? s.id
+                    : `src_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
                 name: typeof s.name === 'string' ? s.name.trim() : '',
                 url: s.url.trim(),
                 token: typeof s.token === 'string' ? s.token.trim() : '',
@@ -243,14 +295,18 @@ export function registerConfigHandlers(
 
       // 更新 external_search_playlist_id
       if (body.external_search_playlist_id !== undefined) {
-        config.external_search_playlist_id = typeof body.external_search_playlist_id === 'string'
-          ? body.external_search_playlist_id.trim()
-          : String(body.external_search_playlist_id);
+        config.external_search_playlist_id =
+          typeof body.external_search_playlist_id === 'string'
+            ? body.external_search_playlist_id.trim()
+            : String(body.external_search_playlist_id);
       }
 
       // 更新 external_search_timeout
       if (body.external_search_timeout !== undefined) {
-        config.external_search_timeout = Math.max(3, Math.min(60, Number(body.external_search_timeout) || 6));
+        config.external_search_timeout = Math.max(
+          3,
+          Math.min(60, Number(body.external_search_timeout) || 6),
+        );
       }
 
       // 更新 external_search_no_import
@@ -259,7 +315,9 @@ export function registerConfigHandlers(
       }
 
       if (body.song_match_threshold !== undefined) {
-        config.song_match_threshold = normalizeSongMatchThreshold(body.song_match_threshold);
+        config.song_match_threshold = normalizeSongMatchThreshold(
+          body.song_match_threshold,
+        );
       }
 
       // 更新 search_priority
@@ -289,9 +347,10 @@ export function registerConfigHandlers(
 
       // 更新 interrupt_tts_hint_text
       if (body.interrupt_tts_hint_text !== undefined) {
-        config.interrupt_tts_hint_text = typeof body.interrupt_tts_hint_text === 'string'
-          ? body.interrupt_tts_hint_text.trim()
-          : '正在搜索，请稍候';
+        config.interrupt_tts_hint_text =
+          typeof body.interrupt_tts_hint_text === 'string'
+            ? body.interrupt_tts_hint_text.trim()
+            : '正在搜索，请稍候';
       }
 
       // 更新播放公告配置
@@ -299,9 +358,10 @@ export function registerConfigHandlers(
         config.play_announcement_enabled = !!body.play_announcement_enabled;
       }
       if (body.play_announcement_template !== undefined) {
-        config.play_announcement_template = typeof body.play_announcement_template === 'string'
-          ? body.play_announcement_template.trim()
-          : '即将播放{artist}的{song}';
+        config.play_announcement_template =
+          typeof body.play_announcement_template === 'string'
+            ? body.play_announcement_template.trim()
+            : '即将播放{artist}的{song}';
       }
       if (body.play_announcement_wait_mode !== undefined) {
         const mode = String(body.play_announcement_wait_mode);
@@ -310,7 +370,10 @@ export function registerConfigHandlers(
         }
       }
       if (body.play_announcement_delay !== undefined) {
-        config.play_announcement_delay = Math.max(0, Math.min(10, Number(body.play_announcement_delay) || 3));
+        config.play_announcement_delay = Math.max(
+          0,
+          Math.min(10, Number(body.play_announcement_delay) || 3),
+        );
       }
       if (body.play_announcement_scope !== undefined) {
         const scope = String(body.play_announcement_scope);
@@ -323,7 +386,8 @@ export function registerConfigHandlers(
       if (body.conversation_poll_interval !== undefined) {
         const requestedInterval = Number(body.conversation_poll_interval);
         const val = Number.isFinite(requestedInterval)
-          ? Math.max(1, Math.min(30, requestedInterval)) : 2;
+          ? Math.max(1, Math.min(30, requestedInterval))
+          : 2;
         config.conversation_poll_interval = val;
         // 仅在监听器本次未被显式关闭时才重启（避免与上面的 stop 冲突）
         if (config.conversation_monitor_enabled && monitorAction !== 'stop') {
@@ -343,17 +407,25 @@ export function registerConfigHandlers(
 
       // 更新 smart_resume_timeout
       if (body.smart_resume_timeout !== undefined) {
-        config.smart_resume_timeout = Math.max(5, Math.min(120, Number(body.smart_resume_timeout) || 30));
+        config.smart_resume_timeout = Math.max(
+          5,
+          Math.min(120, Number(body.smart_resume_timeout) || 30),
+        );
       }
 
       // 更新 max_song_index
       if (body.max_song_index !== undefined) {
-        config.max_song_index = Math.max(1000, Math.min(100000, Number(body.max_song_index) || 10000));
+        config.max_song_index = Math.max(
+          1000,
+          Math.min(100000, Number(body.max_song_index) || 10000),
+        );
       }
 
       // 更新 music_api_model_disabled（显式禁用 Music API 的型号清单）
       if (body.music_api_model_disabled !== undefined) {
-        config.music_api_model_disabled = Array.isArray(body.music_api_model_disabled)
+        config.music_api_model_disabled = Array.isArray(
+          body.music_api_model_disabled,
+        )
           ? body.music_api_model_disabled
               .filter((m: any) => typeof m === 'string' && m.trim())
               .map((m: string) => m.trim().toUpperCase())
@@ -418,8 +490,8 @@ export function registerConfigHandlers(
       // 配置保存后再联动监听器启停：start() 会 await 到设备列表初始化完成，
       // 之后前端请求 /conversation/status 即可拿到真实设备数量
       if (monitorAction === 'start' || monitorAction === 'restart') {
-        conversationMonitor.stop();          // 先清理旧状态（含残留设备）
-        await conversationMonitor.start();   // 再干净启动并等待初始化
+        conversationMonitor.stop(); // 先清理旧状态（含残留设备）
+        await conversationMonitor.start(); // 再干净启动并等待初始化
       } else if (monitorAction === 'stop') {
         conversationMonitor.stop();
       }
@@ -427,9 +499,11 @@ export function registerConfigHandlers(
       // 检查保存后的地址是否有效，附带 warning
       let warning = '';
       if (!config.server_host) {
-        warning = '服务器地址为空，MIoT 智能音箱将无法播放音乐。请配置局域网 IP 地址（如 http://192.168.x.x:58091）。';
+        warning =
+          '服务器地址为空，MIoT 智能音箱将无法播放音乐。请配置局域网 IP 地址（如 http://192.168.x.x:58091）。';
       } else if (isLoopbackAddress(config.server_host)) {
-        warning = '检测到服务器地址为本地回环地址，MIoT 智能音箱将无法通过此地址访问服务器播放音乐。请使用局域网 IP 地址。';
+        warning =
+          '检测到服务器地址为本地回环地址，MIoT 智能音箱将无法通过此地址访问服务器播放音乐。请使用局域网 IP 地址。';
       }
       if (memoryWarning) {
         warning = warning ? `${warning} ${memoryWarning}` : memoryWarning;
@@ -441,7 +515,70 @@ export function registerConfigHandlers(
       }
       return jsonResponse(resp);
     } catch (e: any) {
-      return jsonResponse({ success: false, error: e.message || String(e) }, 500);
+      return jsonResponse(
+        { success: false, error: e.message || String(e) },
+        500,
+      );
+    }
+  });
+
+  // POST /search-providers/test - test a saved source without exposing host credentials to the UI.
+  router.post('/search-providers/test', async (req: HTTPRequest) => {
+    const body = parseBody(req);
+    const keyword = typeof body.keyword === 'string' ? body.keyword.trim() : '';
+    if (!keyword)
+      return jsonResponse({ success: false, error: '请输入搜索词' }, 400);
+    const config = await configManager.getConfig();
+    const source = config.external_search_sources.find(
+      (source) => source.id === body.source_id && source.enabled,
+    );
+    if (!source || !source.url)
+      return jsonResponse(
+        { success: false, error: '搜索源不存在或未启用' },
+        400,
+      );
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const result = await Promise.race([
+        (async () => {
+          const url = /^https?:\/\//i.test(source.url)
+            ? source.url
+            : (await getHostAPIBaseUrl()) + source.url;
+          const token =
+            source.token?.trim() || (await songloft.plugin.getToken());
+          const response = await fetch(url, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: token.startsWith('Bearer ')
+                ? token
+                : `Bearer ${token}`,
+            },
+            body: JSON.stringify({ keyword, quality: '320k' }),
+          });
+          if (!response.ok)
+            throw new Error(`搜索源请求失败 (${response.status})`);
+          return await response.json();
+        })(),
+        new Promise<never>((_resolve, reject) => {
+          timer = setTimeout(
+            () => reject(new Error('搜索源请求超时')),
+            Math.max(1, Math.min(60, config.external_search_timeout || 6)) *
+              1000,
+          );
+        }),
+      ]);
+      return jsonResponse({ success: true, data: result });
+    } catch (error) {
+      return jsonResponse(
+        {
+          success: false,
+          error: error instanceof Error ? error.message : String(error),
+        },
+        502,
+      );
+    } finally {
+      if (timer !== undefined) clearTimeout(timer);
     }
   });
 
@@ -470,7 +607,9 @@ export function registerConfigHandlers(
         });
       }
     } catch (e) {
-      songloft.log.warn('[config] Failed to load registered search providers: ' + String(e));
+      songloft.log.warn(
+        '[config] Failed to load registered search providers: ' + String(e),
+      );
     }
 
     interface HostPlugin {
@@ -480,7 +619,10 @@ export function registerConfigHandlers(
 
     let installedPlugins: HostPlugin[] = [];
     try {
-      const data = await callHostAPI<{ plugins: HostPlugin[] }>('GET', '/api/v1/jsplugins/');
+      const data = await callHostAPI<{ plugins: HostPlugin[] }>(
+        'GET',
+        '/api/v1/jsplugins/',
+      );
       installedPlugins = data.plugins || [];
     } catch (e) {
       songloft.log.warn('[config] Failed to fetch plugin list: ' + String(e));
@@ -489,7 +631,9 @@ export function registerConfigHandlers(
     // 只返回真实安装（且已启用）的搜索提供方，过滤未安装的内置兜底项
     const providers = Array.from(byEntryPath.values())
       .map((p) => {
-        const found = installedPlugins.find((ip) => ip.entry_path === p.entryPath);
+        const found = installedPlugins.find(
+          (ip) => ip.entry_path === p.entryPath,
+        );
         return {
           id: p.entryPath,
           name: p.name,

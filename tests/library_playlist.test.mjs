@@ -1,46 +1,53 @@
-import assert from 'node:assert/strict';
-import test from 'node:test';
-import { loader } from './chat_loader.mjs';
+import assert from "node:assert/strict";
+import test from "node:test";
+import { loader } from "./chat_loader.mjs";
 
+let countedRows = [];
 const load = loader({
-  '@songloft/plugin-sdk': {
+  "@songloft/plugin-sdk": {
     jsonResponse: (value) => value,
     parseQuery: (query) => Object.fromEntries(new URLSearchParams(query)),
   },
-  '../utils/http': {
-    getHostBaseUrl: () => 'http://speaker.test',
-    callHostAPI: async () => ({}),
+  "../utils/http": {
+    getHostBaseUrl: () => "http://speaker.test",
+    callHostAPI: async (_method, path) =>
+      path === "/api/v1/songs/stats"
+        ? {
+            local_songs: countedRows.filter((s) => s.type === "local").length,
+            remote_songs: countedRows.filter((s) => s.type === "remote").length,
+          }
+        : {},
   },
 });
-const library = load('../src/player/library_playlist.ts');
+const library = load("../src/player/library_playlist.ts");
 const { ALL_SONGS_PLAYLIST_ID: id } = library;
 const { PlaylistManager, PlaylistManagerMap } = load(
-  '../src/player/manager.ts',
+  "../src/player/manager.ts",
 );
-const { registerPlaylistHandlers } = load('../src/handlers/playlist.ts');
-const { IndexingManager } = load('../src/indexing/manager.ts');
+const { registerPlaylistHandlers } = load("../src/handlers/playlist.ts");
+const { IndexingManager } = load("../src/indexing/manager.ts");
 const tracks = [
   {
     id: 1,
-    title: '本地歌曲',
-    type: 'local',
+    title: "本地歌曲",
+    type: "local",
     duration: 300,
-    url: '/api/v1/songs/1/play',
+    url: "/api/v1/songs/1/play",
   },
   {
     id: 2,
-    title: '电台',
-    type: 'radio',
+    title: "电台",
+    type: "radio",
     duration: 300,
     is_live: false,
-    url: 'https://radio.test/stream',
+    url: "https://radio.test/stream",
   },
   {
     id: 3,
-    title: '网络歌曲',
-    type: 'remote',
+    title: "网络歌曲",
+    type: "remote",
     duration: 300,
-    url: '/api/v1/songs/3/play',
+    url: "/api/v1/songs/3/play",
   },
 ];
 
@@ -52,17 +59,18 @@ async function fixture(run) {
     random: Math.random,
   };
   let rows = tracks.slice();
+  countedRows = rows;
   const calls = [],
     pushes = [],
     writes = [],
     progress = [];
-  let device = { device_id: 'speaker', playlist_id: 0 };
+  let device = { device_id: "speaker", playlist_id: 0 };
   const unexpected = async () => {
-    throw new Error('Virtual playlist must not access stored playlist members');
+    throw new Error("Virtual playlist must not access stored playlist members");
   };
   globalThis.songloft = {
     log: { info() {}, warn() {}, error() {}, debug() {} },
-    plugin: { getToken: async () => 'fixture-token' },
+    plugin: { getToken: async () => "fixture-token" },
     songs: {
       list: async (options) => {
         calls.push(options);
@@ -71,12 +79,12 @@ async function fixture(run) {
           (options.offset || 0) + options.limit,
         );
       },
-      delete: async (songId) => writes.push(['delete', songId]),
+      delete: async (songId) => writes.push(["delete", songId]),
     },
     playlists: {
       list: async () => [
-        { id: 10, name: '普通歌单', song_count: 1 },
-        { id: 11, name: '电台收藏', type: 'radio' },
+        { id: 10, name: "普通歌单", song_count: 1 },
+        { id: 11, name: "电台收藏", type: "radio" },
       ],
       getById: unexpected,
       getSongs: unexpected,
@@ -90,7 +98,7 @@ async function fixture(run) {
   };
   globalThis.clearTimeout = () => {};
   const config = {
-    getConfig: async () => ({ server_host: 'http://speaker.test' }),
+    getConfig: async () => ({ server_host: "http://speaker.test" }),
     getDevices: async () => [device],
     getDeviceGroups: async () => [],
     updateDevice: async (_account, _device, patch) => {
@@ -108,8 +116,10 @@ async function fixture(run) {
     stopPlay: async () => true,
     notifyControl() {},
   };
-  service.playURLs = async (targets, ...args) => Promise.all(targets.map(t =>
-    service.playURL(t.account_id, t.device_id, ...args)));
+  service.playURLs = async (targets, ...args) =>
+    Promise.all(
+      targets.map((t) => service.playURL(t.account_id, t.device_id, ...args)),
+    );
   const map = new PlaylistManagerMap(service, config);
   const routes = new Map();
   registerPlaylistHandlers(
@@ -122,7 +132,7 @@ async function fixture(run) {
     config,
   );
   const request = (route, body = {}, params = {}) =>
-    routes.get(route)({ body: JSON.stringify(body), query: '' }, params);
+    routes.get(route)({ body: JSON.stringify(body), query: "" }, params);
   try {
     await run({
       calls,
@@ -135,6 +145,7 @@ async function fixture(run) {
       request,
       setRows: (value) => {
         rows = value;
+        countedRows = value;
       },
       device: () => device,
       setDevice: (value) => {
@@ -149,15 +160,15 @@ async function fixture(run) {
   }
 }
 
-test('playlist list exposes a fixed virtual entry and counts songs without radio', () =>
+test("playlist list exposes a fixed virtual entry and counts songs without radio", () =>
   fixture(async (h) => {
-    const response = await h.request('GET /playlists');
+    const response = await h.request("GET /playlists");
     assert.equal(response.success, true);
     assert.deepEqual(response.data[0], {
       id,
-      name: '全部歌曲',
+      name: "全部歌曲",
       song_count: 2,
-      type: 'normal',
+      type: "normal",
       is_virtual: true,
     });
     assert.deepEqual(
@@ -165,7 +176,7 @@ test('playlist list exposes a fixed virtual entry and counts songs without radio
       [10, 11],
     );
     const songs = await h.request(
-      'GET /playlists/:id/songs',
+      "GET /playlists/:id/songs",
       {},
       { id: String(id) },
     );
@@ -174,10 +185,10 @@ test('playlist list exposes a fixed virtual entry and counts songs without radio
       [1, 3],
     );
     h.setRows([...tracks, { ...tracks[0], id: 4 }]);
-    assert.equal((await h.request('GET /playlists')).data[0].song_count, 3);
+    assert.equal((await h.request("GET /playlists")).data[0].song_count, 3);
   }));
 
-test('pagination continues through an entire radio page and is independent of voice index limit', () =>
+test("pagination continues through an entire radio page and is independent of voice index limit", () =>
   fixture(async (h) => {
     h.setRows([
       ...Array.from({ length: 1000 }, (_, index) => ({
@@ -195,20 +206,20 @@ test('pagination continues through an entire radio page and is independent of vo
       h.calls.map((c) => c.offset),
       [0, 1000],
     );
-    assert.ok(h.calls.every((c) => c.orderBy === 'id' && c.order === 'asc'));
+    assert.ok(h.calls.every((c) => c.orderBy === "id" && c.order === "asc"));
   }));
 
-test('empty and radio-only libraries remain a valid empty virtual playlist', () =>
+test("empty and radio-only libraries remain a valid empty virtual playlist", () =>
   fixture(async (h) => {
     for (const rows of [[], [tracks[1]]]) {
       h.setRows(rows);
       assert.deepEqual(await library.loadAllSongs(), []);
-      assert.equal((await h.request('GET /playlists')).data[0].song_count, 0);
+      assert.equal((await h.request("GET /playlists")).data[0].song_count, 0);
       assert.equal(
         (
-          await h.request('POST /player/play', {
-            account_id: 'account',
-            device_id: 'speaker',
+          await h.request("POST /player/play", {
+            account_id: "account",
+            device_id: "speaker",
             playlist_id: id,
           })
         ).success,
@@ -218,45 +229,45 @@ test('empty and radio-only libraries remain a valid empty virtual playlist', () 
     }
   }));
 
-test('web play selects by song ID, persists progress and advances only within songs', () =>
+test("web play selects by song ID, persists progress and advances only within songs", () =>
   fixture(async (h) => {
-    const result = await h.request('POST /player/play', {
-      account_id: 'account',
-      device_id: 'speaker',
+    const result = await h.request("POST /player/play", {
+      account_id: "account",
+      device_id: "speaker",
       playlist_id: id,
       song_id: 3,
       start_index: 0,
-      play_mode: 'loop',
+      play_mode: "loop",
     });
     assert.equal(result.success, true);
-    const manager = await h.map.getOrCreate('account', 'speaker');
+    const manager = await h.map.getOrCreate("account", "speaker");
     assert.equal(manager.getStatus().current_song.id, 3);
-    assert.equal(manager.getStatus().playlist_name, '全部歌曲');
+    assert.equal(manager.getStatus().playlist_name, "全部歌曲");
     assert.equal(h.device().playlist_id, id);
     assert.equal(h.progress.at(-1).playlist_id, id);
     assert.equal(await manager.next(), true);
     assert.equal(manager.getStatus().current_song.id, 1);
-    assert.ok(h.pushes.at(-1).includes('/songs/1/play'));
+    assert.ok(h.pushes.at(-1).includes("/songs/1/play"));
     assert.ok(
       h.pushes.every(
-        (url) => !url.includes('/songs/2/') && !url.includes('radio.test'),
+        (url) => !url.includes("/songs/2/") && !url.includes("radio.test"),
       ),
     );
     manager.cleanup();
   }));
 
-test('random start and random next select from the complete music queue', () =>
+test("random start and random next select from the complete music queue", () =>
   fixture(async (h) => {
     Math.random = () => 0.99;
-    const result = await h.request('POST /player/play', {
-      account_id: 'account',
-      device_id: 'speaker',
+    const result = await h.request("POST /player/play", {
+      account_id: "account",
+      device_id: "speaker",
       playlist_id: id,
-      start_position: 'random',
-      play_mode: 'random',
+      start_position: "random",
+      play_mode: "random",
     });
     assert.equal(result.success, true);
-    const manager = await h.map.getOrCreate('account', 'speaker');
+    const manager = await h.map.getOrCreate("account", "speaker");
     assert.deepEqual(
       manager.getSongs().map((s) => s.id),
       [1, 3],
@@ -267,32 +278,32 @@ test('random start and random next select from the complete music queue', () =>
     manager.cleanup();
   }));
 
-test('reload restores the virtual queue and song identity after library membership changes', () =>
+test("reload restores the virtual queue and song identity after library membership changes", () =>
   fixture(async (h) => {
     h.setDevice({
-      device_id: 'speaker',
+      device_id: "speaker",
       playlist_id: id,
       current_song_index: 0,
       resume_song_id: 3,
-      play_mode: 'random',
+      play_mode: "random",
       play_speed: 1.5,
     });
-    const manager = await h.map.getOrCreate('account', 'speaker');
+    const manager = await h.map.getOrCreate("account", "speaker");
     assert.deepEqual(
       manager.getSongs().map((s) => s.id),
       [1, 3],
     );
     assert.equal(manager.getStatus().current_song.id, 3);
-    assert.equal(manager.getStatus().play_mode, 'random');
+    assert.equal(manager.getStatus().play_mode, "random");
     assert.equal(manager.getPlaybackSpeed(), 1.5);
     assert.equal(h.pushes.length, 0);
     manager.cleanup();
   }));
 
-test('virtual playlist refuses member removal before any persistent write', () =>
+test("virtual playlist refuses member removal before any persistent write", () =>
   fixture(async (h) => {
     for (const from_library of [false, true]) {
-      const result = await h.request('POST /player/song/remove', {
+      const result = await h.request("POST /player/song/remove", {
         playlist_id: id,
         song_id: 1,
         from_library,
@@ -303,15 +314,15 @@ test('virtual playlist refuses member removal before any persistent write', () =
     assert.deepEqual(h.writes, []);
   }));
 
-test('schedule and voice lookup resolve the virtual identity and selected starting song', () =>
+test("schedule and voice lookup resolve the virtual identity and selected starting song", () =>
   fixture(async () => {
     const index = new IndexingManager();
     assert.equal((await index.getPlaylistByIdWithRefresh(id)).songCount, 2);
     assert.equal(
-      (await index.findPlaylistByNameWithRefresh('全部歌曲')).id,
+      (await index.findPlaylistByNameWithRefresh("全部歌曲")).id,
       id,
     );
-    assert.deepEqual(await index.findSongInPlaylist(id, '网络歌曲'), {
+    assert.deepEqual(await index.findSongInPlaylist(id, "网络歌曲"), {
       found: true,
       index: 1,
       songId: 3,
@@ -326,22 +337,22 @@ test('schedule and voice lookup resolve the virtual identity and selected starti
     });
   }));
 
-test('superseded library loads do not replace the current queue', () =>
+test("superseded library loads do not replace the current queue", () =>
   fixture(async (h) => {
     const manager = new PlaylistManager(
-      'account',
-      'speaker',
+      "account",
+      "speaker",
       h.service,
       h.config,
     );
-    manager.initWithSongs([tracks[0]], 0, 'order', 10);
+    manager.initWithSongs([tracks[0]], 0, "order", 10);
     let current = true;
     globalThis.songloft.songs.list = async () => {
       current = false;
       return tracks;
     };
     assert.equal(
-      await manager.play(id, 0, 'order', { isCurrent: () => current }),
+      await manager.play(id, 0, "order", { isCurrent: () => current }),
       false,
     );
     assert.deepEqual(

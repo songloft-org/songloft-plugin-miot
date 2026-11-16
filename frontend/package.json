@@ -1,21 +1,28 @@
 {
-  "name": "songloft-plugin-miot-frontend",
-  "version": "0.0.0",
+  "name": "miot-frontend",
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "build": "vite build",
-    "test": "node tests/run.mjs && node --test tests/*.test.mjs",
-    "preview": "vite preview",
-    "typecheck": "tsc --noEmit"
+    "build": "rspeedy build",
+    "typecheck": "tsc --noEmit",
+    "test": "node --test tests/*.test.mjs",
+    "postbuild": "node ../scripts/prepare-lynx-static.mjs"
   },
   "dependencies": {
-    "vue": "^3.5.13"
+    "@lynx-js/lynx-ui-input": "3.135.4",
+    "@lynx-js/lynx-ui-slider": "3.135.4",
+    "@lynx-js/react": "0.123.0",
+    "@songloft/lynx-plugin-sdk": "2.21.0",
+    "@vue/reactivity": "3.5.43",
+    "qrcode-generator": "^2.0.4"
   },
   "devDependencies": {
-    "@vitejs/plugin-vue": "^5.2.1",
-    "typescript": "^5.7.2",
-    "vite": "^6.1.0"
+    "@lynx-js/react-rsbuild-plugin": "0.18.2",
+    "@lynx-js/rspeedy": "0.16.0",
+    "@lynx-js/types": "^4.0.0",
+    "typescript": "~5.8.0"
+  },
+  "engines": {
+    "node": ">=22.14.0"
   }
 }

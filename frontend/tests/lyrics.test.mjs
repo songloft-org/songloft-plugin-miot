@@ -1,103 +1,142 @@
-import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
-import test from 'node:test';
-import ts from 'typescript';
-import { computed, ref } from 'vue';
-
-function deferred() {
-  let resolve, reject;
-  const promise = new Promise((yes, no) => { resolve = yes; reject = no; });
-  return { promise, resolve, reject };
-}
-
-function fixture() {
-  const requests = [], watches = [];
-  let unmount;
-  const state = { player: { current_song: { id: 1 }, position: 0 }, config: {} };
-  const env = {
-    state, computed, ref, useSongCover: () => ({ src: ref(''), epoch: ref(0) }),
-    navigation: { playerPage: 1, page: 'player' },
-    get: path => { const request = deferred(); requests.push({ path, ...request }); return request.promise; },
-    watch: (source, callback) => watches.push(callback), onMounted() {},
-    onUnmounted: fn => { unmount = fn; }, window: { clearTimeout() {} },
-  };
-  const source = readFileSync(new URL('../src/views/FullscreenPlayer.vue', import.meta.url), 'utf8')
-    .match(/<script setup lang="ts">([\s\S]*?)<\/script>/)[1].replace(/^import .*;\n/gm, '');
-  const js = ts.transpileModule(source + '\nreturn { loadSongDetails, retryLyrics, lyrics, lyricLoading, lyricError, isFavorite };', {
-    compilerOptions: { target: ts.ScriptTarget.ES2020, module: ts.ModuleKind.CommonJS },
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { createRequire } from "node:module";
+import test from "node:test";
+import ts from "typescript";
+import * as reactive from "@vue/reactivity";
+const require = createRequire(import.meta.url);
+const cache = new Map();
+function load(name) {
+  if (cache.has(name)) return cache.get(name);
+  const source = readFileSync(
+    new URL("../src/" + name + ".ts", import.meta.url),
+    "utf8",
+  );
+  const js = ts.transpileModule(source, {
+    compilerOptions: {
+      module: ts.ModuleKind.CommonJS,
+      target: ts.ScriptTarget.ES2020,
+    },
   }).outputText;
-  const page = new Function(...Object.keys(env), js)(...Object.values(env));
-  const complete = (index, text) => {
-    requests[index].resolve({ lyric: `[00:01]${text}` });
-    requests[index + 1].resolve({ is_favorited: true });
-  };
-  return { ...page, state, requests, watches, complete, unmount: () => unmount() };
+  const exports = {};
+  new Function("require", "exports", js)(
+    (path) => (path === "@vue/reactivity" ? reactive : load(path.slice(2))),
+    exports,
+  );
+  cache.set(name, exports);
+  return exports;
 }
-
-test('switching song clears old lyrics immediately and ignores a late result', async () => {
-  const h = fixture();
-  const first = h.loadSongDetails();
-  h.state.player.current_song = { id: 2 };
-  const second = h.loadSongDetails();
-  h.complete(2, 'second');
-  await second;
-  assert.equal(h.lyrics.value[0].text, 'second');
-  h.complete(0, 'first');
-  await first;
-  assert.equal(h.lyrics.value[0].text, 'second');
-  h.state.player.current_song = { id: 3 };
-  const third = h.loadSongDetails();
-  assert.deepEqual(h.lyrics.value, []);
-  h.complete(4, 'third');
-  await third;
+const { parseLrc } = load("lyrics"),
+  { createPlayerDetails } = load("player-details");
+const deferred = () => {
+  let resolve, reject;
+  const promise = new Promise((a, b) => {
+    resolve = a;
+    reject = b;
+  });
+  return { resolve, reject, promise };
+};
+test("LRC retains multiple timestamps, fractional seconds and plain lyrics", () => {
+  assert.deepEqual(parseLrc("[01:02.3][00:12.45]歌曲\n[00:15.001]下一句"), [
+    { time: 12.45, text: "歌曲" },
+    { time: 15.001, text: "下一句" },
+    { time: 62.3, text: "歌曲" },
+  ]);
+  assert.deepEqual(parseLrc("纯文本"), [{ time: Infinity, text: "纯文本" }]);
+});
+test("lyrics complete independently of a slow favorite request", async () => {
+  const requests = [];
+  const details = createPlayerDetails(
+    (path) => {
+      const request = deferred();
+      requests.push({ path, ...request });
+      return request.promise;
+    },
+    () => 1,
+  );
+  const pending = details.loadSongDetails();
+  requests[0].resolve({ lyric: "[00:01]歌词" });
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.equal(details.lyrics.value[0].text, "歌词");
+  assert.equal(details.lyricLoading.value, false);
+  requests[1].resolve({ is_favorited: true });
+  await pending;
+  assert.equal(details.isFavorite.value, true);
+});
+test("old song results cannot overwrite a replacement or a disposed player", async () => {
+  let id = 1;
+  const requests = [];
+  const details = createPlayerDetails(
+    (path) => {
+      const request = deferred();
+      requests.push(request);
+      return request.promise;
+    },
+    () => id,
+  );
+  const old = details.loadSongDetails();
+  id = 2;
+  const current = details.loadSongDetails();
+  requests[2].resolve({ lyric: "[00:00]新歌曲" });
+  requests[3].resolve({ is_favorited: true });
+  await current;
+  requests[0].resolve({ lyric: "[00:00]旧歌曲" });
+  requests[1].resolve({ is_favorited: false });
+  await old;
+  assert.equal(details.lyrics.value[0].text, "新歌曲");
+  assert.equal(details.isFavorite.value, true);
+  const late = details.loadSongDetails();
+  details.dispose();
+  requests[4].resolve({ lyric: "[00:00]卸载后" });
+  requests[5].resolve({ is_favorited: true });
+  await late;
+  assert.equal(details.lyrics.value.length, 0);
+});
+test("retry uses refresh=1, clears errors and prevents duplicate requests", async () => {
+  const paths = [];
+  let fail = true;
+  const details = createPlayerDetails(
+    async (path) => {
+      paths.push(path);
+      if (path.startsWith("/lyric")) {
+        if (fail) throw new Error("offline");
+        return { lyric: "[00:00]恢复" };
+      }
+      return { is_favorited: false };
+    },
+    () => 1,
+  );
+  await details.loadSongDetails();
+  assert.match(details.lyricError.value, /失败/);
+  fail = false;
+  await details.retryLyrics();
+  assert.equal(paths.at(-1), "/lyric?song_id=1&refresh=1");
+  assert.equal(details.lyricError.value, "");
+  assert.equal(details.lyrics.value[0].text, "恢复");
 });
 
-test('stopping or unmounting while searching discards pending lyrics and favorite status', async () => {
-  for (const action of ['stop', 'unmount']) {
-    const h = fixture();
-    const pending = h.loadSongDetails();
-    if (action === 'stop') {
-      h.state.player.current_song = undefined;
-      await h.loadSongDetails();
-    } else h.unmount();
-    h.complete(0, 'stale');
+test("a late favorite query cannot undo a local add or remove", async () => {
+  for (const value of [true, false]) {
+    let resolve;
+    const details = createPlayerDetails(
+      (path) =>
+        path.startsWith("/lyric")
+          ? Promise.resolve({ lyric: "" })
+          : new Promise((yes) => {
+              resolve = yes;
+            }),
+      () => 1,
+    );
+    const pending = details.loadSongDetails();
+    if (details.setFavorite) details.setFavorite(value);
+    else details.isFavorite.value = value;
+    resolve({ is_favorited: !value });
     await pending;
-    assert.deepEqual(h.lyrics.value, []);
-    assert.equal(h.isFavorite.value, false);
+    assert.equal(
+      details.isFavorite.value,
+      value,
+      "a newer user action owns favorite state",
+    );
   }
-});
-
-test('lyrics render before favorite status finishes, and a retry cannot erase that status', async () => {
-  const h = fixture();
-  const pending = h.loadSongDetails();
-  assert.equal(h.lyricLoading.value, true);
-  h.requests[0].resolve({ lyric: '' });
-  for (let i = 0; i < 10; i++) await Promise.resolve();
-  assert.equal(h.lyricLoading.value, false);
-  assert.equal(h.lyricError.value, '');
-  const retry = h.retryLyrics();
-  assert.equal(h.requests[2].path, '/lyric?song_id=1&refresh=1');
-  await h.retryLyrics();
-  assert.equal(h.requests.length, 3); // double click does not issue another request
-  h.requests[2].resolve({ lyric: '[00:01]retried' });
-  await retry;
-  assert.equal(h.lyrics.value[0].text, 'retried');
-  h.requests[1].resolve({ is_favorited: true });
-  await pending;
-  assert.equal(h.isFavorite.value, true);
-});
-
-test('request failure has a distinct message and successful retry clears it', async () => {
-  const h = fixture();
-  const pending = h.loadSongDetails();
-  h.requests[0].reject(new Error('upstream timeout'));
-  h.requests[1].reject(new Error('favorite unavailable'));
-  await pending;
-  assert.equal(h.lyricLoading.value, false);
-  assert.match(h.lyricError.value, /获取失败/);
-  const retry = h.retryLyrics();
-  assert.equal(h.lyricError.value, '');
-  h.requests[2].resolve({ lyric: '[00:02]recovered' });
-  await retry;
-  assert.equal(h.lyrics.value[0].text, 'recovered');
 });

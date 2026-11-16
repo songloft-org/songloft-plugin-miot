@@ -46,7 +46,8 @@ export const AI_PRESET_PROVIDERS: AIPresetProvider[] = [
     baseUrl: 'https://ark.cn-beijing.volces.com/api/v3',
     defaultModel: 'doubao-seed-1-6',
     websiteUrl: 'https://www.volcengine.com',
-    apiKeyUrl: 'https://console.volcengine.com/ark/region:ark+cn-beijing/apiKey',
+    apiKeyUrl:
+      'https://console.volcengine.com/ark/region:ark+cn-beijing/apiKey',
   },
   {
     id: 'moonshot',
@@ -62,7 +63,8 @@ export const AI_PRESET_PROVIDERS: AIPresetProvider[] = [
     baseUrl: 'https://api.minimax.chat/v1',
     defaultModel: 'abab6.5s-chat',
     websiteUrl: 'https://www.minimax.chat',
-    apiKeyUrl: 'https://platform.minimaxi.com/user-center/basic-information/interface-key',
+    apiKeyUrl:
+      'https://platform.minimaxi.com/user-center/basic-information/interface-key',
   },
   {
     id: 'hunyuan',

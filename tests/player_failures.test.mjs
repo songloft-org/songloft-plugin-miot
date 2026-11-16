@@ -1,25 +1,41 @@
-import { loader as dependencyLoader } from './chat_loader.mjs';
+import { loader as dependencyLoader } from "./chat_loader.mjs";
 const loadDependency = dependencyLoader();
-import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
-import { createRequire } from 'node:module';
-import test from 'node:test';
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { createRequire } from "node:module";
+import test from "node:test";
 
 const require = createRequire(import.meta.url);
-const ts = require('typescript');
+const ts = require("typescript");
 
 function loadSource(path, dependencies) {
-  const source = readFileSync(new URL(path, import.meta.url), 'utf8');
+  const source = readFileSync(new URL(path, import.meta.url), "utf8");
   const { outputText } = ts.transpileModule(source, {
-    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 },
+    compilerOptions: {
+      module: ts.ModuleKind.CommonJS,
+      target: ts.ScriptTarget.ES2020,
+    },
   });
   const exports = {};
-  new Function('require', 'exports', outputText)(name => {
-    if (name === './library_playlist' || name === '../player/library_playlist') {
-      return loadSource('../src/player/library_playlist.ts', {});
+  new Function("require", "exports", outputText)((name) => {
+    if (name === "./playlist_page") {
+      return {
+        playlistPage: async () =>
+          assert.fail("pagination is covered by playlist_page.test.mjs"),
+      };
     }
-    if (name.endsWith('/song_match')) return loadDependency('../src/indexing/song_match.ts');
-    assert.ok(Object.hasOwn(dependencies, name), `unexpected dependency: ${name}`);
+    if (
+      name === "./library_playlist" ||
+      name === "../player/library_playlist"
+    ) {
+      return loadSource("../src/player/library_playlist.ts", {});
+    }
+    if (name.endsWith("/song_match"))
+      return loadDependency("../src/indexing/song_match.ts");
+    assert.ok(
+      Object.hasOwn(dependencies, name),
+      `unexpected dependency: ${name}`,
+    );
     return dependencies[name];
   }, exports);
   return exports;

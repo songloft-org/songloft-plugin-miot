@@ -7,7 +7,7 @@ This is the development entry point for `songloft-org/songloft-plugin-miot`, cov
 - This is a separate Git repository, located at `plugins/src/songloft-plugin-miot/` in the parent workspace. Commit to this repository's `main`.
 - Maintain plugin business and troubleshooting knowledge here. Shared host capabilities, the Go backend, and cross-repository conventions belong in the [parent AGENTS.md](https://github.com/songloft-org/songloft/blob/main/AGENTS.en.md).
 - `src/player/manager.ts` owns playback state, automatic transitions, and grouped targets; `src/handlers/playlist.ts` merges HTTP/WS status; `src/playback/voice_resume.ts` restores playback after voice interruptions; `src/mina/client.ts` handles cloud device requests, shared samples, and backoff.
-- `frontend/` is a Vue + TypeScript interface built into `static/`. `plugin.json` defines the manifest; the final `dist/miot.jsplugin.zip` includes QuickJS bytecode.
+- `frontend/` is a ReactLynx + TypeScript interface built into `static/`. `plugin.json` defines the manifest; the final `dist/miot.jsplugin.zip` includes QuickJS bytecode.
 - Keep this file and `AGENTS.md` synchronized in content and structure. Use Conventional Commits, prefer Chinese descriptions, and omit `Co-Authored-By`.
 - Commit messages may use `#124` for local issues; parent issues require the full reference, such as `songloft-org/songloft#495`. Commit the subrepository before updating its pointer in the parent; the server and plugin upgrade independently.
 
@@ -181,3 +181,7 @@ The Node 22 type-stripping flag is required for tests that import TS directly. B
 
 Keep this matrix synchronized with the Chinese version. Named plugin tests use `tests/<name>.test.mjs`.
 The parent server and plugin upgrade independently; acceptance records must include both versions and the commits actually installed.
+
+## Lynx frontend contract
+
+Native JSX lives in `frontend/src/App.tsx` and `views/`; `page-state.tsx` adapts observable domain actions to React lifecycles. Use `ui/native.tsx` primitives, never browser globals. Native text drafts must not echo stale background renders into focused editors. Socket ownership, authentication, external URLs and back handling belong to the host. Run frontend typecheck/tests, dual build, and the Docker browser matrix/interaction/player scripts described in [verification](docs/en/lynx-migration.md).

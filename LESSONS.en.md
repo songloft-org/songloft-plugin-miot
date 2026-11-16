@@ -10,6 +10,27 @@ Include rule, scope, full owner/repo#number, failure/fix commit SHAs, actual val
 
 ## Entries
 
+### MIOT-033: verify generated entries, native text and actual nested frames during Lynx migration
+
+- Scope: baseline `fc46bdc5a717840780d8bef6a26d3079ed2ac6b3` plus this uncommitted full frontend migration.
+- Evidence: stale static/index replaced the generated entry; conditional useContext broke Hook order; controlled textarea echoes dropped fast input; fonts that appeared correct in HTML fallback were missing inside the actual client frame. Removing local-draft protection in an isolated negative check produced two expected failures.
+- Rule and Done right: preserve the builder entry, keep focused text drafts native and call Hooks unconditionally. Use native SVG icons. Exercise both fallback and actual nested frames after builds; persisted readback/request arguments prove actions, screenshots prove rendering only. The [record](docs/en/lynx-migration.md) covers 36 layouts, real schedule CRUD/multiline/back and thousand-item/player fixtures.
+- Seen 1× (2026-11-16). Uncommitted/unreleased; real speakers and native UI limits are explicit in the record.
+
+- Same-day follow-up: the user reported visual drift and slow first opening. Build the baseline Vue UI as the reference, then restore the sidebar, cards, buttons, song table and player; the device card's position and dimensions differ by at most 1px at widths 390/1100. Do not gate the entire shell on configuration: a held config request must leave the shell visible and configuration-dependent controls disabled. The parent host compresses full bundle GET responses while preserving Range/HEAD/304. See the verification record. Passing functional scenarios does not establish visual fidelity; compare actual rendering with the original. This is the same incident and does not increment Seen.
+
+- Same-day native follow-up: mobile settings/fullscreen failures reproduced on Android API 34 / Lynx 4.0. Web checks cannot replace native acceptance. Conditionally render pages/category navigation/cover-lyrics branches and prevent paint artifacts in retained hidden panels; set native dynamic backgrounds directly. Portal overlays out of scroll/player parents, order selectors/confirmations explicitly and inspect actual hit targets. The previous package failed the overlay-parent regression; Android taps/back/swipes and screenshot pixel checks confirmed content, background and confirmation recovery. See the migration record. This remains the same incident and does not increment Seen.
+
+- Same-day positioning follow-up: verify native overlay paint positions and actual tap requests. Use root-relative absolute cards inside fixed masks; portal/flatten alone do not fix hit coordinates. Normalize native vertical-drag touch/measurement coordinates for host offset; final Android commands verify volumes 60/80 and second-playlist resume arguments. Keep resume in a stable context row and update SVG colors on theme pushes. Negative regressions catch late song refill after clearing and input before focus in the old implementations. See the migration record; this remains the same incident without incrementing Seen.
+
+- Same-day cover follow-up: coverless fixtures only verify placeholders. On Android the same PNG rendered in the list but stayed gray in fullscreen despite successful image bytes. Keep the large-cover shadow and inline dimensions on an outer view with a class-sized inner image; four native pixels now match the source exactly. Preserve data/signed URLs and start concurrency watchdogs after a slot is granted. All five targeted checks fail against the previous Cover; the current 92 tests pass. See the migration record; this does not increment Seen.
+
+- Same-day actual-host follow-up: an updated isolated host cannot establish compatibility with the user’s older Docker. Missing resourceUrl left all 30 actual rows coverless. With explicit authorization, commit the host and retain direct images, removing the temporary Base64 relay. Wait for menu placement before first paint; virtual rendering is not network pagination. Use aggregate counts, 100-song pages and server search, rejecting late pages by generation. See the latest migration record; this does not increment Seen.
+
+- Same-day settings follow-up: SlInput must forward style/className; spacing at call sites alone is insufficient. Stack DLNA text fields and bound picker height by device count. Verify favorite fill pixels and add/remove state, not only requests. Browser x-input uses display:contents, so measure the real editor inside its shadow root. Wait for expanded state and the theme class before layout checks; a short fixed delay does not establish expanded/dark coverage. See the migration record; this is the same incident without incrementing Seen.
+
+- Same-day SDK delivery follow-up: configure Trusted Publisher per npm package. After a tag/Release succeeds, verify the registry version and a real install before pinning the lockfile/removing adapters. After user configuration, the same v2.21.0 tag recovered successfully; miot passes 101/1499 checks, real socket hide/resume and nested-frame rechecks. See the latest record; this does not increment Seen.
+
 ### MIOT-032: Voice song matching must separate candidate quality from source priority
 
 - Scope: [songloft-org/songloft#569](https://github.com/songloft-org/songloft/issues/569); plugin baseline `48413d6abc2a34e8094bca3ec2f80457365b5abd`.

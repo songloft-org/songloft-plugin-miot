@@ -6,7 +6,12 @@ import { VoiceDispatcher } from './voicecmd/dispatcher';
 import { chatBody, registerChatHandlers } from './handlers/chat';
 import { WS_CHAT_PATH, handleChatWebSocket } from './ws/chat-stream';
 import { createRouter, parseQuery } from '@songloft/plugin-sdk';
-import type { HTTPRequest, HTTPResponse, WebSocketRequest, InboundWebSocket } from '@songloft/plugin-sdk';
+import type {
+  HTTPRequest,
+  HTTPResponse,
+  WebSocketRequest,
+  InboundWebSocket,
+} from '@songloft/plugin-sdk';
 import { ConfigManager } from './config/manager';
 import { AccountManager } from './account/manager';
 import { AuthService } from './auth/service';
@@ -39,8 +44,16 @@ import { registerGroupHandlers } from './handlers/group';
 import { registerSearchProviderComm } from './handlers/search_registry';
 import { setHostBaseUrl } from './utils/http';
 import { setDebugLog } from './utils/debug';
-import { initStatusStream, handleStatusWebSocket, WS_STATUS_PATH } from './ws/status-stream';
-import { initConversationStream, handleConversationWebSocket, WS_CONVERSATION_PATH } from './ws/conversation-stream';
+import {
+  initStatusStream,
+  handleStatusWebSocket,
+  WS_STATUS_PATH,
+} from './ws/status-stream';
+import {
+  initConversationStream,
+  handleConversationWebSocket,
+  WS_CONVERSATION_PATH,
+} from './ws/conversation-stream';
 
 const router = createRouter();
 
@@ -51,22 +64,36 @@ async function warnIfServerHostStale(serverHost: string): Promise<void> {
     const host = (serverHost || '').trim().toLowerCase();
     if (!host) return;
     // 回环由设置页 status 单独提示，这里只查「失效但非回环」的旧地址
-    if (host.startsWith('http://localhost') || host.startsWith('http://127.')) return;
+    if (host.startsWith('http://localhost') || host.startsWith('http://127.'))
+      return;
 
     const localAddrs = await songloft.plugin.getNetworkAddresses();
     // Older hosts and Docker-only network namespaces may return null when no
     // non-Docker interface is available. This diagnostic must never block init.
     if (!Array.isArray(localAddrs)) {
-      songloft.log.warn('[URLBuilder] server_host 失效自检跳过（本机没有可用网卡地址）');
+      songloft.log.warn(
+        '[URLBuilder] server_host 失效自检跳过（本机没有可用网卡地址）',
+      );
       return;
     }
-    const validAddrs = localAddrs.filter((addr): addr is string => typeof addr === 'string');
+    const validAddrs = localAddrs.filter(
+      (addr): addr is string => typeof addr === 'string',
+    );
     const norm = (s: string) => s.trim().toLowerCase().replace(/\/$/, '');
-    if (!validAddrs.some(a => norm(a) === norm(host))) {
-      songloft.log.warn('[URLBuilder] server_host=' + serverHost + ' 不在当前本机网卡地址中（' + validAddrs.join(', ') + '）；服务器可能已更换 IP 或音箱不在同一网段，音箱将无法访问，请在设置页重新选择地址');
+    if (!validAddrs.some((a) => norm(a) === norm(host))) {
+      songloft.log.warn(
+        '[URLBuilder] server_host=' +
+          serverHost +
+          ' 不在当前本机网卡地址中（' +
+          validAddrs.join(', ') +
+          '）；服务器可能已更换 IP 或音箱不在同一网段，音箱将无法访问，请在设置页重新选择地址',
+      );
     }
   } catch (e) {
-    songloft.log.warn('[URLBuilder] server_host 失效自检失败（无法获取本机网卡地址）: ' + String(e));
+    songloft.log.warn(
+      '[URLBuilder] server_host 失效自检失败（无法获取本机网卡地址）: ' +
+        String(e),
+    );
   }
 }
 
@@ -98,10 +125,18 @@ async function onInit(): Promise<void> {
   authService = new AuthService(configManager, accountManager);
   minaService = new MinaService(accountManager, configManager);
   playlistManagerMap = new PlaylistManagerMap(minaService, configManager);
-  groupCoordinator = new GroupCoordinator(playlistManagerMap, minaService, configManager);
+  groupCoordinator = new GroupCoordinator(
+    playlistManagerMap,
+    minaService,
+    configManager,
+  );
   // 加载分组快照，使 PlaylistManagerMap 能同步把分组设备解析到共享 manager（多房间共用一套播放列表）
   await playlistManagerMap.refreshGroups();
-  dlnaReceiver = new DLNAReceivers(configManager, minaService, playlistManagerMap);
+  dlnaReceiver = new DLNAReceivers(
+    configManager,
+    minaService,
+    playlistManagerMap,
+  );
   await dlnaReceiver.init();
   memoryService = new MemoryService();
 
@@ -112,7 +147,9 @@ async function onInit(): Promise<void> {
   const pluginConfig = await configManager.getConfig();
   if (pluginConfig.server_host) {
     setHostBaseUrl(pluginConfig.server_host);
-    songloft.log.info('音箱播放 URL 基础地址已设置: ' + pluginConfig.server_host);
+    songloft.log.info(
+      '音箱播放 URL 基础地址已设置: ' + pluginConfig.server_host,
+    );
     await warnIfServerHostStale(pluginConfig.server_host);
   }
 
@@ -123,13 +160,47 @@ async function onInit(): Promise<void> {
   // 注入对话推送依赖（WebSocket 订阅端点 /conversation/ws 使用）
   initConversationStream(conversationMonitor);
   const aiClient = new AIClient();
-  voiceEngine = new VoiceEngine(configManager, accountManager, minaService, playlistManagerMap, indexingManager, new AIAnalyzer((run, current, scope) => aiClient.foregroundRequest(run, current, scope)), memoryService, groupCoordinator);
+  voiceEngine = new VoiceEngine(
+    configManager,
+    accountManager,
+    minaService,
+    playlistManagerMap,
+    indexingManager,
+    new AIAnalyzer((run, current, scope) =>
+      aiClient.foregroundRequest(run, current, scope),
+    ),
+    memoryService,
+    groupCoordinator,
+  );
 
-  const playback = new PlaybackCoordinator(playlistManagerMap, minaService, configManager);
-  aiChat = new AIChatService(configManager, playback, new SpeechService(minaService), aiClient);
-  voiceDispatcher = new VoiceDispatcher(configManager, voiceEngine, aiChat, playback);
+  const playback = new PlaybackCoordinator(
+    playlistManagerMap,
+    minaService,
+    configManager,
+  );
+  aiChat = new AIChatService(
+    configManager,
+    playback,
+    new SpeechService(minaService),
+    aiClient,
+  );
+  voiceDispatcher = new VoiceDispatcher(
+    configManager,
+    voiceEngine,
+    aiChat,
+    playback,
+  );
 
-  const executor = new TaskExecutor(configManager, accountManager, minaService, playlistManagerMap, indexingManager, conversationMonitor, groupCoordinator, voiceEngine);
+  const executor = new TaskExecutor(
+    configManager,
+    accountManager,
+    minaService,
+    playlistManagerMap,
+    indexingManager,
+    conversationMonitor,
+    groupCoordinator,
+    voiceEngine,
+  );
   scheduler = new Scheduler(configManager, executor);
 
   // 如果配置中没有语音口令配置，写入默认配置；已有配置时补充新增的默认口令类型
@@ -137,28 +208,62 @@ async function onInit(): Promise<void> {
   if (!existingCommands || existingCommands.length === 0) {
     const defaultCommands = getDefaultVoiceCommands();
     await configManager.saveVoiceCommands(defaultCommands);
-    songloft.log.info(`[VoiceCmd] Initialized ${defaultCommands.length} default voice commands`);
+    songloft.log.info(
+      `[VoiceCmd] Initialized ${defaultCommands.length} default voice commands`,
+    );
   } else {
     const defaultCommands = getDefaultVoiceCommands();
-    const existingTypes = new Set(existingCommands.map(c => c.type + (c.param || '')));
-    const missing = defaultCommands.filter(c => !existingTypes.has(c.type + (c.param || '')));
+    const existingTypes = new Set(
+      existingCommands.map((c) => c.type + (c.param || '')),
+    );
+    const missing = defaultCommands.filter(
+      (c) => !existingTypes.has(c.type + (c.param || '')),
+    );
     if (missing.length > 0) {
       const merged = [...existingCommands, ...missing];
       await configManager.saveVoiceCommands(merged);
-      songloft.log.info(`[VoiceCmd] Merged ${missing.length} new default voice commands: ${missing.map(c => c.type).join(', ')}`);
+      songloft.log.info(
+        `[VoiceCmd] Merged ${missing.length} new default voice commands: ${missing.map((c) => c.type).join(', ')}`,
+      );
     }
   }
 
   // 注册所有路由
   registerAccountHandlers(router, accountManager, authService);
   registerAuthHandlers(router, authService, accountManager);
-  registerDeviceHandlers(router, minaService, accountManager, conversationMonitor, groupCoordinator);
-  registerPlaylistHandlers(router, playlistManagerMap, minaService, configManager);
-  registerConfigHandlers(router, configManager, conversationMonitor, scheduler, voiceEngine, memoryService);
+  registerDeviceHandlers(
+    router,
+    minaService,
+    accountManager,
+    conversationMonitor,
+    groupCoordinator,
+  );
+  registerPlaylistHandlers(
+    router,
+    playlistManagerMap,
+    minaService,
+    configManager,
+  );
+  registerConfigHandlers(
+    router,
+    configManager,
+    conversationMonitor,
+    scheduler,
+    voiceEngine,
+    memoryService,
+  );
   registerConversationHandlers(router, conversationMonitor, configManager);
   registerScheduleHandlers(router, scheduler, configManager);
-  registerVoiceCommandHandlers(router, configManager, accountManager, voiceEngine, voiceDispatcher);
-  registerChatHandlers(router, configManager, aiChat, config => conversationMonitor.setChatEnabled(config.enabled));
+  registerVoiceCommandHandlers(
+    router,
+    configManager,
+    accountManager,
+    voiceEngine,
+    voiceDispatcher,
+  );
+  registerChatHandlers(router, configManager, aiChat, (config) =>
+    conversationMonitor.setChatEnabled(config.enabled),
+  );
   registerIndexingHandlers(router, indexingManager);
   registerMemoryHandlers(router, memoryService, configManager);
   registerLyricHandlers(router);
@@ -168,25 +273,30 @@ async function onInit(): Promise<void> {
   registerSearchProviderComm(configManager);
 
   // 自动登录 + 启动后台服务（异步，不阻塞插件初始化）
-  authService.autoLoginAll().catch(e => {
+  authService.autoLoginAll().catch((e) => {
     songloft.log.error('autoLoginAll failed: ' + String(e));
   });
   // 异步刷新索引，不阻塞插件初始化
   setTimeout(() => {
-    indexingManager.refresh().then(async () => {
-      // 必须等歌单歌曲缓存加载完再恢复：临时歌手歌单靠 findSongsByArtist 重建，
-      // 而 refresh() resolve 时缓存还在后台加载，结果必然为空——旧代码因此永远恢复不了，
-      // 还会把 pendingTempArtist 清空（songloft-org/songloft-plugin-miot#62）。
-      // 不在语音热路径上，等待预算给大。索引本身没建起来（宿主 API 不可用）时不必白等。
-      if (indexingManager.isIndexReady()) {
-        await indexingManager.waitForPlaylistCache(30_000);
-      }
-      await playlistManagerMap.restoreTempPlaylists(indexingManager).catch(e => {
-        songloft.log.warn('restoreTempPlaylists failed: ' + String(e));
+    indexingManager
+      .refresh()
+      .then(async () => {
+        // 必须等歌单歌曲缓存加载完再恢复：临时歌手歌单靠 findSongsByArtist 重建，
+        // 而 refresh() resolve 时缓存还在后台加载，结果必然为空——旧代码因此永远恢复不了，
+        // 还会把 pendingTempArtist 清空（songloft-org/songloft-plugin-miot#62）。
+        // 不在语音热路径上，等待预算给大。索引本身没建起来（宿主 API 不可用）时不必白等。
+        if (indexingManager.isIndexReady()) {
+          await indexingManager.waitForPlaylistCache(30_000);
+        }
+        await playlistManagerMap
+          .restoreTempPlaylists(indexingManager)
+          .catch((e) => {
+            songloft.log.warn('restoreTempPlaylists failed: ' + String(e));
+          });
+      })
+      .catch((e) => {
+        songloft.log.error('indexingManager.refresh failed: ' + String(e));
       });
-    }).catch(e => {
-      songloft.log.error('indexingManager.refresh failed: ' + String(e));
-    });
   }, 100);
 
   // 注册 VoiceEngine 回调（独立于启停生命周期）
@@ -199,7 +309,7 @@ async function onInit(): Promise<void> {
     scheduler.start();
   }
   if (pluginConfig.conversation_monitor_enabled) {
-    conversationMonitor.start().catch(e => {
+    conversationMonitor.start().catch((e) => {
       songloft.log.error('conversationMonitor.start failed: ' + String(e));
     });
   }
@@ -230,7 +340,11 @@ async function onDeinit(): Promise<void> {
 // 直接返回对象会变成 Go 的 map 文本（map[busy:true ...]），后端解析不出来。
 async function onQueryBusy(): Promise<string> {
   try {
-    const reason = aiChat?.busyReason() || dlnaReceiver?.busyReason() || playlistManagerMap?.busyReason() || '';
+    const reason =
+      aiChat?.busyReason() ||
+      dlnaReceiver?.busyReason() ||
+      playlistManagerMap?.busyReason() ||
+      '';
     return JSON.stringify({ busy: reason !== '', reason });
   } catch (e) {
     // 探测本身出错时按空闲处理，不能因为探测失败就永久阻塞更新
@@ -240,19 +354,58 @@ async function onQueryBusy(): Promise<string> {
 }
 
 async function onHTTPRequest(req: HTTPRequest): Promise<HTTPResponse> {
-  if (req.method !== 'GET' && (req.path.startsWith('/player/') || req.path.startsWith('/mina/') || req.path.startsWith('/dlna/'))) {
-    try { const input = { ...parseQuery(req.query), ...chatBody(req) }; if (typeof input.account_id === 'string' && typeof input.device_id === 'string') voiceDispatcher.invalidateDevice(input.account_id, input.device_id); } catch { }
+  // Lynx host bridge routes are scoped under /api; preserve existing plugin URLs.
+  if (req.path.startsWith('/api/')) req = { ...req, path: req.path.slice(4) };
+
+  if (
+    req.method !== 'GET' &&
+    (req.path.startsWith('/player/') ||
+      req.path.startsWith('/mina/') ||
+      req.path.startsWith('/dlna/'))
+  ) {
+    try {
+      const input = { ...parseQuery(req.query), ...chatBody(req) };
+      if (
+        typeof input.account_id === 'string' &&
+        typeof input.device_id === 'string'
+      )
+        voiceDispatcher.invalidateDevice(input.account_id, input.device_id);
+    } catch {}
   }
-  if (req.path === '/receiver/config' || req.path.startsWith('/dlna/')) return dlnaReceiver.handle(req);
-  if (req.method !== 'GET' && (req.path.startsWith('/groups') || req.path.startsWith('/account') || req.path === '/config' || req.path.includes('/managed'))) { await aiChat.cancelAll(); voiceDispatcher.invalidate(); aiChat.configurationChanged(); }
+  if (req.path === '/receiver/config' || req.path.startsWith('/dlna/'))
+    return dlnaReceiver.handle(req);
+  if (
+    req.method !== 'GET' &&
+    (req.path.startsWith('/groups') ||
+      req.path.startsWith('/account') ||
+      req.path === '/config' ||
+      req.path.includes('/managed'))
+  ) {
+    await aiChat.cancelAll();
+    voiceDispatcher.invalidate();
+    aiChat.configurationChanged();
+  }
   const response = await router.handle(req);
-  if (req.method !== 'GET' && (response.statusCode ?? 200) < 400 && (req.path.startsWith('/groups') || req.path.startsWith('/account') || req.path.includes('/managed'))) await dlnaReceiver.refresh();
+  if (
+    req.method !== 'GET' &&
+    (response.statusCode ?? 200) < 400 &&
+    (req.path.startsWith('/groups') ||
+      req.path.startsWith('/account') ||
+      req.path.includes('/managed'))
+  )
+    await dlnaReceiver.refresh();
   return response;
 }
 
 // 入站 WebSocket：播放状态推送订阅（/status/ws）+ 对话记录推送订阅（/conversation/ws）
-async function onWebSocket(req: WebSocketRequest, socket: InboundWebSocket): Promise<void> {
-  if (req.path === WS_CHAT_PATH) { await handleChatWebSocket(req, socket, configManager, aiChat); return; }
+async function onWebSocket(
+  req: WebSocketRequest,
+  socket: InboundWebSocket,
+): Promise<void> {
+  if (req.path === WS_CHAT_PATH) {
+    await handleChatWebSocket(req, socket, configManager, aiChat);
+    return;
+  }
   if (req.path === WS_STATUS_PATH) {
     await handleStatusWebSocket(req, socket);
     return;

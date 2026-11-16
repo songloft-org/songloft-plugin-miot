@@ -1,18 +1,28 @@
-import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
-import { createRequire } from 'node:module';
-import test from 'node:test';
-import { setImmediate as settle } from 'node:timers/promises';
-import vm from 'node:vm';
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { createRequire } from "node:module";
+import test from "node:test";
+import { setImmediate as settle } from "node:timers/promises";
+import vm from "node:vm";
 
 const require = createRequire(import.meta.url);
-const ts = require('typescript');
-const source = readFileSync(new URL('../src/store.ts', import.meta.url), 'utf8');
+const ts = require("typescript");
+const source = readFileSync(
+  new URL("../src/store.ts", import.meta.url),
+  "utf8",
+);
 const { outputText } = ts.transpileModule(source, {
-  compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 },
+  compilerOptions: {
+    module: ts.ModuleKind.CommonJS,
+    target: ts.ScriptTarget.ES2020,
+  },
 });
 
-function statusStore({ get = async () => ({ position: 42 }), webSocket = true } = {}) {
+function statusStore({
+  get = async () => ({ position: 42 }),
+  webSocket = true,
+  paged = false,
+} = {}) {
   const document = new EventTarget();
   document.hidden = false;
   const window = new EventTarget();
@@ -20,45 +30,117 @@ function statusStore({ get = async () => ({ position: 42 }), webSocket = true } 
   const requests = [];
   const timers = new Map();
   let timerId = 0;
+  let push = () => {};
   class Socket {
     OPEN = 1;
     CLOSED = 3;
     readyState = 0;
-    constructor() { sockets.push(this); }
+    constructor() {
+      sockets.push(this);
+    }
     close(code, reason) {
       this.closeArgs = [code, reason];
       this.readyState = this.CLOSED;
     }
     send() {}
-    open() { this.readyState = this.OPEN; this.onopen(); }
-    status(position) { this.onmessage({ data: JSON.stringify({ type: 'status', data: { position } }) }); }
+    open() {
+      this.readyState = this.OPEN;
+      this.onopen();
+    }
+    status(position) {
+      this.onmessage({
+        data: JSON.stringify({ type: "status", data: { position } }),
+      });
+    }
   }
   const context = {
-    exports: {}, document, window, console,
+    exports: {},
+    URLSearchParams,
+    document,
+    window,
+    console,
     WebSocket: webSocket ? Socket : undefined,
-    setTimeout: (fn, delay) => { const id = ++timerId; timers.set(id, { fn, delay, interval: false }); return id; },
-    setInterval: (fn, delay) => { const id = ++timerId; timers.set(id, { fn, delay, interval: true }); return id; },
-    clearTimeout: id => timers.delete(id),
-    clearInterval: id => timers.delete(id),
-    require: name => {
-      if (name === 'vue') return { reactive: value => value, computed: fn => ({ get value() { return fn(); } }) };
-      if (name === './api') return {
-        get: path => { requests.push(path); return get(path); },
-        query: () => '', pluginWebSocketUrl: path => path, messageOf: String,
-      };
+    setTimeout: (fn, delay) => {
+      const id = ++timerId;
+      timers.set(id, { fn, delay, interval: false });
+      return id;
+    },
+    setInterval: (fn, delay) => {
+      const id = ++timerId;
+      timers.set(id, { fn, delay, interval: true });
+      return id;
+    },
+    clearTimeout: (id) => timers.delete(id),
+    clearInterval: (id) => timers.delete(id),
+    require: (name) => {
+      if (name === "@songloft/lynx-plugin-sdk")
+        return {
+          onPush: (callback) => {
+            push = callback;
+            return () => {
+              push = () => {};
+            };
+          },
+        };
+      if (name === "./socket")
+        return { PluginSocket: webSocket ? Socket : undefined };
+      if (name === "@vue/reactivity")
+        return {
+          reactive: (value) => value,
+          computed: (fn) => ({
+            get value() {
+              return fn();
+            },
+          }),
+        };
+      if (name === "./api")
+        return {
+          get: (path) => {
+            requests.push(path);
+            return get(path);
+          },
+          query: (values) =>
+            paged ? "?" + new URLSearchParams(values).toString() : "",
+          pluginWebSocketUrl: (path) => path,
+          messageOf: String,
+        };
       throw new Error(`unexpected dependency: ${name}`);
     },
   };
   vm.runInNewContext(outputText, context);
   const store = context.exports;
-  store.state.currentAccountId = 'account';
-  store.state.currentDeviceId = 'device';
-  const visible = () => document.dispatchEvent(new Event('visibilitychange'));
-  const online = () => window.dispatchEvent(new Event('online'));
+  store.state.currentAccountId = "account";
+  store.state.currentDeviceId = "device";
+  const visible = () =>
+    push(
+      "lifecycle",
+      JSON.stringify({ state: document.hidden ? "paused" : "resumed" }),
+    );
+  const online = visible;
   return { store, document, sockets, requests, timers, visible, online };
 }
 
-test('returning to a visible page replaces a silently dead OPEN socket and fetches a snapshot', async () => {
+test("clearing a playlist invalidates pending songs and progress", async () => {
+  let songs, progress;
+  const s = statusStore({
+    get: (path) =>
+      new Promise((resolve) => {
+        if (path.endsWith("/songs")) songs = resolve;
+        else progress = resolve;
+      }),
+  });
+  const pending = s.store.selectPlaylist("1");
+  await s.store.selectPlaylist("");
+  songs([{ id: 1 }]);
+  progress({ song_id: 1 });
+  await pending;
+  await settle();
+  assert.equal(s.store.state.selectedPlaylistId, "");
+  assert.equal(s.store.state.songs.length, 0);
+  assert.equal(s.store.state.playlistProgress, null);
+  assert.equal(s.store.state.songsLoading, false);
+});
+test("returning to a visible page replaces a silently dead OPEN socket and fetches a snapshot", async () => {
   const s = statusStore();
   s.store.connectStatusStream();
   s.sockets[0].open();
@@ -67,7 +149,7 @@ test('returning to a visible page replaces a silently dead OPEN socket and fetch
   s.visible();
   await settle();
   assert.equal(s.sockets.length, 2);
-  assert.deepEqual(s.sockets[0].closeArgs, [1000, 'client']);
+  assert.deepEqual(s.sockets[0].closeArgs, [1000, "client"]);
   assert.equal(s.store.state.statusConnected, false);
   assert.equal(s.requests.length, 1);
   assert.equal(s.store.state.player.position, 42);
@@ -83,7 +165,7 @@ test('returning to a visible page replaces a silently dead OPEN socket and fetch
   assert.equal(s.timers.size, 0);
 });
 
-test('hidden notifications do not restart the connection; coming online while visible does', async () => {
+test("hidden notifications do not restart the connection; coming online while visible does", async () => {
   const s = statusStore();
   s.store.connectStatusStream();
   s.document.hidden = true;
@@ -98,20 +180,30 @@ test('hidden notifications do not restart the connection; coming online while vi
   assert.equal(s.store.state.player.position, 42);
 });
 
-test('foreground recovery cancels pending backoff and ignores old error/close events', async () => {
+test("foreground recovery cancels pending backoff and ignores old error/close events", async () => {
   const s = statusStore();
   s.store.connectStatusStream();
   s.sockets[0].onerror();
-  assert.equal([...s.timers.values()].filter(timer => !timer.interval && timer.delay === 1000).length, 1);
+  assert.equal(
+    [...s.timers.values()].filter(
+      (timer) => !timer.interval && timer.delay === 1000,
+    ).length,
+    1,
+  );
   s.visible();
   await settle();
   s.sockets[0].onclose();
-  assert.equal([...s.timers.values()].filter(timer => !timer.interval && timer.delay === 1000).length, 0);
+  assert.equal(
+    [...s.timers.values()].filter(
+      (timer) => !timer.interval && timer.delay === 1000,
+    ).length,
+    0,
+  );
   s.sockets[1].open();
   assert.equal(s.timers.size, 0);
 });
 
-test('repeated connections do not accumulate recovery listeners', () => {
+test("repeated connections do not accumulate recovery listeners", () => {
   const s = statusStore();
   s.store.connectStatusStream();
   s.store.connectStatusStream();
@@ -120,9 +212,11 @@ test('repeated connections do not accumulate recovery listeners', () => {
   assert.equal(s.requests.length, 1);
 });
 
-test('a suspended HTTP request cannot block recovery or overwrite the new snapshot', async () => {
+test("a suspended HTTP request cannot block recovery or overwrite the new snapshot", async () => {
   const pending = [];
-  const s = statusStore({ get: () => new Promise(resolve => pending.push(resolve)) });
+  const s = statusStore({
+    get: () => new Promise((resolve) => pending.push(resolve)),
+  });
   s.store.connectStatusStream();
   const oldRequest = s.store.refreshPlayerStatus();
   s.visible();
@@ -138,9 +232,14 @@ test('a suspended HTTP request cannot block recovery or overwrite the new snapsh
   assert.equal(s.store.state.player.position, 42);
 });
 
-test('disposing removes listeners and timers and rejects late HTTP/socket updates', async () => {
+test("disposing removes listeners and timers and rejects late HTTP/socket updates", async () => {
   let resolve;
-  const s = statusStore({ get: () => new Promise(res => { resolve = res; }) });
+  const s = statusStore({
+    get: () =>
+      new Promise((res) => {
+        resolve = res;
+      }),
+  });
   s.store.connectStatusStream();
   const request = s.store.refreshPlayerStatus();
   s.store.disposeStore();
@@ -156,17 +255,17 @@ test('disposing removes listeners and timers and rejects late HTTP/socket update
   assert.equal(s.store.state.player.position, undefined);
 });
 
-test('recovery without an account or device makes no new connection or status request', () => {
+test("recovery without an account or device makes no new connection or status request", () => {
   const s = statusStore();
   s.store.connectStatusStream();
-  s.store.state.currentDeviceId = '';
+  s.store.state.currentDeviceId = "";
   s.visible();
   s.online();
   assert.equal(s.sockets.length, 1);
   assert.equal(s.requests.length, 0);
 });
 
-test('environments without WebSocket retain HTTP polling and refresh on resume', async () => {
+test("environments without WebSocket retain HTTP polling and refresh on resume", async () => {
   const s = statusStore({ webSocket: false });
   s.store.connectStatusStream();
   await settle();
@@ -174,7 +273,128 @@ test('environments without WebSocket retain HTTP polling and refresh on resume',
   await settle();
   assert.equal(s.requests.length, 2);
   assert.equal(s.store.state.player.position, 42);
-  assert.equal([...s.timers.values()].filter(timer => timer.interval).length, 1);
+  assert.equal(
+    [...s.timers.values()].filter((timer) => timer.interval).length,
+    1,
+  );
   s.store.disconnectStatusStream();
   assert.equal(s.timers.size, 0);
+});
+
+const songPage = (start, count, more) => ({
+  songs: Array.from({ length: count }, (_, i) => ({
+    id: start + i,
+    title: "Paged song " + (start + i),
+  })),
+  next_offset: start - 1 + count,
+  has_more: more,
+});
+test("first page is usable before later pages load, and duplicate scrolling shares one request", async () => {
+  let second,
+    calls = 0;
+  const s = statusStore({
+    paged: true,
+    get: async (path) => {
+      if (path.includes("/songs")) {
+        calls++;
+        const u = new URL(path, "http://fixture");
+        if (u.searchParams.get("offset") === "0") return songPage(1, 100, true);
+        return new Promise((resolve) => {
+          second = resolve;
+        });
+      }
+      return null;
+    },
+  });
+  await s.store.selectPlaylist("1");
+  assert.equal(s.store.state.songs.length, 100);
+  assert.equal(s.store.state.songsLoading, false);
+  const loading = s.store.loadMoreSongs(),
+    duplicate = s.store.loadMoreSongs();
+  assert.equal(calls, 2);
+  assert.equal(s.store.state.songs.length, 100);
+  second(songPage(101, 100, false));
+  await Promise.all([loading, duplicate]);
+  assert.equal(s.store.state.songs.length, 200);
+  assert.equal(s.store.state.songs[100].id, 101);
+  assert.equal(s.store.state.songsHasMore, false);
+});
+test("switching playlists rejects a late next-page response", async () => {
+  let second;
+  const s = statusStore({
+    paged: true,
+    get: async (path) => {
+      if (!path.includes("/songs")) return null;
+      const u = new URL(path, "http://fixture");
+      if (u.pathname.includes("/2/")) return songPage(501, 2, false);
+      if (u.searchParams.get("offset") === "0") return songPage(1, 100, true);
+      return new Promise((resolve) => {
+        second = resolve;
+      });
+    },
+  });
+  await s.store.selectPlaylist("1");
+  const pending = s.store.loadMoreSongs();
+  await s.store.selectPlaylist("2");
+  second(songPage(101, 100, false));
+  await pending;
+  assert.deepEqual(
+    Array.from(s.store.state.songs, (s) => s.id),
+    [501, 502],
+  );
+});
+test("debounced server search queries unloaded songs and invalidates a pending page", async () => {
+  let second;
+  const requested = [];
+  const s = statusStore({
+    paged: true,
+    get: async (path) => {
+      if (!path.includes("/songs")) return null;
+      requested.push(path);
+      const u = new URL(path, "http://fixture");
+      if (u.searchParams.get("keyword")) return songPage(999, 1, false);
+      if (u.searchParams.get("offset") === "0") return songPage(1, 100, true);
+      return new Promise((resolve) => {
+        second = resolve;
+      });
+    },
+  });
+  await s.store.selectPlaylist("1");
+  const pending = s.store.loadMoreSongs();
+  s.store.searchSongs("未加载");
+  second(songPage(101, 100, false));
+  await pending;
+  const timer = [...s.timers.values()].find((t) => t.delay === 250);
+  assert.ok(timer);
+  timer.fn();
+  await settle();
+  assert.equal(s.store.state.songs[0].id, 999);
+  assert.equal(
+    new URL(requested.at(-1), "http://fixture").searchParams.get("keyword"),
+    "未加载",
+  );
+});
+
+test("locating a song shares an in-flight page and stops as soon as its row is loaded", async () => {
+  let second,
+    calls = 0;
+  const s = statusStore({
+    paged: true,
+    get: async (path) => {
+      if (!path.includes("/songs")) return null;
+      calls++;
+      const u = new URL(path, "http://fixture");
+      if (u.searchParams.get("offset") === "0") return songPage(1, 100, true);
+      return new Promise((resolve) => {
+        second = resolve;
+      });
+    },
+  });
+  await s.store.selectPlaylist("1");
+  const page = s.store.loadMoreSongs();
+  const located = s.store.ensureSongLoaded(150);
+  second(songPage(101, 100, true));
+  await page;
+  assert.equal(await located, 149);
+  assert.equal(calls, 2);
 });

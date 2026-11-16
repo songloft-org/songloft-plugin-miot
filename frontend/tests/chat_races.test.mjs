@@ -1,3 +1,4 @@
+import { readSetup } from './setup-source.mjs';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import test from 'node:test';
@@ -5,46 +6,114 @@ import ts from 'typescript';
 import { loader } from '../../tests/chat_loader.mjs';
 const { parseAIHeaders } = loader()('../src/utils/ai_headers.ts');
 const { isDashScopeEndpoint } = loader()('../src/utils/ai_url.ts');
-const deferred = () => { let resolve, reject; const promise = new Promise((r, e) => { resolve = r; reject = e; }); return { promise, resolve, reject }; };
-const flush = async () => {
-  for (let i = 0; i < 30; i++)
-    await Promise.resolve();
+const deferred = () => {
+  let resolve, reject;
+  const promise = new Promise((r, e) => {
+    resolve = r;
+    reject = e;
+  });
+  return { promise, resolve, reject };
 };
-test('incremental answer updates do not reload all history on every status push', async t => {
-  const vue = await import('vue'), stops = [], requests = [];
-  const state = vue.reactive({ currentAccountId: 'a', currentDeviceId: 'd', chatStatus: null });
-  script('views/settings/ChatSettings.vue', {
-    DEFAULT_CHAT_CONFIG: { trigger_words: ['请问'], context_turns: 3 }, state,
-    reactive: vue.reactive, ref: vue.ref, computed: vue.computed,
-    watch: (...args) => { stops.push(vue.watch(...args)); }, onMounted() {}, onUnmounted() {},
-    query: JSON.stringify, managedDevices: { value: [] }, messageOf: String,
-    get: async path => { requests.push(path); return path.startsWith('/chat/history') ? { history: [], total: 0, summary: '' } : { memories: [] }; },
-  }, 'config');
-  t.after(() => stops.forEach(stop => stop()));
-  state.chatStatus = { task_id: 't', phase: 'generating', memory_revision: 1, answer: 'first' };
-  await vue.nextTick(); await flush();
+const flush = async () => {
+  for (let i = 0; i < 30; i++) await Promise.resolve();
+};
+test('incremental answer updates do not reload all history on every status push', async (t) => {
+  const vue = await import('@vue/reactivity'),
+    stops = [],
+    requests = [];
+  const state = vue.reactive({
+    currentAccountId: 'a',
+    currentDeviceId: 'd',
+    chatStatus: null,
+  });
+  script(
+    'views/settings/ChatSettings.vue',
+    {
+      DEFAULT_CHAT_CONFIG: { trigger_words: ['请问'], context_turns: 3 },
+      state,
+      reactive: vue.reactive,
+      ref: vue.ref,
+      computed: vue.computed,
+      watch: (...args) => {
+        stops.push(vue.watch(...args));
+      },
+      onMounted() {},
+      onUnmounted() {},
+      query: JSON.stringify,
+      managedDevices: { value: [] },
+      messageOf: String,
+      get: async (path) => {
+        requests.push(path);
+        return path.startsWith('/chat/history')
+          ? { history: [], total: 0, summary: '' }
+          : { memories: [] };
+      },
+    },
+    'config',
+  );
+  t.after(() => stops.forEach((stop) => stop()));
+  state.chatStatus = {
+    task_id: 't',
+    phase: 'generating',
+    memory_revision: 1,
+    answer: 'first',
+  };
+  await flush();
+  await flush();
   assert.equal(requests.length, 2);
   for (let i = 0; i < 10; i++) {
     state.chatStatus = { ...state.chatStatus, answer: 'chunk ' + i };
-    await vue.nextTick(); await flush();
+    await flush();
+    await flush();
   }
   assert.equal(requests.length, 2);
   state.chatStatus = { ...state.chatStatus, phase: 'completed' };
-  await vue.nextTick(); await flush();
+  await flush();
+  await flush();
   assert.equal(requests.length, 4);
 });
 test('history switch restores the selected turn count and one save persists independent memory controls', async () => {
   let mount;
-  const stored = { trigger_words: ['请问'], context_turns: 6, memory_enabled: false, summary_enabled: true, streaming_enabled: true };
+  const stored = {
+    trigger_words: ['请问'],
+    context_turns: 6,
+    memory_enabled: false,
+    summary_enabled: true,
+    streaming_enabled: true,
+  };
   const writes = [];
-  const page = script('views/settings/ChatSettings.vue', {
-    DEFAULT_CHAT_CONFIG: { ...stored }, state: { currentAccountId: '', currentDeviceId: '', chatStatus: null },
-    reactive: x => x, ref: value => ({ value }), computed: fn => ({ get value() { return fn(); } }),
-    query: JSON.stringify, managedDevices: { value: [] }, watch() {}, onMounted: fn => { mount = fn; }, onUnmounted() {},
-    get: async path => path === '/chat/config' ? { ...stored } : { streaming: true },
-    put: async (_path, body) => { writes.push(structuredClone(body)); return body; }, notify() {}, messageOf: String,
-  }, 'config, dirty, contextEnabled, setContextEnabled, save');
-  mount(); await flush();
+  const page = script(
+    'views/settings/ChatSettings.vue',
+    {
+      DEFAULT_CHAT_CONFIG: { ...stored },
+      state: { currentAccountId: '', currentDeviceId: '', chatStatus: null },
+      reactive: (x) => x,
+      ref: (value) => ({ value }),
+      computed: (fn) => ({
+        get value() {
+          return fn();
+        },
+      }),
+      query: JSON.stringify,
+      managedDevices: { value: [] },
+      watch() {},
+      onMounted: (fn) => {
+        mount = fn;
+      },
+      onUnmounted() {},
+      get: async (path) =>
+        path === '/chat/config' ? { ...stored } : { streaming: true },
+      put: async (_path, body) => {
+        writes.push(structuredClone(body));
+        return body;
+      },
+      notify() {},
+      messageOf: String,
+    },
+    'config, dirty, contextEnabled, setContextEnabled, save',
+  );
+  mount();
+  await flush();
   assert.equal(page.dirty.value, false);
   page.setContextEnabled(false);
   assert.equal(page.config.context_turns, 0);
@@ -60,25 +129,75 @@ test('history switch restores the selected turn count and one save persists inde
   assert.equal(page.dirty.value, false);
 });
 function script(file, env, exports) {
-  const source = fs.readFileSync(new URL(`../src/${file}`, import.meta.url), 'utf8').match(/<script setup lang="ts">([\s\S]*?)<\/script>/)[1].replace(/^import .*;\n/gm, '');
-  const js = ts.transpileModule(source + `\nreturn { ${exports} };`, { compilerOptions: { target: ts.ScriptTarget.ES2020, module: ts.ModuleKind.CommonJS } }).outputText;
-  return new Function('isDashScopeEndpoint', 'parseAIHeaders', ...Object.keys(env), js)(isDashScopeEndpoint, parseAIHeaders, ...Object.values(env));
+  const source = (
+    file === 'App.vue'
+      ? fs
+          .readFileSync(
+            new URL('../src/chat-stream.ts', import.meta.url),
+            'utf8',
+          )
+          .replace(/export /g, '')
+      : readSetup(file)
+  ).replace(/^import[\s\S]*?;\n/gm, '');
+  const js = ts.transpileModule(source + `\nreturn { ${exports} };`, {
+    compilerOptions: {
+      target: ts.ScriptTarget.ES2020,
+      module: ts.ModuleKind.CommonJS,
+    },
+  }).outputText;
+  return new Function(
+    'isDashScopeEndpoint',
+    'parseAIHeaders',
+    ...Object.keys(env),
+    js,
+  )(isDashScopeEndpoint, parseAIHeaders, ...Object.values(env));
 }
 test('late HTTP chat status cannot overwrite a newer WebSocket status; old devices are ignored', async () => {
-  const requests = [], sockets = [], timers = new Map();
+  const requests = [],
+    sockets = [],
+    timers = new Map();
   let timer = 0;
-  const state = { currentAccountId: 'a', currentDeviceId: 'd', chatStatus: null };
+  const state = {
+    currentAccountId: 'a',
+    currentDeviceId: 'd',
+    chatStatus: null,
+  };
   class Socket {
-    constructor() { sockets.push(this); }
-    close(code) { assert.equal(code, 1000); }
+    constructor() {
+      sockets.push(this);
+    }
+    close(code) {
+      assert.equal(code, 1000);
+    }
   }
-  const app = script('App.vue', {
-    state, get: () => { const wait = deferred(); requests.push(wait); return wait.promise; }, WebSocket: Socket,
-    pluginWebSocketUrl: x => x, query: () => '', watch() { }, onMounted() { }, onUnmounted() { },
-    setTimeout: fn => { timers.set(++timer, fn); return timer; }, clearTimeout: id => timers.delete(id),
-  }, 'connectChatSocket, stopChatSocket');
+  const app = script(
+    'App.vue',
+    {
+      state,
+      get: () => {
+        const wait = deferred();
+        requests.push(wait);
+        return wait.promise;
+      },
+      WebSocket: Socket,
+      pluginWebSocketUrl: (x) => x,
+      query: () => '',
+      watch() {},
+      onMounted() {},
+      onUnmounted() {},
+      setTimeout: (fn) => {
+        timers.set(++timer, fn);
+        return timer;
+      },
+      clearTimeout: (id) => timers.delete(id),
+    },
+    'connectChatSocket, stopChatSocket',
+  );
   app.connectChatSocket();
-  const send = (socket, phase) => socket.onmessage({ data: JSON.stringify({ type: 'chat_status', data: { phase } }) });
+  const send = (socket, phase) =>
+    socket.onmessage({
+      data: JSON.stringify({ type: 'chat_status', data: { phase } }),
+    });
   send(sockets[0], 'completed');
   requests[0].resolve({ phase: 'generating' });
   await flush();
@@ -97,17 +216,43 @@ test('late HTTP chat status cannot overwrite a newer WebSocket status; old devic
   app.stopChatSocket();
 });
 test('history refresh accepts only the newest response, including switching away and back', async () => {
-  const requests = [], watches = [], state = { currentAccountId: 'a', currentDeviceId: 'd', chatStatus: null };
+  const requests = [],
+    watches = [],
+    state = { currentAccountId: 'a', currentDeviceId: 'd', chatStatus: null };
   const env = {
-    state, DEFAULT_CHAT_CONFIG: { trigger_words: ['请问'] },
-    reactive: x => x, ref: value => ({ value }), computed: fn => ({ get value() { return fn(); } }),
-    query: x => JSON.stringify(x), get: () => { const wait = deferred(); requests.push(wait); return wait.promise; },
-    managedDevices: { value: [] }, watch: (_get, fn) => watches.push(fn), onMounted() { }, onUnmounted() { }, messageOf: String,
+    state,
+    DEFAULT_CHAT_CONFIG: { trigger_words: ['请问'] },
+    reactive: (x) => x,
+    ref: (value) => ({ value }),
+    computed: (fn) => ({
+      get value() {
+        return fn();
+      },
+    }),
+    query: (x) => JSON.stringify(x),
+    get: () => {
+      const wait = deferred();
+      requests.push(wait);
+      return wait.promise;
+    },
+    managedDevices: { value: [] },
+    watch: (_get, fn) => watches.push(fn),
+    onMounted() {},
+    onUnmounted() {},
+    messageOf: String,
   };
-  const page = script('views/settings/ChatSettings.vue', env, 'refresh, history, memories, summary');
+  const page = script(
+    'views/settings/ChatSettings.vue',
+    env,
+    'refresh, history, memories, summary',
+  );
   const old = page.refresh();
   const latest = page.refresh();
-  requests[2].resolve({ history: [{ id: 'latest' }], total: 1, summary: 'new' });
+  requests[2].resolve({
+    history: [{ id: 'latest' }],
+    total: 1,
+    summary: 'new',
+  });
   requests[3].resolve({ memories: [] });
   await latest;
   requests[0].resolve({ history: [{ id: 'old' }], total: 1, summary: 'old' });
@@ -133,26 +278,61 @@ test('history refresh accepts only the newest response, including switching away
   assert.equal(page.history.value[0].id, 'back');
 });
 function appOf({ failingConstructor = false, failingClose = false } = {}) {
-  const state = { currentAccountId: 'a', currentDeviceId: 'd', chatStatus: null }, requests = [], sockets = [], timers = new Map();
+  const state = {
+      currentAccountId: 'a',
+      currentDeviceId: 'd',
+      chatStatus: null,
+    },
+    requests = [],
+    sockets = [],
+    timers = new Map();
   let id = 0;
   class Socket {
     constructor() {
-      if (failingConstructor)
-        throw new Error('WebSocket unavailable');
+      if (failingConstructor) throw new Error('WebSocket unavailable');
       sockets.push(this);
     }
     close(code) {
       assert.equal(code, 1000);
-      if (failingClose)
-        throw new Error('already closed');
+      if (failingClose) throw new Error('already closed');
     }
   }
-  const app = script('App.vue', {
-    state, get: () => { const request = deferred(); requests.push(request); return request.promise; }, WebSocket: Socket,
-    pluginWebSocketUrl: x => x, query: () => '', watch() { }, onMounted() { }, onUnmounted() { },
-    setTimeout: (fn, ms) => { timers.set(++id, { fn, ms }); return id; }, clearTimeout: key => timers.delete(key),
-  }, 'connectChatSocket, stopChatSocket');
-  return { ...app, state, requests, sockets, timers, fire(ms) { const found = [...timers.entries()].find(([, value]) => value.ms === ms); assert.ok(found); timers.delete(found[0]); found[1].fn(); } };
+  const app = script(
+    'App.vue',
+    {
+      state,
+      get: () => {
+        const request = deferred();
+        requests.push(request);
+        return request.promise;
+      },
+      WebSocket: Socket,
+      pluginWebSocketUrl: (x) => x,
+      query: () => '',
+      watch() {},
+      onMounted() {},
+      onUnmounted() {},
+      setTimeout: (fn, ms) => {
+        timers.set(++id, { fn, ms });
+        return id;
+      },
+      clearTimeout: (key) => timers.delete(key),
+    },
+    'connectChatSocket, stopChatSocket',
+  );
+  return {
+    ...app,
+    state,
+    requests,
+    sockets,
+    timers,
+    fire(ms) {
+      const found = [...timers.entries()].find(([, value]) => value.ms === ms);
+      assert.ok(found);
+      timers.delete(found[0]);
+      found[1].fn();
+    },
+  };
 }
 test('WebSocket construction failure still polls HTTP status and stops retry on device removal', async () => {
   const h = appOf({ failingConstructor: true });
@@ -172,12 +352,16 @@ test('WebSocket construction failure still polls HTTP status and stops retry on 
 test('WebSocket error and close cannot double-retry; stale sockets and snapshots are ignored', async () => {
   const h = appOf({ failingClose: true });
   h.connectChatSocket();
-  const oldMessage = h.sockets[0].onmessage, error = h.sockets[0].onerror, close = h.sockets[0].onclose;
+  const oldMessage = h.sockets[0].onmessage,
+    error = h.sockets[0].onerror,
+    close = h.sockets[0].onclose;
   error();
   close();
   assert.equal(h.timers.size, 1);
   h.fire(3000);
-  oldMessage({ data: JSON.stringify({ type: 'chat_status', data: { phase: 'old' } }) });
+  oldMessage({
+    data: JSON.stringify({ type: 'chat_status', data: { phase: 'old' } }),
+  });
   assert.equal(h.state.chatStatus, null);
   h.requests[0].resolve({ phase: 'old' });
   h.requests[1].resolve({ phase: 'new' });
@@ -201,19 +385,61 @@ test('WebSocket open deadline retries a hung connection, malformed messages do n
   h.stopChatSocket();
 });
 function pageOf(options = {}) {
-  const state = { currentAccountId: 'a', currentDeviceId: 'd', chatStatus: null }, calls = [], notifications = [], watches = [];
+  const state = {
+      currentAccountId: 'a',
+      currentDeviceId: 'd',
+      chatStatus: null,
+    },
+    calls = [],
+    notifications = [],
+    watches = [];
   let unmount;
   const env = {
-    state, DEFAULT_CHAT_CONFIG: { trigger_words: ['请问'], system_prompt: '角色' },
-    reactive: value => value, ref: value => ({ value }), computed: fn => ({ get value() { return fn(); } }),
-    query: value => JSON.stringify(value), managedDevices: { value: [] },
-    watch: (_get, fn) => watches.push(fn), onMounted() { }, onUnmounted: fn => { unmount = fn; }, messageOf: error => error.message,
-    get: options.get || (async (path) => path.includes('/chat/history') ? { history: [], total: 0, summary: '' } : { memories: [{ id: 'm', content: '来自服务器' }] }),
-    put: async (path, value) => { calls.push([path, structuredClone(value)]); return value; }, post: options.post || (async (...args) => calls.push(args)), del: async (path) => calls.push(path),
-    notify: (...args) => notifications.push(args), confirmAction: options.confirm || (async () => ({ confirmed: true })),
+    state,
+    DEFAULT_CHAT_CONFIG: { trigger_words: ['请问'], system_prompt: '角色' },
+    reactive: (value) => value,
+    ref: (value) => ({ value }),
+    computed: (fn) => ({
+      get value() {
+        return fn();
+      },
+    }),
+    query: (value) => JSON.stringify(value),
+    managedDevices: { value: [] },
+    watch: (_get, fn) => watches.push(fn),
+    onMounted() {},
+    onUnmounted: (fn) => {
+      unmount = fn;
+    },
+    messageOf: (error) => error.message,
+    get:
+      options.get ||
+      (async (path) =>
+        path.includes('/chat/history')
+          ? { history: [], total: 0, summary: '' }
+          : { memories: [{ id: 'm', content: '来自服务器' }] }),
+    put: async (path, value) => {
+      calls.push([path, structuredClone(value)]);
+      return value;
+    },
+    post: options.post || (async (...args) => calls.push(args)),
+    del: async (path) => calls.push(path),
+    notify: (...args) => notifications.push(args),
+    confirmAction: options.confirm || (async () => ({ confirmed: true })),
   };
-  const page = script('views/settings/ChatSettings.vue', env, 'action, safeAction, refresh, refreshSafely, clear, removeTurn, save, submit, config, triggers, history, memories, memoryDrafts, busy, error, refreshError, loaded, question, speak, webSearchAvailable, customHeaders, dirty, setWebSearch, testConnection, connectionTest, connectionIdentity');
-  return { ...page, state, calls, notifications, watches, unmount: () => unmount() };
+  const page = script(
+    'views/settings/ChatSettings.vue',
+    env,
+    'action, safeAction, refresh, refreshSafely, clear, removeTurn, save, submit, config, triggers, history, memories, memoryDrafts, busy, error, refreshError, loaded, question, speak, webSearchAvailable, customHeaders, dirty, setWebSearch, testConnection, connectionTest, connectionIdentity',
+  );
+  return {
+    ...page,
+    state,
+    calls,
+    notifications,
+    watches,
+    unmount: () => unmount(),
+  };
 }
 test('independent chat saves and clears custom headers, rejecting invalid JSON before HTTP', async () => {
   const h = pageOf();
@@ -222,7 +448,9 @@ test('independent chat saves and clears custom headers, rejecting invalid JSON b
   h.customHeaders.value = '{"x-opencode-session":"independent"}';
   assert.equal(h.dirty.value, true);
   await h.save();
-  assert.deepEqual(h.calls[0][1].custom_headers, { 'x-opencode-session': 'independent' });
+  assert.deepEqual(h.calls[0][1].custom_headers, {
+    'x-opencode-session': 'independent',
+  });
   assert.equal(h.dirty.value, false);
   h.customHeaders.value = '{bad';
   await h.action(h.save);
@@ -234,22 +462,34 @@ test('independent chat saves and clears custom headers, rejecting invalid JSON b
   assert.equal(h.dirty.value, false);
 });
 test('save sends normalized triggers and action blocks duplicate submissions, reporting errors', async () => {
-  const h = pageOf(), wait = deferred();
+  const h = pageOf(),
+    wait = deferred();
   h.triggers.value = ' 问一下，问一问、请问\n问题';
   await h.action(h.save);
-  assert.deepEqual(h.calls[0][1].trigger_words, ['问一下', '问一问', '请问', '问题']);
-  const pending = h.action(async () => { await wait.promise; });
+  assert.deepEqual(h.calls[0][1].trigger_words, [
+    '问一下',
+    '问一问',
+    '请问',
+    '问题',
+  ]);
+  const pending = h.action(async () => {
+    await wait.promise;
+  });
   assert.equal(h.busy.value, true);
   let duplicate = false;
-  await h.action(async () => { duplicate = true; });
+  await h.action(async () => {
+    duplicate = true;
+  });
   assert.equal(duplicate, false);
   wait.resolve();
   await pending;
   assert.equal(h.busy.value, false);
-  await h.action(async () => { throw new Error('保存失败'); });
+  await h.action(async () => {
+    throw new Error('保存失败');
+  });
   assert.equal(h.error.value, '保存失败');
   assert.equal(h.busy.value, false);
-  assert.ok(h.notifications.some(value => value[1] === 'error'));
+  assert.ok(h.notifications.some((value) => value[1] === 'error'));
 });
 test('memory edit drafts survive status-triggered refresh; device change clears drafts and data', async () => {
   const h = pageOf();
@@ -267,35 +507,58 @@ test('text submission uses selected device and speak flag, then clears the quest
   h.question.value = '测试问题';
   h.speak.value = false;
   await h.submit();
-  assert.deepEqual(h.calls[0], ['/chat/messages', { account_id: 'a', device_id: 'd', text: '测试问题', speak: false }]);
+  assert.deepEqual(h.calls[0], [
+    '/chat/messages',
+    { account_id: 'a', device_id: 'd', text: '测试问题', speak: false },
+  ]);
   assert.equal(h.question.value, '');
 });
 test('accepted question remains successful when history refresh fails', async () => {
-  const h = pageOf({ get: async () => { throw new Error('历史读取失败'); } });
+  const h = pageOf({
+    get: async () => {
+      throw new Error('历史读取失败');
+    },
+  });
   h.question.value = '测试问题';
   await h.action(h.submit);
   assert.equal(h.question.value, '');
   assert.equal(h.error.value, '');
-  assert.ok(h.notifications.some(n => n[1] === 'success' && n[0].includes('已提交')));
-  assert.ok(h.notifications.some(n => n[1] === 'warning' && n[0].includes('历史读取失败')));
-  assert.ok(!h.notifications.some(n => n[1] === 'error'));
+  assert.ok(
+    h.notifications.some((n) => n[1] === 'success' && n[0].includes('已提交')),
+  );
+  assert.ok(
+    h.notifications.some(
+      (n) => n[1] === 'warning' && n[0].includes('历史读取失败'),
+    ),
+  );
+  assert.ok(!h.notifications.some((n) => n[1] === 'error'));
 });
 test('stale history errors cannot overwrite a newer successful refresh', async () => {
   const requests = [];
-  const h = pageOf({ get: () => { const wait = deferred(); requests.push(wait); return wait.promise; } });
-  const old = h.refreshSafely(), latest = h.refreshSafely();
+  const h = pageOf({
+    get: () => {
+      const wait = deferred();
+      requests.push(wait);
+      return wait.promise;
+    },
+  });
+  const old = h.refreshSafely(),
+    latest = h.refreshSafely();
   requests[2].resolve({ history: [], total: 0, summary: '' });
   requests[3].resolve({ memories: [] });
   await latest;
-  requests[0].reject(new Error('旧请求失败')); requests[1].resolve({ memories: [] });
+  requests[0].reject(new Error('旧请求失败'));
+  requests[1].resolve({ memories: [] });
   await old;
   assert.equal(h.refreshError.value, '');
   assert.deepEqual(h.notifications, []);
 });
 for (const operation of ['clear', 'delete']) {
   test(`${operation} confirmation cannot act on a newly selected device`, async () => {
-    const wait = deferred(), h = pageOf({ confirm: () => wait.promise });
-    const pending = operation === 'clear' ? h.clear('all') : h.removeTurn('old-id');
+    const wait = deferred(),
+      h = pageOf({ confirm: () => wait.promise });
+    const pending =
+      operation === 'clear' ? h.clear('all') : h.removeTurn('old-id');
     h.state.currentDeviceId = 'new-device';
     wait.resolve({ confirmed: true });
     await pending;
@@ -307,20 +570,30 @@ test('dismissed confirmation and unmounted page produce no writes or stale data'
   await h.clear('all');
   await h.removeTurn('id');
   assert.deepEqual(h.calls, []);
-  const wait = deferred(), other = pageOf({ get: () => wait.promise });
+  const wait = deferred(),
+    other = pageOf({ get: () => wait.promise });
   const pending = other.refresh();
   other.unmount();
-  wait.resolve({ history: [{ id: 'late' }], total: 1, summary: '', memories: [{ id: 'late' }] });
+  wait.resolve({
+    history: [{ id: 'late' }],
+    total: 1,
+    summary: '',
+    memories: [{ id: 'late' }],
+  });
   await pending;
   assert.deepEqual(other.history.value, []);
   let ran = false;
-  other.safeAction(async () => { ran = true; });
+  other.safeAction(async () => {
+    ran = true;
+  });
   assert.equal(ran, false);
 });
 
 test('search availability follows effective chat connection and preserves saved preference', async () => {
   const h = pageOf();
-  h.state.config = { ai_config: { api_url: 'https://dashscope.aliyuncs.com/compatible-mode/v1' } };
+  h.state.config = {
+    ai_config: { api_url: 'https://dashscope.aliyuncs.com/compatible-mode/v1' },
+  };
   h.config.connection = 'analysis';
   h.config.api_url = 'https://api.deepseek.com/v1';
   h.config.web_search_enabled = true;
@@ -329,7 +602,8 @@ test('search availability follows effective chat connection and preserves saved 
   assert.equal(h.webSearchAvailable.value, false);
   await h.save();
   assert.equal(h.calls[0][1].web_search_enabled, true);
-  h.config.api_url = 'https://workspace.cn-beijing.maas.aliyuncs.com/compatible-mode/v1';
+  h.config.api_url =
+    'https://workspace.cn-beijing.maas.aliyuncs.com/compatible-mode/v1';
   assert.equal(h.webSearchAvailable.value, true);
   h.config.web_search_enabled = false;
   await h.save();
@@ -367,36 +641,62 @@ test('enabling custom web search selects the supported wire format without savin
   assert.equal(h.config.web_search_enabled, false);
   assert.deepEqual(h.calls, []);
 });
-for (const search of [false, true]) test('connection test sends draft fields without saving: ' + search, async () => {
-  const requests = [];
-  const h = pageOf({ post: async (path, body) => { requests.push([path, structuredClone(body)]); return { connected: true, search: search ? 'unconfirmed' : 'not_requested' }; } });
-  h.config.connection = 'independent';
-  h.config.model = 'unsaved-model';
-  h.customHeaders.value = '{"x-session":"draft-session"}';
-  await h.testConnection(search);
-  assert.equal(requests[0][0], '/chat/test-connection');
-  assert.equal(requests[0][1].config.model, 'unsaved-model');
-  assert.equal(requests[0][1].config.custom_headers['x-session'], 'draft-session');
-  assert.equal(requests[0][1].search, search);
-  assert.equal(h.connectionTest.value.search, search ? 'unconfirmed' : 'not_requested');
-  assert.deepEqual(h.calls, []);
-});
+for (const search of [false, true])
+  test(
+    'connection test sends draft fields without saving: ' + search,
+    async () => {
+      const requests = [];
+      const h = pageOf({
+        post: async (path, body) => {
+          requests.push([path, structuredClone(body)]);
+          return {
+            connected: true,
+            search: search ? 'unconfirmed' : 'not_requested',
+          };
+        },
+      });
+      h.config.connection = 'independent';
+      h.config.model = 'unsaved-model';
+      h.customHeaders.value = '{"x-session":"draft-session"}';
+      await h.testConnection(search);
+      assert.equal(requests[0][0], '/chat/test-connection');
+      assert.equal(requests[0][1].config.model, 'unsaved-model');
+      assert.equal(
+        requests[0][1].config.custom_headers['x-session'],
+        'draft-session',
+      );
+      assert.equal(requests[0][1].search, search);
+      assert.equal(
+        h.connectionTest.value.search,
+        search ? 'unconfirmed' : 'not_requested',
+      );
+      assert.deepEqual(h.calls, []);
+    },
+  );
 test('invalid draft headers display a local test failure without saving or sending', async () => {
-  const h = pageOf({ post: async () => assert.fail('invalid headers must not send') });
-  h.config.connection = 'independent'; h.customHeaders.value = '{bad';
+  const h = pageOf({
+    post: async () => assert.fail('invalid headers must not send'),
+  });
+  h.config.connection = 'independent';
+  h.customHeaders.value = '{bad';
   await h.testConnection(false);
   assert.equal(h.connectionTest.value.connected, false);
   assert.match(h.connectionTest.value.error, /JSON/);
   assert.deepEqual(h.calls, []);
 });
-for (const late of ['success', 'failure', 'unmount']) test('stale connection test result is ignored after ' + late, async () => {
-  const wait = deferred(), h = pageOf({ post: () => wait.promise });
-  h.config.connection = 'independent';
-  const pending = h.testConnection(false);
-  if (late === 'unmount') h.unmount();
-  else { h.config.model = 'replacement'; h.watches[2](); }
-  if (late === 'failure') wait.reject(new Error('old failure'));
-  else wait.resolve({ connected: true, search: 'not_requested' });
-  await pending;
-  assert.equal(h.connectionTest.value, null);
-});
+for (const late of ['success', 'failure', 'unmount'])
+  test('stale connection test result is ignored after ' + late, async () => {
+    const wait = deferred(),
+      h = pageOf({ post: () => wait.promise });
+    h.config.connection = 'independent';
+    const pending = h.testConnection(false);
+    if (late === 'unmount') h.unmount();
+    else {
+      h.config.model = 'replacement';
+      h.watches[2]();
+    }
+    if (late === 'failure') wait.reject(new Error('old failure'));
+    else wait.resolve({ connected: true, search: 'not_requested' });
+    await pending;
+    assert.equal(h.connectionTest.value, null);
+  });

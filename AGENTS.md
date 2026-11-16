@@ -7,7 +7,7 @@
 - 本仓库是独立 Git 仓库，在父仓库工作区位于 `plugins/src/songloft-plugin-miot/`；提交到本仓库的 `main`。
 - 插件业务与排障经验维护在本文件；公共宿主、Go 后端和跨仓库通用约定见 [父仓库 AGENTS.md](https://github.com/songloft-org/songloft/blob/main/AGENTS.md)。
 - `src/player/manager.ts` 管理播放状态、自动切歌与分组目标；`src/handlers/playlist.ts` 融合 HTTP/WS 状态；`src/playback/voice_resume.ts` 负责语音打断后的恢复；`src/mina/client.ts` 管理设备云端请求、共享采样与退避。
-- `frontend/` 为 Vue + TypeScript 界面，构建到 `static/`；`plugin.json` 定义插件清单，最终产物为 `dist/miot.jsplugin.zip`，包含 QuickJS 字节码。
+- `frontend/` 为 ReactLynx + TypeScript 界面，构建到 `static/`；`plugin.json` 定义插件清单，最终产物为 `dist/miot.jsplugin.zip`，包含 QuickJS 字节码。
 - 本文件与 `AGENTS.en.md` 内容、结构同步。提交使用 Conventional Commits，描述尽量用中文，不添加 `Co-Authored-By`。
 - 提交信息引用本仓库 Issue 可以写 `#124`；引用父仓库 Issue 必须写完整路径，例如 `songloft-org/songloft#495`。子仓库先提交，父仓库再同步子模块指针；服务端和插件分别升级。
 
@@ -140,3 +140,7 @@ Node 22 的类型擦除参数用于直接导入 TS 的测试。构建会先生�
 | 插件 #129 | 全零 idle 不误判起播失败/外部停止；真实 404/410/5xx 仍跳歌；出现正位置或流长后恢复严格判定；整点报时仍可续播 | `player_failures`、`player_transition` |
 
 矩阵修改须与英文版同步。列出的测试文件使用 `tests/<name>.test.mjs`；父仓库与插件独立升级，验收要记录两者版本和实际包含的提交。
+
+## Lynx 前端约定
+
+原生 JSX 位于 `frontend/src/App.tsx` 与 `views/`；`page-state.tsx` 将可观察业务动作绑定到 React 生命周期。复用 `ui/native.tsx`，业务代码不调用浏览器全局对象。输入草稿不得把后台迟到渲染写回正在编辑的原生文本框。Socket 归属、认证、外链与返回交给宿主。前端须跑类型检查、测试、双产物构建及[验证记录](docs/lynx-migration.md)中的 Docker 浏览器矩阵/交互/播放器脚本。
