@@ -13,7 +13,7 @@ import { navigation } from "../runtime";
 import { Overlay } from "./Overlay";
 import { measurePopover } from "./position";
 import { VerticalVolume } from "./VerticalVolume";
-import { ThemeContext } from "./theme";
+import { ThemeContext, CompactSettingsContext } from "./theme";
 
 type Props = Record<string, any>;
 let selectSequence = 0;
@@ -94,6 +94,29 @@ export function SlButton({
     </view>
   );
 }
+export function normalizeNumericValue({
+  raw,
+  previous = "0",
+  min,
+  max,
+  step = 1,
+}: Props): string {
+  const valid = (value: string) =>
+    /^-?(?:\d+\.?\d*|\.\d+)$/.test(value.trim()) &&
+    Number.isFinite(Number(value));
+  let value = valid(String(raw))
+    ? Number(raw)
+    : valid(String(previous))
+      ? Number(previous)
+      : Number(min ?? 0);
+  if (step !== "any" && Number(step) > 0) {
+    const size = Number(step);
+    value = Number((Math.round(value / size) * size).toFixed(8));
+  }
+  if (min !== undefined) value = Math.max(Number(min), value);
+  if (max !== undefined) value = Math.min(Number(max), value);
+  return String(value);
+}
 export function SlInput({
   modelValue = "",
   inputKey,
@@ -107,16 +130,48 @@ export function SlInput({
 }: Props) {
   const inheritedDisabled = useContext(DisabledContext);
   disabled = disabled || inheritedDisabled;
+  const numeric = type === "number";
   const focused = useRef(false),
     draft = useRef(String(modelValue)),
     committed = useRef(String(modelValue));
+  const [initial, setInitial] = useState(String(modelValue));
+  const [numberNotice, setNumberNotice] = useState("");
+  const [editorRevision, setEditorRevision] = useState(0);
   const commit = () => {
+    if (numeric) {
+      const raw = draft.current.trim();
+      const value = Number(raw);
+      if (
+        props.strictNumber &&
+        (!raw ||
+          !Number.isFinite(value) ||
+          (props.step !== "any" && !Number.isInteger(value)) ||
+          value < Number(props.min ?? -Infinity) ||
+          value > Number(props.max ?? Infinity))
+      ) {
+        setNumberNotice(`请输入 ${props.min ?? 0}–${props.max ?? "∞"} 的整数`);
+        return false;
+      }
+      const normalized = normalizeNumericValue({
+        ...props,
+        raw: draft.current,
+        previous: committed.current,
+      });
+      if (normalized !== draft.current) {
+        draft.current = normalized;
+        setInitial(normalized);
+        setEditorRevision((value) => value + 1);
+        onUpdateModelValue?.(normalized);
+        setNumberNotice(
+          `已调整为 ${normalized}${props.unit ? " " + props.unit : ""}`,
+        );
+      } else setNumberNotice("");
+    }
     if (draft.current !== committed.current) {
       committed.current = draft.current;
       onChange?.();
     }
   };
-  const [initial, setInitial] = useState(String(modelValue));
   useEffect(() => {
     if (!focused.current && String(modelValue) !== draft.current) {
       draft.current = String(modelValue);
@@ -124,15 +179,32 @@ export function SlInput({
       setInitial(String(modelValue));
     }
   }, [modelValue]);
-  return (
+  const editor = (
     <Input
-      key={inputKey ?? initial}
-      className={classes(["sl-input", props.className])}
+      key={`${inputKey ?? initial}:${editorRevision}`}
+      className={classes([
+        "sl-input",
+        props.className,
+        numeric && props.unit && "sl-input-with-unit",
+        numeric && props.min < 0 && "sl-input-with-sign",
+      ])}
       style={props.style}
       accessibility-label={props["aria-label"] || props.ariaLabel}
       defaultValue={initial}
       readonly={disabled}
-      type={type === "password" ? "password" : "text"}
+      type={
+        type === "password"
+          ? "password"
+          : numeric
+            ? props.step && props.step !== 1
+              ? "digit"
+              : "number"
+            : type === "email"
+              ? "email"
+              : type === "tel"
+                ? "tel"
+                : "text"
+      }
       maxLength={Number(props.maxlength || 20000)}
       placeholder={placeholder || ""}
       onFocus={() => {
@@ -141,6 +213,7 @@ export function SlInput({
       onInput={(value: string) => {
         focused.current = true;
         draft.current = value;
+        setNumberNotice("");
         onUpdateModelValue?.(value);
       }}
       onBlur={() => {
@@ -148,10 +221,37 @@ export function SlInput({
         commit();
       }}
       onConfirm={() => {
-        commit();
-        onSubmit?.();
+        if (commit() !== false) onSubmit?.();
       }}
     />
+  );
+  if (!numeric) return editor;
+  return (
+    <view className="sl-number-field">
+      <view className="number-control">
+        {editor}
+        {props.min < 0 && (
+          <SlButton
+            className="number-sign"
+            label="±"
+            aria-label="切换正负号"
+            disabled={disabled}
+            onClick={() => {
+              draft.current = String(-Number(draft.current || 0));
+              setInitial(draft.current);
+              onUpdateModelValue?.(draft.current);
+              commit();
+            }}
+          />
+        )}
+        {props.unit && (
+          <text className="number-unit" event-through>
+            {props.unit}
+          </text>
+        )}
+      </view>
+      {!!numberNotice && <text className="number-notice">{numberNotice}</text>}
+    </view>
   );
 }
 export function SlSwitch({
@@ -169,6 +269,7 @@ export function SlSwitch({
         modelValue && "active",
         disabled && "disabled",
       ])}
+      hit-slop={{ top: "6px", bottom: "6px", left: "0px", right: "0px" }}
       accessibility-role="switch"
       accessibility-label={props["aria-label"]}
       accessibility-checked={!!modelValue}
@@ -428,7 +529,11 @@ export function SectionCard({
   children,
   slots,
   tone,
+  saveMode,
 }: Props) {
+  const compact = useContext(CompactSettingsContext);
+  const [expanded, setExpanded] = useState(false);
+  const canFold = compact && description && description.length > 40;
   return (
     <view className={classes(["miot-section", tone && `miot-section-${tone}`])}>
       <view className="section-heading">
@@ -438,9 +543,29 @@ export function SectionCard({
           </view>
         )}
         <view className="section-heading-copy">
-          <text className="section-title">{title}</text>
+          <view className="section-title-row">
+            <text className="section-title">{title}</text>
+            {saveMode && (
+              <text className="section-save-mode">
+                {saveMode === "manual" ? "手动保存" : "自动保存"}
+              </text>
+            )}
+            {canFold && (
+              <SlButton
+                className="section-description-toggle"
+                label={expanded ? "收起" : "说明"}
+                aria-label={`${expanded ? "收起" : "展开"}${title}说明`}
+                onClick={() => setExpanded((value) => !value)}
+              />
+            )}
+          </view>
           {description && (
-            <text className="section-description">{description}</text>
+            <text
+              className="section-description"
+              text-maxline={canFold && !expanded ? "2" : undefined}
+            >
+              {description}
+            </text>
           )}
         </view>
         {slots?.actions}

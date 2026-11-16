@@ -44,7 +44,7 @@ export function controls({
       return values[key] || (values[key] = { current: initial });
     },
   };
-  const jsx = (type, props) => ({ type, props });
+  const jsx = (type, props, key) => ({ type, props, key });
   const source = readFileSync(
     new URL("../src/ui/native.tsx", import.meta.url),
     "utf8",

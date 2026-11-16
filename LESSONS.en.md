@@ -31,6 +31,11 @@ Include rule, scope, full owner/repo#number, failure/fix commit SHAs, actual val
 
 - Same-day SDK delivery follow-up: configure Trusted Publisher per npm package. After a tag/Release succeeds, verify the registry version and a real install before pinning the lockfile/removing adapters. After user configuration, the same v2.21.0 tag recovered successfully; miot passes 101/1499 checks, real socket hide/resume and nested-frame rechecks. See the latest record; this does not increment Seen.
 
+- Same-day interaction-preview follow-up: retain failed autosave patches, merge later edits with latest values winning, snapshot nested fields at submission and acknowledge only submitted values. Keep feedback inside settings and label manual forms. Three new queue cases fail on the old implementation; all 105 cases pass after the change. npm dev auto-upload is available for evaluation without a commit. Same incident, no Seen increment.
+
+- Same-day preview follow-up: resizing a popup also requires clearing inherited menu alignment/positioning and testing scrolling on short screens. Enlarged targets need actual hit testing against hint overlays. Restoring a prior numeric value requires remounting an uncontrolled input and checking both the editor and persisted readback. Deletion copy follows the host deleteFiles=false semantics. Keep isolated builds separate from user dev output; stop only the duplicate watcher started for this preview. See the follow-up record; this remains the same dated incident without incrementing Seen.
+
+
 ### MIOT-032: Voice song matching must separate candidate quality from source priority
 
 - Scope: [songloft-org/songloft#569](https://github.com/songloft-org/songloft/issues/569); plugin baseline `48413d6abc2a34e8094bca3ec2f80457365b5abd`.

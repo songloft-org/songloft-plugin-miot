@@ -144,6 +144,11 @@ export default function SleepTimerPanel(props: any) {
                   vm.customValue = $event;
                 }}
                 type="number"
+                min={1}
+                max={999}
+                step={1}
+                unit="分钟"
+                strictNumber
                 placeholder="分钟 (1-999)"
                 aria-label="自定义分钟数"
                 onSubmit={($event: any) => {
@@ -241,6 +246,11 @@ export default function SleepTimerPanel(props: any) {
                     vm.customValue = $event;
                   }}
                   type="number"
+                  min={1}
+                  max={99}
+                  step={1}
+                  unit="首"
+                  strictNumber
                   placeholder="歌曲数 (1-99)"
                   aria-label="自定义歌曲数"
                   onSubmit={($event: any) => {

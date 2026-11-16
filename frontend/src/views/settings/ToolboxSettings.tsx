@@ -18,6 +18,7 @@ import {
   messageOf,
   notify,
   playerCommand,
+  refreshAll,
   state,
 } from '../../store';
 const pageState = {
@@ -49,7 +50,15 @@ const pageState = {
       const draft = text.value;
       if ((await repeatText(draft)) && text.value === draft) text.value = '';
     }
+    async function refreshContent() {
+      try {
+        await refreshAll();
+      } catch {
+        // refreshAll already reports the failure.
+      }
+    }
     const bindings = {
+      refreshContent,
       url,
       text,
       targetLabel,
@@ -152,6 +161,29 @@ export default function ToolboxSettings(props: any) {
               }
               onClick={($event: any) => {
                 void vm.sendText($event);
+              }}
+            ></SlButton>
+          </NativeView>
+        </NativeView>
+      </SectionCard>
+      <SectionCard
+        title="内容同步"
+        icon="refresh"
+        description="歌单或设备在其他页面更新后，可手动重新读取最新内容。播放状态会自动同步。"
+      >
+        <NativeView className="form-body">
+          <NativeView className="field-actions">
+            <SlButton
+              label={vm.state.refreshing ? '正在刷新…' : '刷新内容'}
+              icon="refresh"
+              disabled={
+                vm.state.refreshing ||
+                vm.state.loading ||
+                vm.state.configSaving ||
+                vm.state.configSaveState === 'error'
+              }
+              onClick={() => {
+                void vm.refreshContent();
               }}
             ></SlButton>
           </NativeView>

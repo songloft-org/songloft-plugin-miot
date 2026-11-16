@@ -651,6 +651,10 @@ export default function ScheduleSettings(props: any) {
                       vm.stopAfterMinutes = $event;
                     }}
                     type="number"
+                    min={0}
+                    max={999}
+                    step={1}
+                    unit="分钟"
                     placeholder="0"
                     aria-label="播放时长"
                   ></SlInput>

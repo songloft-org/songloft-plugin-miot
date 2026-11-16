@@ -561,6 +561,7 @@ export default function DeviceSettings(props: any) {
     <>
       <SectionCard
         title="服务器配置"
+        saveMode="manual"
         icon="dns"
         description="音箱必须能访问这里填写的地址；localhost 和 127.0.0.1 只适合浏览器本机调试。"
       >
@@ -616,7 +617,7 @@ export default function DeviceSettings(props: any) {
               label="保存"
               icon="save"
               onClick={($event: any) => {
-                void vm.saveServerHost($event);
+                void vm.saveServerHost($event).catch(() => {});
               }}
             ></SlButton>
           </NativeView>

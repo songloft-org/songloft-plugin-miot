@@ -8,6 +8,7 @@ import {
 } from "@lynx-js/react";
 import { getTheme, onPush, onThemeChange } from "@songloft/lynx-plugin-sdk";
 import { watch } from "@vue/reactivity";
+import { CompactSettingsContext } from "./ui/theme";
 import { useObserved, classes } from "./page-state";
 import {
   consumeBack,
@@ -139,12 +140,36 @@ function Modal({
     </Overlay>
   );
 }
+function SongListHeader() {
+  return (
+    <view className="song-list-header">
+      <text className="song-index">#</text>
+      <view className="song-header-cover" />
+      <text className="song-header-title">标题</text>
+      <text className="song-header-artist">艺术家</text>
+      <text className="song-header-album">专辑</text>
+      <text className="song-duration">时长</text>
+      <view className="song-header-actions" />
+    </view>
+  );
+}
 function SongList() {
-  useObserved(state);
+  useObserved(state, navigation);
   const { width, height } = useContext(Viewport),
     rowHeight = width < 600 ? 64 : 56;
   const [start, setStart] = useState(0),
     [scrollTop, setScrollTop] = useState(0);
+  const [songAction, setSongAction] = useState<{
+    song: Song;
+    playlistId: string;
+  } | null>(null);
+  useEffect(() => {
+    if (!navigation.selectOpen) setSongAction(null);
+  });
+  const closeSongActions = () => {
+    setSongAction(null);
+    navigation.selectOpen = false;
+  };
   const songs = store.visibleSongs.value;
   useEffect(() => {
     setStart(0);
@@ -163,16 +188,18 @@ function SongList() {
     !!device &&
     !!state.playlistProgress?.song_id &&
     !(onThisPlaylist && state.player.is_playing);
-  async function remove(song: Song) {
+  async function remove(song: Song, fromLibrary: boolean, playlistId: string) {
+    if (playlistId !== state.selectedPlaylistId) return;
     const answer = await store.confirmAction(
-      "删除歌曲",
-      `从歌单删除《${song.title}》？`,
-      "删除",
-      true,
-      { label: "同时从曲库中永久删除歌曲文件" },
+      fromLibrary ? "从曲库永久删除" : "从歌单移除",
+      fromLibrary
+        ? `从曲库及所有歌单永久删除《${song.title}》？封面和缓存会清理，本地原始音乐文件会保留。此操作不可撤销。`
+        : `将《${song.title}》从当前歌单移除？歌曲文件会保留。`,
+      fromLibrary ? "永久删除" : "移除",
+      fromLibrary,
     );
-    if (answer.confirmed)
-      await store.removeSongFromPlaylist(song, { fromLibrary: answer.checked });
+    if (answer.confirmed && playlistId === state.selectedPlaylistId)
+      await store.removeSongFromPlaylist(song, { fromLibrary });
   }
   async function locate() {
     const index = await store.ensureSongLoaded(
@@ -189,32 +216,48 @@ function SongList() {
     <view className="main-page">
       <view className="library-heading">
         <view className="appbar-copy">
-          <text className="page-title">MIoT 智能音箱</text>
-          <text className="appbar-subtitle">
-            {state.deviceConnecting
-              ? "正在连接音箱…"
-              : device
-                ? `${store.deviceName(device)} · ${state.player.is_playing ? "播放中" : "待机"}`
-                : "请选择播放设备"}
-          </text>
+          <view className="device-target-row">
+            <SlButton
+              className="device-target"
+              variant="text"
+              icon="speaker_group"
+              iconSize={16}
+              title="选择设备"
+              disabled={state.loading}
+              onClick={() => {
+                navigation.devicePickerOpen = true;
+              }}
+            >
+              <text className="device-target-prefix">播放到</text>
+              <text className="device-target-name" text-maxline="1">
+                {device ? store.deviceName(device) : "选择设备"}
+              </text>
+              <SlIcon name="expand_more" size={14} color="muted" />
+            </SlButton>
+            {device && (
+              <text
+                className={classes([
+                  "device-play-state",
+                  state.playerStatusState === "error" && "error",
+                ])}
+                text-maxline="1"
+              >
+                {state.deviceConnecting
+                  ? "连接中"
+                  : state.playerStatusState === "error"
+                    ? "状态暂不可用"
+                    : state.playerStatusState !== "ready"
+                      ? "同步中"
+                      : state.player.is_playing
+                        ? "播放中"
+                        : state.player.current_song
+                          ? "已暂停"
+                          : "待机"}
+              </text>
+            )}
+          </view>
         </view>
         <view className="appbar-actions row">
-          <SlButton
-            variant="icon"
-            icon="speaker_group"
-            title="选择设备"
-            disabled={state.loading}
-            onClick={() => {
-              navigation.devicePickerOpen = true;
-            }}
-          />
-          <SlButton
-            variant="icon"
-            icon="refresh"
-            title="刷新"
-            disabled={state.refreshing || state.loading}
-            onClick={() => run(store.refreshAll)}
-          />
           <SlButton
             variant="icon"
             icon="settings"
@@ -306,7 +349,7 @@ function SongList() {
               variant="icon"
               icon="my_location"
               title="定位当前播放"
-              onClick={locate}
+              onClick={() => run(locate)}
             />
           </view>
         )}
@@ -319,10 +362,26 @@ function SongList() {
             />
           </SlEmptyState>
         ) : state.loading || state.songsLoading ? (
-          <view className="empty-state">
-            <text className="muted">
-              {state.loading ? "正在加载歌单…" : "正在加载歌曲…"}
-            </text>
+          <view
+            className="song-list-skeleton"
+            accessibility-label={
+              state.loading ? "正在加载歌单" : "正在加载歌曲"
+            }
+          >
+            {state.selectedPlaylistId && <SongListHeader />}
+            {Array.from({ length: 8 }, (_, index) => (
+              <view
+                key={index}
+                className="song-skeleton-row"
+                style={{ height: `${rowHeight}px` }}
+              >
+                <view className="skeleton-cover" />
+                <view className="skeleton-copy">
+                  <view className="skeleton-title" />
+                  <view className="skeleton-artist" />
+                </view>
+              </view>
+            ))}
           </view>
         ) : state.songsError ? (
           <SlEmptyState title="歌曲加载失败" description={state.songsError}>
@@ -336,15 +395,7 @@ function SongList() {
           </SlEmptyState>
         ) : state.selectedPlaylistId ? (
           <>
-            <view className="song-list-header">
-              <text className="song-index">#</text>
-              <view className="song-header-cover" />
-              <text className="song-header-title">标题</text>
-              <text className="song-header-artist">艺术家</text>
-              <text className="song-header-album">专辑</text>
-              <text className="song-duration">时长</text>
-              <view className="song-header-actions" />
-            </view>
+            <SongListHeader />
             <scroll-view
               className="songs-scroll"
               scroll-y
@@ -420,9 +471,15 @@ function SongList() {
                     )?.is_virtual && (
                       <SlButton
                         variant="icon"
-                        icon="delete"
-                        title="删除歌曲"
-                        onClick={() => run(() => remove(song))}
+                        icon="more_vert"
+                        title="歌曲操作"
+                        onClick={() => {
+                          navigation.selectOpen = true;
+                          setSongAction({
+                            song,
+                            playlistId: state.selectedPlaylistId,
+                          });
+                        }}
                       />
                     )}
                   </view>
@@ -434,13 +491,33 @@ function SongList() {
                   flexShrink: 0,
                 }}
               />
-              {state.songsHasMore && (
-                <SlButton
-                  label={state.songsLoadingMore ? "正在加载…" : "加载更多"}
-                  disabled={state.songsLoadingMore}
-                  onClick={() => run(store.loadMoreSongs)}
-                />
-              )}
+              <view className="songs-page-feedback">
+                <text className="muted">
+                  {state.songsHasMore
+                    ? `已加载 ${state.songs.length} 首${state.songsTotal !== null && !state.playlists.find((p) => String(p.id) === state.selectedPlaylistId)?.is_virtual ? ` / 共 ${state.songsTotal} 首` : ""}`
+                    : state.songSearch.trim()
+                      ? `找到 ${songs.length} 首`
+                      : `已全部加载，共 ${songs.length} 首`}
+                </text>
+                {!!state.songsMoreError && (
+                  <text className="songs-page-error" text-maxline="3">
+                    加载失败：{state.songsMoreError}
+                  </text>
+                )}
+                {state.songsHasMore && (
+                  <SlButton
+                    label={
+                      state.songsLoadingMore
+                        ? "正在加载…"
+                        : state.songsMoreError
+                          ? "重试加载"
+                          : "加载更多"
+                    }
+                    disabled={state.songsLoadingMore}
+                    onClick={() => run(() => store.loadMoreSongs(true))}
+                  />
+                )}
+              </view>
               {!songs.length && !state.songsHasMore && (
                 <text className="empty-state muted">没有匹配的歌曲</text>
               )}
@@ -454,11 +531,35 @@ function SongList() {
           />
         )}
       </view>
+      {songAction && (
+        <Modal className="song-action-sheet" close={closeSongActions}>
+          <text className="section-title" text-maxline="2">
+            {songAction.song.title || "歌曲操作"}
+          </text>
+          <SlButton
+            label="从歌单移除"
+            onClick={() => {
+              const action = songAction;
+              closeSongActions();
+              run(() => remove(action.song, false, action.playlistId));
+            }}
+          />
+          <SlButton
+            className="danger-action"
+            label="从曲库永久删除"
+            onClick={() => {
+              const action = songAction;
+              closeSongActions();
+              run(() => remove(action.song, true, action.playlistId));
+            }}
+          />
+        </Modal>
+      )}
     </view>
   );
 }
 function Settings() {
-  useObserved(navigation);
+  useObserved(state, navigation);
   const { width, height } = useContext(Viewport),
     wide = width >= 600;
   const current =
@@ -508,84 +609,111 @@ function Settings() {
         <text className="page-title">
           {!wide && category ? category.title : "设置"}
         </text>
-        {state.configSaving && <SlStatusChip label="保存中" tone="info" />}
+        <text
+          className={classes([
+            "config-save-status",
+            state.configSaveState === "error" && "error",
+          ])}
+        >
+          {state.configSaving
+            ? "正在保存…"
+            : state.configSaveState === "error"
+              ? "有更改未保存"
+              : state.configSaveState === "saved"
+                ? "更改已保存"
+                : "自动保存已开启"}
+        </text>
       </view>
-      <view className="settings-layout">
-        {(wide || !current) && (
+      {state.configSaveState === "error" && (
+        <view className="config-save-error">
+          <text>保存失败：{state.configSaveError}</text>
+          <SlButton
+            label="重试保存"
+            disabled={state.configSaving}
+            onClick={() => {
+              void store.retryConfigSave();
+            }}
+          />
+        </view>
+      )}
+      <CompactSettingsContext.Provider value={!wide}>
+        <view className="settings-layout">
+          {(wide || !current) && (
+            <view
+              className="settings-menu-panel"
+              style={{ display: wide || !current ? "flex" : "none" }}
+            >
+              <scroll-view className="settings-menu" scroll-y>
+                {categories.map((item) => (
+                  <view
+                    key={item.id}
+                    className={classes([
+                      "category",
+                      current === item.id && "selected",
+                    ])}
+                    bindtap={() => {
+                      navigation.settingsCategory = item.id;
+                    }}
+                  >
+                    <view className="settings-nav-icon">
+                      <SlIcon name={item.icon} color="muted" />
+                    </view>
+                    <view className="settings-nav-copy">
+                      <text className="settings-nav-title">{item.title}</text>
+                      <text className="settings-nav-subtitle" text-maxline="1">
+                        {subtitle(item.id, item.description)}
+                      </text>
+                    </view>
+                    {status(item.id) && (
+                      <SlStatusChip
+                        label={status(item.id)}
+                        tone={
+                          item.id === "device" && !state.accounts.length
+                            ? "warning"
+                            : "neutral"
+                        }
+                      />
+                    )}
+                    <view className="category-chevron">
+                      <SlIcon name="chevron_right" color="muted" />
+                    </view>
+                  </view>
+                ))}
+              </scroll-view>
+            </view>
+          )}
           <view
-            className="settings-menu-panel"
-            style={{ display: wide || !current ? "flex" : "none" }}
+            flatten={false}
+            className="settings-detail"
+            style={{ display: wide || current ? "flex" : "none" }}
           >
-            <scroll-view className="settings-menu" scroll-y>
-              {categories.map((item) => (
+            {categories
+              .filter((item) => visited.includes(item.id))
+              .map((item) => (
                 <view
                   key={item.id}
-                  className={classes([
-                    "category",
-                    current === item.id && "selected",
-                  ])}
-                  bindtap={() => {
-                    navigation.settingsCategory = item.id;
+                  flatten={false}
+                  className="settings-panel"
+                  style={{
+                    display: current === item.id ? "flex" : "none",
+                    visibility: current === item.id ? "visible" : "hidden",
                   }}
                 >
-                  <view className="settings-nav-icon">
-                    <SlIcon name={item.icon} color="muted" />
-                  </view>
-                  <view className="settings-nav-copy">
-                    <text className="settings-nav-title">{item.title}</text>
-                    <text className="settings-nav-subtitle" text-maxline="1">
-                      {subtitle(item.id, item.description)}
-                    </text>
-                  </view>
-                  {status(item.id) && (
-                    <SlStatusChip
-                      label={status(item.id)}
-                      tone={
-                        item.id === "device" && !state.accounts.length
-                          ? "warning"
-                          : "neutral"
-                      }
-                    />
-                  )}
-                  <view className="category-chevron">
-                    <SlIcon name="chevron_right" color="muted" />
-                  </view>
+                  <scroll-view className="settings-scroll" scroll-y>
+                    <view className="settings-header">
+                      <text className="settings-eyebrow">MIoT 设置</text>
+                      <text className="settings-title">{item.title}</text>
+                      <text className="settings-description">
+                        {subtitle(item.id, item.description)}
+                      </text>
+                    </view>
+                    <item.component />
+                  </scroll-view>
                 </view>
               ))}
-            </scroll-view>
           </view>
-        )}
-        <view
-          flatten={false}
-          className="settings-detail"
-          style={{ display: wide || current ? "flex" : "none" }}
-        >
-          {categories
-            .filter((item) => visited.includes(item.id))
-            .map((item) => (
-              <view
-                key={item.id}
-                flatten={false}
-                className="settings-panel"
-                style={{
-                  display: current === item.id ? "flex" : "none",
-                  visibility: current === item.id ? "visible" : "hidden",
-                }}
-              >
-                <scroll-view className="settings-scroll" scroll-y>
-                  <view className="settings-header">
-                    <text className="settings-eyebrow">MIoT 设置</text>
-                    <text className="settings-title">{item.title}</text>
-                    <text className="settings-description">
-                      {subtitle(item.id, item.description)}
-                    </text>
-                  </view>
-                  <item.component />
-                </scroll-view>
-              </view>
-            ))}
         </view>
-      </view>
+      </CompactSettingsContext.Provider>
     </view>
   );
 }
@@ -605,6 +733,8 @@ function Player() {
   const favorite = details.isFavorite.value,
     setFavorite = details.setFavorite;
   const swipeStart = useRef<number | null>(null);
+  const [followLyrics, setFollowLyrics] = useState(true);
+  const [sleepPanelHeight, setSleepPanelHeight] = useState(320);
   const [favoriteBusy, setFavoriteBusy] = useState(false);
   const [sleep, setSleep] = useState<SleepTimerStatus>({
     active: false,
@@ -644,7 +774,15 @@ function Player() {
     -1,
   );
   useEffect(() => {
-    if (navigation.page === "player" && activeLine >= 0) {
+    setFollowLyrics(true);
+  }, [identity, navigation.page]);
+  useEffect(() => {
+    if (
+      followLyrics &&
+      navigation.page === "player" &&
+      activeLine >= 0 &&
+      (width >= 600 || navigation.playerPage === 1)
+    ) {
       try {
         lynx
           .createSelectorQuery()
@@ -658,7 +796,7 @@ function Player() {
           .exec();
       } catch {}
     }
-  }, [activeLine, navigation.playerPage]);
+  }, [activeLine, navigation.playerPage, navigation.page, followLyrics]);
   async function toggleFavorite() {
     if (!song || favoriteBusy) return;
     const previous = favorite;
@@ -693,7 +831,7 @@ function Player() {
     96,
     Math.min(
       narrow ? (height < 650 ? width * 0.54 : width * 0.72) : 360,
-      narrow ? 320 : height - 360,
+      narrow ? Math.max(96, height - 390) : height - 360,
     ),
   );
   const full = navigation.page === "player";
@@ -705,6 +843,13 @@ function Player() {
   useEffect(() => {
     if (!popup) {
       setPopupPosition(null);
+      return;
+    }
+    if (popup === "sleep") {
+      setPopupPosition({
+        width: `${Math.min(360, width - 32)}px`,
+        maxHeight: `${Math.max(1, height - 32)}px`,
+      });
       return;
     }
     let active = true;
@@ -919,7 +1064,13 @@ function Player() {
                       !narrow || navigation.playerPage === 1 ? "flex" : "none",
                   }}
                 >
-                  <scroll-view className="lyrics-scroll" scroll-y>
+                  <scroll-view
+                    className="lyrics-scroll"
+                    scroll-y
+                    bindtouchmove={() => setFollowLyrics(false)}
+                    bindwheel={() => setFollowLyrics(false)}
+                    bindmousedown={() => setFollowLyrics(false)}
+                  >
                     {lyricLoading && (
                       <text className="lyrics-empty">正在获取歌词…</text>
                     )}
@@ -948,7 +1099,11 @@ function Player() {
                         ])}
                         bindtap={
                           Number.isFinite(line.time)
-                            ? () => run(() => store.seekPlayer(line.time))
+                            ? () =>
+                                run(async () => {
+                                  await store.seekPlayer(line.time);
+                                  setFollowLyrics(true);
+                                })
                             : undefined
                         }
                       >
@@ -956,6 +1111,13 @@ function Player() {
                       </view>
                     ))}
                   </scroll-view>
+                  {!followLyrics && lyrics.length > 0 && (
+                    <SlButton
+                      className="lyrics-follow"
+                      label="回到当前歌词"
+                      onClick={() => setFollowLyrics(true)}
+                    />
+                  )}
                 </view>
               )}
             </view>
@@ -969,7 +1131,9 @@ function Player() {
                 bindtap={() => {
                   navigation.playerPage = 0;
                 }}
-              />
+              >
+                <view className="page-dot-mark" event-through />
+              </view>
               <view
                 className={classes([
                   "page-dot",
@@ -979,8 +1143,10 @@ function Player() {
                 bindtap={() => {
                   navigation.playerPage = 1;
                 }}
-              />
-              <text className="swipe-hint">
+              >
+                <view className="page-dot-mark" event-through />
+              </view>
+              <text className="swipe-hint" event-through>
                 {navigation.playerPage === 0 ? "左滑看歌词" : "右滑看封面"}
               </text>
             </view>
@@ -1188,26 +1354,58 @@ function Player() {
             />
           )}
           {popup === "sleep" && (
-            <SleepTimerPanel
-              status={sleep}
-              isLive={!!song?.is_live}
-              onSet={(mode: "time" | "songs", value: number) =>
-                run(() => setTimer(mode, value))
-              }
-              onCancel={() =>
-                run(async () => {
-                  await post("/voice-commands/sleep-timer/cancel", target());
-                  if (identity !== identityRef.current) return;
-                  setSleep({
-                    active: false,
-                    mode: "time",
-                    remaining: 0,
-                    total: 0,
-                  });
-                  navigation.playerPopup = "";
-                })
-              }
-            />
+            <>
+              <view className="sleep-popup-header">
+                <text className="section-title">延迟停止</text>
+                <SlButton
+                  variant="icon"
+                  icon="close"
+                  title="关闭延迟停止"
+                  onClick={() => {
+                    navigation.playerPopup = "";
+                  }}
+                />
+              </view>
+              <scroll-view
+                className="sleep-popup-scroll"
+                scroll-y
+                style={{
+                  height: `${Math.max(1, Math.min(sleepPanelHeight, height - 112))}px`,
+                }}
+              >
+                <view
+                  className="sleep-panel-content"
+                  bindlayoutchange={(event) => {
+                    const next = event.detail?.height;
+                    if (next > 0) setSleepPanelHeight(next);
+                  }}
+                >
+                  <SleepTimerPanel
+                    status={sleep}
+                    isLive={!!song?.is_live}
+                    onSet={(mode: "time" | "songs", value: number) =>
+                      run(() => setTimer(mode, value))
+                    }
+                    onCancel={() =>
+                      run(async () => {
+                        await post(
+                          "/voice-commands/sleep-timer/cancel",
+                          target(),
+                        );
+                        if (identity !== identityRef.current) return;
+                        setSleep({
+                          active: false,
+                          mode: "time",
+                          remaining: 0,
+                          total: 0,
+                        });
+                        navigation.playerPopup = "";
+                      })
+                    }
+                  />
+                </view>
+              </scroll-view>
+            </>
           )}
           {popup === "more" && (
             <>
@@ -1243,28 +1441,20 @@ function Player() {
                 !state.playlists.find((p) => p.id === state.player.playlist_id)
                   ?.is_virtual && (
                   <SlButton
-                    label="从当前播放歌单删除"
+                    label="从当前歌单移除"
                     onClick={() =>
                       run(async () => {
                         const playlistId = state.player.playlist_id;
                         const answer = await store.confirmAction(
-                          "删除当前歌曲",
-                          `确定删除《${song.title}》？`,
-                          "删除",
-                          true,
-                          { label: "同时从曲库中永久删除歌曲文件" },
+                          "从当前歌单移除",
+                          `将《${song.title}》从当前歌单移除？歌曲文件会保留。`,
+                          "移除",
+                          false,
                         );
                         if (answer.confirmed) {
-                          await post("/player/song/remove", {
-                            ...target(),
-                            playlist_id: playlistId,
-                            song_id: song.id,
-                            from_library: answer.checked,
+                          await store.removeSongFromPlaylist(song, {
+                            playlistId,
                           });
-                          if (String(playlistId) === state.selectedPlaylistId)
-                            state.songs = state.songs.filter(
-                              (item) => item.id !== song.id,
-                            );
                           navigation.playerPopup = "";
                         }
                       })
@@ -1279,26 +1469,122 @@ function Player() {
   );
 }
 
+function DevicePicker({ height }: { height: number }) {
+  useObserved(state);
+  const [search, setSearch] = useState("");
+  const count = state.devices.reduce(
+    (sum, account) => sum + account.devices.length,
+    0,
+  );
+  const searchable = count > 8;
+  const keyword = search.trim().toLowerCase();
+  const accounts = state.devices
+    .map((account) => ({
+      ...account,
+      devices: account.devices.filter((device) =>
+        `${account.account_name || account.account_id} ${store.deviceName(device)}`
+          .toLowerCase()
+          .includes(keyword),
+      ),
+    }))
+    .filter((account) => account.devices.length);
+  const listHeight = Math.max(
+    48,
+    Math.min(
+      400,
+      height - 156 - (searchable ? 52 : 0),
+      accounts.reduce(
+        (sum, account) => sum + 36 + account.devices.length * 48,
+        0,
+      ) || 48,
+    ),
+  );
+  return (
+    <Modal
+      className="device-picker-overlay"
+      close={() => {
+        navigation.devicePickerOpen = false;
+      }}
+    >
+      <text className="section-title">选择播放设备</text>
+      {searchable && (
+        <SlInput
+          modelValue={search}
+          onUpdateModelValue={setSearch}
+          placeholder="搜索设备或账号"
+          aria-label="搜索播放设备"
+        />
+      )}
+      <scroll-view
+        className="device-picker-options"
+        style={{ height: `${listHeight}px` }}
+        scroll-y
+      >
+        {accounts.map((account) => (
+          <view key={account.account_id} className="device-picker-account">
+            <text
+              className="device-picker-account-title muted"
+              text-maxline="1"
+            >
+              {account.account_name || account.account_id}
+            </text>
+            {account.devices.map((device) => {
+              const selected =
+                state.currentDeviceId === store.deviceId(device) &&
+                state.currentAccountId === account.account_id;
+              return (
+                <SlButton
+                  className={classes([
+                    "device-picker-choice",
+                    selected && "selected",
+                  ])}
+                  key={store.deviceId(device)}
+                  title={store.deviceName(device)}
+                  onClick={() =>
+                    run(async () => {
+                      await store.selectDevice(
+                        account.account_id,
+                        store.deviceId(device),
+                      );
+                      navigation.devicePickerOpen = false;
+                    })
+                  }
+                >
+                  <text className="device-picker-name" text-maxline="1">
+                    {store.deviceName(device)}
+                  </text>
+                  {selected && (
+                    <text className="device-picker-current">当前</text>
+                  )}
+                </SlButton>
+              );
+            })}
+          </view>
+        ))}
+        {!count && (
+          <SlButton
+            className="device-picker-choice"
+            label="添加账号与设备"
+            onClick={() => {
+              navigation.devicePickerOpen = false;
+              openPage("settings");
+              navigation.settingsCategory = "device";
+            }}
+          />
+        )}
+        {!!count && !accounts.length && (
+          <text className="device-picker-empty muted">没有匹配的设备</text>
+        )}
+      </scroll-view>
+    </Modal>
+  );
+}
+
 export function App() {
   useObserved(state, navigation);
   const [theme, setTheme] = useState(getTheme());
   const [width, setWidth] = useState(390);
   const [height, setHeight] = useState(800);
-  const deviceCount = state.devices.reduce(
-    (sum, account) => sum + account.devices.length,
-    0,
-  );
-  const deviceListHeight = Math.max(
-    48,
-    Math.min(
-      400,
-      height - 156,
-      state.devices.reduce(
-        (sum, account) => sum + 36 + account.devices.length * 48,
-        0,
-      ) + (deviceCount ? 0 : 48),
-    ),
-  );
   const measure = () => {
     try {
       lynx
@@ -1353,8 +1639,7 @@ export function App() {
         flatten={false}
         bindlayoutchange={(event: any) => {
           const next = event.detail?.width || event.detail?.layout?.width;
-          const nextHeight =
-            event.detail?.height || event.detail?.layout?.height;
+          const nextHeight = event.detail?.height;
           if (nextHeight > 0) setHeight(nextHeight);
           if (next > 0) setWidth(next);
           else measure();
@@ -1383,67 +1668,7 @@ export function App() {
             (state.player.current_song || width >= 600)) ||
             navigation.page === "player") && <Player />}
         </Viewport.Provider>
-        {navigation.devicePickerOpen && (
-          <Modal
-            className="device-picker-overlay"
-            close={() => {
-              navigation.devicePickerOpen = false;
-            }}
-          >
-            <text className="section-title">选择播放设备</text>
-            <scroll-view
-              className="device-picker-options"
-              style={{ height: `${deviceListHeight}px` }}
-              scroll-y
-            >
-              {state.devices.map((account) => (
-                <view
-                  key={account.account_id}
-                  className="device-picker-account"
-                >
-                  <text
-                    className="device-picker-account-title muted"
-                    text-maxline="1"
-                  >
-                    {account.account_name || account.account_id}
-                  </text>
-                  {account.devices.map((device) => (
-                    <SlButton
-                      className="device-picker-choice"
-                      key={store.deviceId(device)}
-                      label={
-                        (state.currentDeviceId === store.deviceId(device) &&
-                        state.currentAccountId === account.account_id
-                          ? "✓ "
-                          : "") + store.deviceName(device)
-                      }
-                      onClick={() =>
-                        run(async () => {
-                          await store.selectDevice(
-                            account.account_id,
-                            store.deviceId(device),
-                          );
-                          navigation.devicePickerOpen = false;
-                        })
-                      }
-                    />
-                  ))}
-                </view>
-              ))}
-              {!deviceCount && (
-                <SlButton
-                  className="device-picker-choice"
-                  label="添加账号与设备"
-                  onClick={() => {
-                    navigation.devicePickerOpen = false;
-                    openPage("settings");
-                    navigation.settingsCategory = "device";
-                  }}
-                />
-              )}
-            </scroll-view>
-          </Modal>
-        )}
+        {navigation.devicePickerOpen && <DevicePicker height={height} />}
         {state.confirm.open && (
           <Modal
             className="confirm-overlay"

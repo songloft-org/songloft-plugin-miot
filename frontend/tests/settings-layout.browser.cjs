@@ -105,10 +105,26 @@ const categories = {
           height: width === 320 ? 520 : 740,
           hasTouch: width < 600,
         });
+        let failConfigSave = false;
         await page.setRequestInterception(true);
         page.on("request", (request) => {
           const u = new URL(request.url()),
             prefix = "/api/v1/jsplugin/miot/api";
+          if (
+            failConfigSave &&
+            request.method() === "POST" &&
+            u.pathname === "/api/v1/jsplugin/miot/api/config"
+          ) {
+            void request.respond({
+              status: 503,
+              contentType: "application/json",
+              body: JSON.stringify({
+                success: false,
+                error: "验证保存失败重试",
+              }),
+            });
+            return;
+          }
           let data;
           if (request.method() === "GET" && u.pathname.startsWith(prefix)) {
             const path = u.pathname.slice(prefix.length);
@@ -328,6 +344,54 @@ const categories = {
           await new Promise((resolve) => setTimeout(resolve, 150));
           let fieldLayout;
           if (category === "设备") {
+            assert.ok(
+              await page.evaluate(
+                () =>
+                  [
+                    ...document
+                      .getElementById("plugin-view")
+                      .shadowRoot.querySelectorAll(".section-save-mode"),
+                  ].filter((el) => el.textContent === "手动保存").length >= 2,
+              ),
+              "server/DLNA manual save areas must be labeled",
+            );
+            if (width < 600) {
+              await click(
+                '.section-description-toggle[accessibility-label="展开DLNA 接收器说明"]',
+              );
+              await page.waitForFunction(() =>
+                document
+                  .getElementById("plugin-view")
+                  .shadowRoot.querySelector(
+                    '.section-description-toggle[accessibility-label="收起DLNA 接收器说明"]',
+                  ),
+              );
+              const expandedHeight = await page.evaluate(
+                () =>
+                  document
+                    .getElementById("plugin-view")
+                    .shadowRoot.querySelector(
+                      '.section-description-toggle[accessibility-label="收起DLNA 接收器说明"]',
+                    )
+                    .closest(".section-heading-copy")
+                    .querySelector(".section-description")
+                    .getBoundingClientRect().height,
+              );
+              assert.ok(
+                width === 320 ? expandedHeight > 36 : expandedHeight >= 36,
+                "full instructions must be readable",
+              );
+              await click(
+                '.section-description-toggle[accessibility-label="收起DLNA 接收器说明"]',
+              );
+              await page.waitForFunction(() =>
+                document
+                  .getElementById("plugin-view")
+                  .shadowRoot.querySelector(
+                    '.section-description-toggle[accessibility-label="展开DLNA 接收器说明"]',
+                  ),
+              );
+            }
             // Inspect the native editor in its shadow root; x-input itself uses display:contents.
             await page.evaluate(() => {
               const root = document.getElementById("plugin-view").shadowRoot;
@@ -498,6 +562,66 @@ const categories = {
                 y: rect.y + rect.height / 2,
               };
             });
+            if (width === 320 && theme === "light") {
+              failConfigSave = true;
+              const failedSaved = page.waitForResponse(
+                (response) =>
+                  response.url().endsWith("/api/config") &&
+                  response.request().method() === "POST",
+              );
+              await page.mouse.click(rect.x, rect.y);
+              await failedSaved;
+              await page.waitForFunction(() =>
+                document
+                  .getElementById("plugin-view")
+                  .shadowRoot.querySelector(".config-save-error")
+                  ?.textContent.includes("验证保存失败重试"),
+              );
+              assert.equal(
+                (await api("/config")).force_mp3,
+                before,
+                "failed saves must not claim persistence",
+              );
+              failConfigSave = false;
+              await click(".config-save-error .sl-button", "重试保存");
+              await page.waitForFunction(
+                () =>
+                  !document
+                    .getElementById("plugin-view")
+                    .shadowRoot.querySelector(".config-save-error"),
+              );
+              assert.equal(
+                (await api("/config")).force_mp3,
+                !before,
+                "retry must persist the retained change",
+              );
+              assert.equal(
+                await page.evaluate(
+                  () =>
+                    document
+                      .getElementById("plugin-view")
+                      .shadowRoot.querySelector(".snackbar")?.textContent || "",
+                ),
+                "",
+                "ordinary save feedback stays inline",
+              );
+              // Restore the value before running the normal save/restore assertions.
+              const restoredAfterRetry = page.waitForResponse(
+                (response) =>
+                  response.url().endsWith("/api/config") &&
+                  response.request().method() === "POST",
+              );
+              await page.mouse.click(rect.x, rect.y);
+              await restoredAfterRetry;
+              await page.waitForFunction(
+                () =>
+                  document
+                    .getElementById("plugin-view")
+                    .shadowRoot.querySelector(".config-save-status")
+                    ?.textContent === "更改已保存",
+              );
+              assert.equal((await api("/config")).force_mp3, before);
+            }
             const saved = page.waitForResponse(
               (response) =>
                 response.url().endsWith("/api/config") &&

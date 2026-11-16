@@ -209,7 +209,7 @@ export default function PlaybackSettings(props: any) {
   const vm = usePageState(pageState, props);
   return (
     <>
-      <SectionCard title="音频格式" icon="audio_file">
+      <SectionCard title="音频格式" icon="audio_file" saveMode="auto">
         <SettingRow
           title="统一转为 MP3"
           subtitle="部分音箱仅支持 MP3，开启后播放时自动转码"
@@ -249,6 +249,7 @@ export default function PlaybackSettings(props: any) {
       </SectionCard>
       <SectionCard
         title="切歌过渡"
+        saveMode="auto"
         icon="swap_horiz"
         description="负数提前切歌，正数推后切歌；0 为自然播完。范围 -30 到 30 秒。"
       >
@@ -259,6 +260,10 @@ export default function PlaybackSettings(props: any) {
               vm.transition = $event;
             }}
             type="number"
+            min={-30}
+            max={30}
+            step={1}
+            unit="秒"
             aria-label="切歌偏移秒数"
             onChange={($event: any) => {
               vm.saveNumber('song_transition_offset', vm.transition, -30, 30);
@@ -297,6 +302,7 @@ export default function PlaybackSettings(props: any) {
       </SectionCard>
       <SectionCard
         title="触屏歌词与封面"
+        saveMode="auto"
         icon="lyrics"
         description="云端歌词和封面匹配依赖 Music API。在「设备 → 高级设备兼容」中取消型号勾选后，该型号使用直链播放，无法使用这项匹配功能。"
       >
@@ -446,6 +452,10 @@ export default function PlaybackSettings(props: any) {
               <SlInput
                 modelValue={vm.announcementDelay}
                 type="number"
+                min={0}
+                max={30}
+                step={1}
+                unit="秒"
                 aria-label="公告等待时间"
                 onUpdateModelValue={($event: any) => {
                   vm.announcementDelay = $event;

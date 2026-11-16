@@ -246,15 +246,42 @@ const height = Number(process.env.MIOT_TEST_HEIGHT || 740);
     const beforeToolbar = await toolbarGeometry();
     status.is_playing = false;
     progressAvailable = false;
-    await click(".library-heading .sl-button", "刷新");
-    await page.waitForFunction(
-      () =>
-        !document
+    assert.equal(
+      await page.evaluate(() =>
+        document
           .getElementById("plugin-view")
-          .shadowRoot.querySelector(
-            '.library-heading .sl-button[accessibility-label="刷新"]',
-          )
-          .classList.contains("disabled"),
+          .shadowRoot.querySelector(".library-heading .page-title"),
+      ),
+      null,
+      "host already identifies the plugin; omit the repeated title",
+    );
+    assert.equal(
+      await page.evaluate(
+        () =>
+          document
+            .getElementById("plugin-view")
+            .shadowRoot.querySelectorAll(".appbar-actions .sl-button").length,
+      ),
+      1,
+      "only settings remains in the header actions",
+    );
+    await click('.library-heading .sl-button[accessibility-label="设置"]');
+    await click(".category", "工具箱");
+    await click(".sl-button", "刷新内容");
+    await page.waitForFunction(() =>
+      document
+        .getElementById("plugin-view")
+        .shadowRoot.querySelector(
+          '.sl-button[accessibility-label="刷新内容"]:not(.disabled)',
+        ),
+    );
+    await click('.page-toolbar .sl-button[accessibility-label="返回"]');
+    if (width < 600)
+      await click('.page-toolbar .sl-button[accessibility-label="返回"]');
+    await page.waitForFunction(() =>
+      document
+        .getElementById("plugin-view")
+        .shadowRoot.querySelector(".playlist-context"),
     );
     const afterToolbar = await toolbarGeometry();
     for (const key of Object.keys(beforeToolbar))
@@ -544,7 +571,7 @@ const height = Number(process.env.MIOT_TEST_HEIGHT || 740);
     await click(".sleep-timer-options .native-button", "15 分钟");
     await waitCommand("/voice-commands/sleep-timer");
     await click(".player-tools .sl-button", "更多");
-    await click(".modal-card .sl-button", "从当前播放歌单删除");
+    await click(".modal-card .sl-button", "从当前歌单移除");
     await assertOverlay(".confirm-overlay");
     await click(".confirm-overlay .sl-button", "关闭");
     await page.waitForFunction(

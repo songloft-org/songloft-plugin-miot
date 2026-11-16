@@ -106,6 +106,8 @@ export const state = reactive({
   config: { ...defaultConfig } as MiotConfig,
   configLoaded: false,
   configSaving: false,
+  configSaveState: "idle" as "idle" | "saving" | "saved" | "error",
+  configSaveError: "",
   accounts: [] as Account[],
   devices: [] as AccountDevices[],
   groups: [] as DeviceGroup[],
@@ -120,6 +122,8 @@ export const state = reactive({
   songsHasMore: false,
   songsNextOffset: 0,
   songsError: "",
+  songsMoreError: "",
+  songsTotal: null as number | null,
   songSearch: "",
   // 当前设备在当前所选歌单上次播到哪一首。切歌单/切设备都要重取：进度是按
   // 「设备 × 歌单」记的，换任一维度都是另一条记录。
@@ -127,6 +131,7 @@ export const state = reactive({
   player: {} as PlayerStatus,
   playerBusy: false,
   statusConnected: false,
+  playerStatusState: "unknown" as "unknown" | "loading" | "ready" | "error",
   schedules: [] as ScheduledTask[],
   scheduleLogs: [] as ScheduleLog[],
   voiceCommands: [] as VoiceCommand[],
@@ -276,7 +281,7 @@ export function resolveConfirm(value: boolean): void {
 
 /**
  * 从歌单删除一首歌。可选 `fromLibrary=true` 时同时从曲库永久删除
- * （封面 + 缓存都清）。
+ * （封面 + 缓存都清，本地原始音乐文件保留）。
  *
  * 音箱正播那首被删时，后端会先切下一首再摘除；前端只负责刷新本地歌曲列表和
  * 播放状态（不重新拉整份进度：切换靠 status WS 推）。收藏歌单删除后，
@@ -284,10 +289,10 @@ export function resolveConfirm(value: boolean): void {
  */
 export async function removeSongFromPlaylist(
   song: Song,
-  opts: { fromLibrary?: boolean } = {},
+  opts: { fromLibrary?: boolean; playlistId?: string | number } = {},
 ): Promise<void> {
-  if (!state.selectedPlaylistId) throw new Error("请先选择歌单");
-  const playlistId = state.selectedPlaylistId;
+  const playlistId = String(opts.playlistId ?? state.selectedPlaylistId);
+  if (!playlistId) throw new Error("请先选择歌单");
   try {
     await post("/player/song/remove", {
       playlist_id: Number(playlistId),
@@ -300,6 +305,8 @@ export async function removeSongFromPlaylist(
       const loaded = state.songs.some((item) => item.id === song.id);
       songRequest++;
       state.songsLoadingMore = false;
+      if (loaded && state.songsTotal !== null)
+        state.songsTotal = Math.max(0, state.songsTotal - 1);
       if (loaded && state.songsPaged)
         state.songsNextOffset = Math.max(0, state.songsNextOffset - 1);
       state.songs = state.songs.filter((item) => item.id !== song.id);
@@ -348,33 +355,71 @@ function configFingerprint(): string {
   return JSON.stringify(state.config);
 }
 
-export async function saveConfig(patch: Partial<MiotConfig>): Promise<void> {
-  Object.assign(state.config, patch);
-  const fingerprint = configFingerprint();
-  if (fingerprint === savedConfig && !configSavePromise) return;
-  pendingConfigPatch = { ...(pendingConfigPatch || {}), ...patch };
+export function saveConfig(patch: Partial<MiotConfig>): Promise<void> {
+  const snapshot = JSON.parse(JSON.stringify(patch)) as Partial<MiotConfig>;
+  Object.assign(state.config, snapshot);
+  const saved = JSON.parse(savedConfig || "{}") as Partial<MiotConfig>;
+  const changed = Object.keys(snapshot).some(
+    (key) =>
+      JSON.stringify(snapshot[key as keyof MiotConfig]) !==
+      JSON.stringify(saved[key as keyof MiotConfig]),
+  );
+  if (!changed && !pendingConfigPatch && !configSavePromise)
+    return Promise.resolve();
+  pendingConfigPatch = { ...(pendingConfigPatch || {}), ...snapshot };
   if (configSavePromise) return configSavePromise;
 
   state.configSaving = true;
+  state.configSaveState = "saving";
+  state.configSaveError = "";
   configSavePromise = (async () => {
     try {
       while (pendingConfigPatch) {
         const nextPatch = pendingConfigPatch;
         pendingConfigPatch = null;
-        await post("/config", nextPatch);
-        savedConfig = configFingerprint();
+        try {
+          await post("/config", nextPatch);
+        } catch (error) {
+          // Keep the failed write and prefer any newer edits for the same key.
+          pendingConfigPatch = { ...nextPatch, ...(pendingConfigPatch || {}) };
+          throw error;
+        }
+        if (
+          nextPatch.server_host !== undefined &&
+          state.config.server_host === nextPatch.server_host
+        ) {
+          const host = nextPatch.server_host.trim();
+          state.config.server_host_status = !host
+            ? "empty"
+            : /^https?:\/\/(?:localhost|127(?:\.\d{1,3}){3}|\[::1\])(?::|\/|$)/i.test(
+                  host,
+                )
+              ? "loopback"
+              : "ok";
+        }
+        savedConfig = JSON.stringify({
+          ...JSON.parse(savedConfig || "{}"),
+          ...nextPatch,
+        });
       }
-      notify("设置已保存", "success");
+      state.configSaveState = "saved";
     } catch (error) {
-      pendingConfigPatch = null;
-      notify(messageOf(error), "error");
+      state.configSaveState = "error";
+      state.configSaveError = messageOf(error);
       throw error;
     } finally {
       state.configSaving = false;
       configSavePromise = null;
     }
   })();
+  // Automatic change handlers may intentionally ignore the returned promise.
+  // Awaiting callers still receive rejection; the persistent UI owns feedback.
+  void configSavePromise.catch(() => {});
   return configSavePromise;
+}
+
+export function retryConfigSave(): Promise<void> {
+  return saveConfig({});
 }
 
 export async function loadAccountsAndDevices(): Promise<void> {
@@ -471,7 +516,12 @@ export async function loadPlaylists(): Promise<void> {
 
 let songRequest = 0;
 let songSearchTimer: ReturnType<typeof setTimeout> | undefined;
-type SongPage = { songs: Song[]; next_offset: number; has_more: boolean };
+type SongPage = {
+  songs: Song[];
+  next_offset: number;
+  has_more: boolean;
+  total?: number;
+};
 function requestSongPage(playlistId: string, offset: number, keyword: string) {
   return get<SongPage | Song[]>(
     `/playlists/${encodeURIComponent(playlistId)}/songs${query({ limit: 100, offset, keyword })}`,
@@ -487,6 +537,11 @@ function applySongPage(page: SongPage | Song[], append: boolean) {
         ),
       ]
     : rows;
+  state.songsTotal = Array.isArray(page)
+    ? page.length
+    : typeof page.total === "number" && Number.isFinite(page.total)
+      ? Math.max(0, page.total)
+      : null;
   state.songsPaged = !Array.isArray(page);
   state.songsHasMore =
     !Array.isArray(page) &&
@@ -498,6 +553,8 @@ async function loadFirstSongs() {
   const request = ++songRequest;
   state.songs = [];
   state.songsError = "";
+  state.songsMoreError = "";
+  state.songsTotal = null;
   state.songsNextOffset = 0;
   state.songsHasMore = false;
   state.songsPaged = true;
@@ -517,11 +574,17 @@ async function loadFirstSongs() {
   }
 }
 let pendingSongPage: Promise<void> | undefined;
-export function loadMoreSongs(): Promise<void> {
+export function loadMoreSongs(retry = false): Promise<void> {
   if (state.songsLoadingMore) return pendingSongPage || Promise.resolve();
-  if (!state.songsHasMore || state.songsLoading) return Promise.resolve();
+  if (
+    !state.songsHasMore ||
+    state.songsLoading ||
+    (state.songsMoreError && !retry)
+  )
+    return Promise.resolve();
   const request = songRequest;
   state.songsLoadingMore = true;
+  state.songsMoreError = "";
   pendingSongPage = (async () => {
     try {
       const page = await requestSongPage(
@@ -531,7 +594,7 @@ export function loadMoreSongs(): Promise<void> {
       );
       if (request === songRequest) applySongPage(page, true);
     } catch (error) {
-      if (request === songRequest) notify(messageOf(error), "error");
+      if (request === songRequest) state.songsMoreError = messageOf(error);
     } finally {
       if (request === songRequest) state.songsLoadingMore = false;
     }
@@ -546,6 +609,7 @@ export function searchSongs(value: string) {
     songRequest++;
     state.songsLoadingMore = false;
     state.songsLoading = true;
+    state.songsMoreError = "";
     songSearchTimer = setTimeout(() => {
       void loadFirstSongs();
     }, 250);
@@ -561,6 +625,8 @@ export async function ensureSongLoaded(id: number): Promise<number> {
   ) {
     const offset = state.songsNextOffset;
     await loadMoreSongs();
+    if (state.songsMoreError)
+      throw new Error(`暂时无法定位歌曲：${state.songsMoreError}`);
     if (offset === state.songsNextOffset) break;
     index = state.songs.findIndex((song) => song.id === id);
   }
@@ -572,6 +638,8 @@ export async function selectPlaylist(playlistId: string): Promise<void> {
   state.songSearch = "";
   state.songs = [];
   state.songsError = "";
+  state.songsMoreError = "";
+  state.songsTotal = null;
   state.playlistProgress = null;
   songRequest += 1;
   state.songsLoadingMore = false;
@@ -797,6 +865,7 @@ export async function refreshPlayerStatus(): Promise<void> {
   if (statusRequestBusy) return;
   statusRequestBusy = true;
   const generation = statusRequestGeneration;
+  if (state.playerStatusState !== "ready") state.playerStatusState = "loading";
   try {
     const status = await get<PlayerStatus>(
       `/player/status${query({
@@ -807,6 +876,7 @@ export async function refreshPlayerStatus(): Promise<void> {
     if (generation === statusRequestGeneration) applyPlayerStatus(status);
   } catch (error) {
     if (generation === statusRequestGeneration && !state.statusConnected) {
+      state.playerStatusState = "error";
       console.warn("[miot] status refresh failed", messageOf(error));
     }
   } finally {
@@ -818,6 +888,7 @@ let volumeSetAt = 0;
 const VOLUME_GRACE_MS = 3000;
 
 function applyPlayerStatus(incoming: PlayerStatus): void {
+  state.playerStatusState = "ready";
   if (volumeSetAt && Date.now() - volumeSetAt < VOLUME_GRACE_MS) {
     incoming = { ...incoming, volume: state.player.volume };
   }
@@ -970,6 +1041,7 @@ function openStatusSocket() {
 
 export function connectStatusStream(): void {
   disconnectStatusStream();
+  state.playerStatusState = "unknown";
   statusManualClose = !appVisible;
   statusAttempts = 0;
   statusLifecycle = onPush((event, data) => {

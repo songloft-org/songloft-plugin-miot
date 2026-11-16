@@ -187,6 +187,7 @@ export default function DLNAReceiverSettings(props: any) {
     <>
       <SectionCard
         title="DLNA 接收器"
+        saveMode="manual"
         icon="speaker_group"
         description="按需为音箱或分组提供 DLNA 入口。原生支持 DLNA 的音箱可关闭插件入口，避免重复显示。"
       >

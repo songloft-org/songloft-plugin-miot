@@ -942,6 +942,10 @@ export default function VoiceSettings(props: any) {
                 <SlInput
                   modelValue={vm.pollInterval}
                   type="number"
+                  min={1}
+                  max={30}
+                  step={1}
+                  unit="秒"
                   onUpdateModelValue={($event: any) => {
                     vm.pollInterval = $event;
                   }}
@@ -1197,6 +1201,9 @@ export default function VoiceSettings(props: any) {
               <SlInput
                 modelValue={vm.maxIndex}
                 type="number"
+                min={1000}
+                max={100000}
+                step={1}
                 onUpdateModelValue={($event: any) => {
                   vm.maxIndex = $event;
                 }}
@@ -1504,6 +1511,10 @@ export default function VoiceSettings(props: any) {
                   <SlInput
                     modelValue={vm.maxMemory}
                     type="number"
+                    min={10}
+                    max={5000}
+                    step={1}
+                    unit="条"
                     onUpdateModelValue={($event: any) => {
                       vm.maxMemory = $event;
                     }}
@@ -1759,6 +1770,10 @@ export default function VoiceSettings(props: any) {
                   vm.songMatchThreshold = $event;
                 }}
                 type="number"
+                min={0}
+                max={100}
+                step={1}
+                unit="分"
                 aria-label="歌曲匹配阈值"
                 onChange={($event: any) => {
                   vm.saveConfig({
@@ -1784,6 +1799,10 @@ export default function VoiceSettings(props: any) {
                 <SlInput
                   modelValue={vm.externalSearchTimeout}
                   type="number"
+                  min={3}
+                  max={60}
+                  step={1}
+                  unit="秒"
                   aria-label="外部搜索超时"
                   onUpdateModelValue={($event: any) => {
                     vm.externalSearchTimeout = $event;

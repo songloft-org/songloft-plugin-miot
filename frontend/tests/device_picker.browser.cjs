@@ -62,6 +62,7 @@ const height = Number(process.env.MIOT_TEST_HEIGHT || 740);
     if (url.pathname.startsWith(prefix)) {
       const path = url.pathname.slice(prefix.length),
         method = request.method();
+      if (path === "/mina/last-selection" && method === "POST") data = {};
       if (path === "/auth/status")
         data = [{ id: "fixture", account: "fixture" }];
       if (path === "/mina/devices")
@@ -183,6 +184,58 @@ const height = Number(process.env.MIOT_TEST_HEIGHT || 740);
     await page.screenshot({
       path: "/tmp/miot-device-picker-" + width + "-" + deviceCount + ".png",
     });
+    if (deviceCount > 8) {
+      const input = await page.evaluateHandle(() =>
+        document
+          .getElementById("plugin-view")
+          .shadowRoot.querySelector(".modal-card x-input")
+          .shadowRoot.querySelector("input"),
+      );
+      await input.asElement().type("设备 30");
+      await page.waitForFunction(
+        () =>
+          document
+            .getElementById("plugin-view")
+            .shadowRoot.querySelectorAll(".device-picker-choice").length === 1,
+      );
+      const target = await page.evaluate(() => {
+        const r = document
+          .getElementById("plugin-view")
+          .shadowRoot.querySelector(".device-picker-choice")
+          .getBoundingClientRect();
+        return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
+      });
+      if (width < 600) await page.touchscreen.tap(target.x, target.y);
+      else await page.mouse.click(target.x, target.y);
+      await page.waitForFunction(
+        () =>
+          !document
+            .getElementById("plugin-view")
+            .shadowRoot.querySelector(".modal-card"),
+      );
+      assert.ok(
+        await page.evaluate(() =>
+          document
+            .getElementById("plugin-view")
+            .shadowRoot.querySelector(".device-target-name")
+            .textContent.includes("30"),
+        ),
+        "chosen device must appear in the main destination control",
+      );
+    }
+    await page.screenshot({
+      path: `/tmp/miot-device-destination-${width}-${deviceCount}.png`,
+    });
+    const destination = await page.evaluate(() => {
+      const root = document.getElementById("plugin-view").shadowRoot;
+      const d = root.querySelector(".device-target").getBoundingClientRect();
+      const a = root.querySelector(".appbar-actions").getBoundingClientRect();
+      return { left: d.left, right: d.right, actionsLeft: a.left };
+    });
+    assert.ok(
+      destination.left >= 0 && destination.right <= destination.actionsLeft,
+      JSON.stringify(destination),
+    );
     console.log(
       JSON.stringify({ passed: true, width, height, deviceCount, geometry }),
     );

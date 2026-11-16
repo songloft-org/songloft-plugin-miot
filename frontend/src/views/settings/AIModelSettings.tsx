@@ -464,6 +464,10 @@ export default function AIModelSettings(props: any) {
             <SlInput
               modelValue={String(vm.state.config.ai_config.timeout || 6)}
               type="number"
+              min={1}
+              max={30}
+              step={1}
+              unit="秒"
               aria-label="AI 口令分析超时"
               onUpdateModelValue={($event: any) => {
                 vm.state.config.ai_config.timeout = Math.max(

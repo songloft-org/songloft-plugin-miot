@@ -20,6 +20,7 @@ const { outputText } = ts.transpileModule(source, {
 
 function statusStore({
   get = async () => ({ position: 42 }),
+  post = async () => ({}),
   webSocket = true,
   paged = false,
 } = {}) {
@@ -99,6 +100,7 @@ function statusStore({
             requests.push(path);
             return get(path);
           },
+          post,
           query: (values) =>
             paged ? "?" + new URLSearchParams(values).toString() : "",
           pluginWebSocketUrl: (path) => path,
@@ -397,4 +399,143 @@ test("locating a song shares an in-flight page and stops as soon as its row is l
   await page;
   assert.equal(await located, 149);
   assert.equal(calls, 2);
+});
+
+test("failed configuration changes survive the next save and can be retried", async () => {
+  const writes = [];
+  let fail = true;
+  const s = statusStore({
+    post: async (path, body) => {
+      writes.push(structuredClone(body));
+      if (fail) throw Error("offline");
+      return {};
+    },
+  }).store;
+  await assert.rejects(s.saveConfig({ force_mp3: true }), /offline/);
+  fail = false;
+  await s.saveConfig({ volume_normalize: true });
+  assert.deepEqual(writes[1], { force_mp3: true, volume_normalize: true });
+  assert.equal(s.state.configSaveState, "saved");
+  assert.equal(s.state.configSaveError, "");
+  assert.equal(
+    s.state.snackbar,
+    null,
+    "routine saves should not cover settings with a toast",
+  );
+});
+test("retry sends a failed configuration patch even without another edit", async () => {
+  let fail = true;
+  const writes = [];
+  const s = statusStore({
+    post: async (path, body) => {
+      writes.push(structuredClone(body));
+      if (fail) throw Error("offline");
+      return {};
+    },
+  }).store;
+  await assert.rejects(s.saveConfig({ force_mp3: true }), /offline/);
+  assert.equal(s.state.configSaveState, "error");
+  assert.match(s.state.configSaveError, /offline/);
+  fail = false;
+  await s.retryConfigSave();
+  assert.deepEqual(writes, [{ force_mp3: true }, { force_mp3: true }]);
+  assert.equal(s.state.configSaveState, "saved");
+});
+test("queued configuration saves keep the latest value and snapshot nested fields", async () => {
+  const writes = [],
+    replies = [];
+  const s = statusStore({
+    post: (path, body) => {
+      writes.push(body);
+      return new Promise((resolve) => replies.push(resolve));
+    },
+  }).store;
+  const ai = { model: "submitted" };
+  const first = s.saveConfig({ ai_config: ai, force_mp3: true });
+  ai.model = "new draft";
+  const second = s.saveConfig({ force_mp3: false });
+  assert.equal(writes[0].ai_config.model, "submitted");
+  replies[0]({});
+  await settle();
+  assert.equal(writes[1].force_mp3, false);
+  replies[1]({});
+  await Promise.all([first, second]);
+  assert.equal(s.state.configSaving, false);
+  assert.equal(s.state.configSaveState, "saved");
+});
+
+test("retrying a server address updates its availability hint after persistence", async () => {
+  let fail = true;
+  const s = statusStore({
+    post: async () => {
+      if (fail) throw Error("offline");
+      return {};
+    },
+  }).store;
+  await assert.rejects(
+    s.saveConfig({ server_host: "http://192.168.1.20:58091" }),
+    /offline/,
+  );
+  assert.equal(s.state.config.server_host_status, "empty");
+  fail = false;
+  await s.retryConfigSave();
+  assert.equal(s.state.config.server_host_status, "ok");
+});
+
+test("a failed next page keeps rows and cursor, stops automatic retries and supports explicit retry", async () => {
+  let pageCalls = 0;
+  const s = statusStore({
+    paged: true,
+    get: async (path) => {
+      if (!path.includes("/songs")) return null;
+      pageCalls++;
+      if (pageCalls === 1) return { ...songPage(1, 100, true), total: 150 };
+      if (pageCalls === 2) throw Error("next page offline");
+      return { ...songPage(101, 50, false), total: 150 };
+    },
+  }).store;
+  await s.selectPlaylist("1");
+  assert.equal(s.state.songsTotal, 150);
+  await s.loadMoreSongs();
+  assert.equal(s.state.songs.length, 100);
+  assert.equal(s.state.songsNextOffset, 100);
+  assert.match(s.state.songsMoreError, /offline/);
+  await s.loadMoreSongs();
+  assert.equal(
+    pageCalls,
+    2,
+    "scroll events must not repeatedly retry a failed page",
+  );
+  await s.loadMoreSongs(true);
+  assert.equal(s.state.songs.length, 150);
+  assert.equal(s.state.songsMoreError, "");
+  assert.equal(s.state.songsHasMore, false);
+});
+
+test("removing the playing playlist updates pagination only when that playlist is displayed", async () => {
+  const writes = [];
+  const s = statusStore({
+    get: async () => null,
+    post: async (path, body) =>
+      writes.push({ path, body: structuredClone(body) }),
+  }).store;
+  Object.assign(s.state, {
+    selectedPlaylistId: "1",
+    songs: [{ id: 7 }, { id: 8 }],
+    songsPaged: true,
+    songsNextOffset: 100,
+    songsTotal: 150,
+  });
+  await s.removeSongFromPlaylist({ id: 7 }, { playlistId: 2 });
+  assert.equal(writes[0].body.playlist_id, 2);
+  assert.equal(
+    s.state.songs.length,
+    2,
+    "removing from another playing playlist preserves the displayed list",
+  );
+  assert.equal(s.state.songsNextOffset, 100);
+  await s.removeSongFromPlaylist({ id: 7 }, { playlistId: 1 });
+  assert.equal(s.state.songs.length, 1);
+  assert.equal(s.state.songsNextOffset, 99);
+  assert.equal(s.state.songsTotal, 149);
 });

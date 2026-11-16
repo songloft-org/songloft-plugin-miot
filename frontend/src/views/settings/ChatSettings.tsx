@@ -489,6 +489,7 @@ export default function ChatSettings(props: any) {
         ) : null}
         <SectionCard
           title="AI 对话"
+          saveMode="manual"
           description="与音乐口令分析分别启用。默认每轮说“请问……”开始；可开启连续追问。"
         >
           <NativeView className="form-body">
@@ -546,6 +547,10 @@ export default function ChatSettings(props: any) {
                 <SlInput
                   modelValue={String(vm.config.followup_seconds)}
                   type="number"
+                  min={0}
+                  max={300}
+                  step={1}
+                  unit="秒"
                   aria-label="追问窗口"
                   onUpdateModelValue={($event: any) => {
                     vm.config.followup_seconds = Number($event);
@@ -622,6 +627,10 @@ export default function ChatSettings(props: any) {
                 <SlInput
                   modelValue={String(vm.config.context_turns)}
                   type="number"
+                  min={1}
+                  max={24}
+                  step={1}
+                  unit="轮"
                   aria-label="上下文轮数"
                   onUpdateModelValue={($event: any) => {
                     vm.config.context_turns = Number($event);
@@ -671,6 +680,10 @@ export default function ChatSettings(props: any) {
                 <SlInput
                   modelValue={String(vm.config.history_days)}
                   type="number"
+                  min={1}
+                  max={30}
+                  step={1}
+                  unit="天"
                   aria-label="历史保留天数"
                   onUpdateModelValue={($event: any) => {
                     vm.config.history_days = Number($event);
@@ -682,6 +695,10 @@ export default function ChatSettings(props: any) {
                 <SlInput
                   modelValue={String(vm.config.history_limit)}
                   type="number"
+                  min={12}
+                  max={500}
+                  step={1}
+                  unit="轮"
                   aria-label="历史最大轮数"
                   onUpdateModelValue={($event: any) => {
                     vm.config.history_limit = Number($event);
@@ -968,6 +985,10 @@ export default function ChatSettings(props: any) {
                 <SlInput
                   modelValue={String(vm.config.timeout)}
                   type="number"
+                  min={1}
+                  max={30}
+                  step={1}
+                  unit="秒"
                   aria-label="问答超时"
                   onUpdateModelValue={($event: any) => {
                     vm.config.timeout = Number($event);
