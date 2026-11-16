@@ -131,7 +131,7 @@ Android 最终包实际打开列表与全屏，用相同四个采样点核对渲
 
 ## SDK 正式发布与依赖升级复验
 
-用户配置 npm Trusted Publisher 后，恢复相同 v2.21.0 tag；[恢复发布](https://github.com/songloft-org/plugin-toolchain/actions/runs/43860094887) 成功，GitHub Release 已生成，已存在的 npm 包跳过，没有另起版本。npm 在处理新包时曾短暂返回 E404/ETARGET；最终从 registry.npmjs.org 安装 `@songloft/lynx-plugin-sdk@2.21.0`，package-lock 记录正式 tarball 与 integrity。miot 前端改为 apiGet/apiPost/apiPut/apiDelete，共享 PluginSocket；原本 92 行私有 socket 适配器改为重导出，保留业务 ApiError/响应解包及连接生命周期。此次只升级对应的前端 Lynx SDK，后端 SDK/构建器保持既有依赖。
+用户配置 npm Trusted Publisher 后，恢复相同 v2.21.0 tag；[恢复发布](https://github.com/songloft-org/plugin-toolchain/actions/runs/43860094887) 成功，GitHub Release 已生成，已存在的 npm 包跳过，没有另起版本。npm 在处理新包时曾短暂返回 E404/ETARGET；最终从 registry.npmjs.org 安装 `@songloft/lynx-plugin-sdk@2.21.0`，package-lock 记录正式 tarball 与 integrity。miot 前端改为 apiGet/apiPost/apiPut/apiDelete，共享 PluginSocket；原本私有 socket 适配器改为重导出，保留业务 ApiError/响应解包及连接生命周期。此次只升级对应的前端 Lynx SDK，后端 SDK/构建器保持既有依赖。
 
 升级后重新执行前端类型检查与 101 项单测、后端类型检查与 1499 项单测、原生/Web 双 bundle、QuickJS 打包及 validate，全部通过。Chromium 121 实际验证 54 组设置布局、播放器收藏/音量/倍速/歌单搜索、分页慢页与服务端搜索、挂起配置首屏、定时 CRUD 与多行保存/返回；已构建主程序的真实嵌套 frame 也通过定时 CRUD 和多行保存。新增 socket.browser.cjs 使用 CDP Network 事件确认真实状态 WebSocket 收到首帧、隐藏关闭连接、恢复后第二条连接收到状态；账户/设备为 HTTP 夹具，未控制真实硬件。初版脚本误用了另一浏览器驱动的 websocket 事件，后改为 Puppeteer 支持的 CDP，未将该驱动错误作为产品缺陷。
 

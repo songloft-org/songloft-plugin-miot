@@ -1,6 +1,6 @@
 # MIoT Lynx frontend migration verification
 
-Date: 2026-11-16. Migrate the entire miot frontend following bili, preserving layout/features and updating shared hosts as needed. The host (8917470) and client (02b1dba) were subsequently committed/pushed with explicit authorization; miot/toolchain remain uncommitted. See the latest record below. [中文](../lynx-migration.md).
+Date: 2026-11-16. Migrate the entire miot frontend following bili, preserving layout/features and updating shared hosts as needed. The host (8917470) and client (02b1dba) were subsequently committed/pushed with explicit authorization; SDK v2.21.0 is published; final miot/parent-reference commits are recorded in the latest delivery below. [中文](../lynx-migration.md).
 
 ## Verified worktree
 
@@ -131,7 +131,7 @@ With new explicit authorization, toolchain feature commit `28980b9e9c26b87d4a788
 
 ## Published SDK dependency verification
 
-After the user configured npm Trusted Publisher, the same v2.21.0 tag was resumed. [Recovery publication](https://github.com/songloft-org/plugin-toolchain/actions/runs/43860094887) succeeded and created the GitHub Release, skipping existing npm versions without introducing another version. New packages briefly returned E404/ETARGET while npm processed them. Finally @songloft/lynx-plugin-sdk@2.21.0 was installed from registry.npmjs.org with official tarball/integrity recorded in package-lock. The frontend now uses apiGet/apiPost/apiPut/apiDelete and shared PluginSocket. Its 92-line private socket adapter becomes a re-export, retaining business ApiError/unwrapping and lifecycle behavior. Only the matching frontend Lynx SDK is upgraded; backend SDK/builder dependencies remain unchanged.
+After the user configured npm Trusted Publisher, the same v2.21.0 tag was resumed. [Recovery publication](https://github.com/songloft-org/plugin-toolchain/actions/runs/43860094887) succeeded and created the GitHub Release, skipping existing npm versions without introducing another version. New packages briefly returned E404/ETARGET while npm processed them. Finally @songloft/lynx-plugin-sdk@2.21.0 was installed from registry.npmjs.org with official tarball/integrity recorded in package-lock. The frontend now uses apiGet/apiPost/apiPut/apiDelete and shared PluginSocket. Its private socket adapter becomes a re-export, retaining business ApiError/unwrapping and lifecycle behavior. Only the matching frontend Lynx SDK is upgraded; backend SDK/builder dependencies remain unchanged.
 
 Fresh frontend types/101 tests, backend types/1499 tests, native/Web bundles, QuickJS packaging and validation all pass. Chromium 121 verifies 54 settings layouts, player favorites/volume/speed/playlist search, slow page/server search, held-config startup, schedule CRUD and multiline save/back. The actual built host's nested frame also passes CRUD and multiline save. New socket.browser.cjs uses CDP Network events to verify a real status WebSocket's first frame, close on hide and status delivery on a second connection after resume. Account/device HTTP fixtures avoid hardware control. The initial script used another browser driver's websocket event; it was corrected to Puppeteer's CDP API, without presenting that driver mistake as a product defect.
 
