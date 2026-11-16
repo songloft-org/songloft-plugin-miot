@@ -137,6 +137,12 @@ Android 最终包实际打开列表与全屏，用相同四个采样点核对渲
 
 证据目录 `/tmp/miot-sdk-published-validation/`：frontend-typecheck.log、frontend-tests.log、backend-typecheck.log、backend-tests.log、build.log、validate.log、settings.log、player.log、socket-final.log、interaction.log、web-frame-final.log、paging.log、startup.log；npm-sdk-final.json 与 sdk-release.json、sdk-ci-release.json 确认已发布/可安装对象。稳定本地包 build/dist/miot.jsplugin.zip SHA-256 为 `237b09c23c3d1ed992b8e014696dea8a06389c8d7285b6984d1e00d82c2dc8fd`，待提交工作树清单为 worktree-before-commit.json。本轮未再次运行 Android/iOS/HarmonyOS 原生 UI、真实云账号/音箱/发声。用户运行的 dev 自动打包上传保持开启，既有 2027 节假日数据改动不纳入本次提交。
 
+## 本轮远端交付
+
+SDK v2.21.0 的恢复发布和 npm 实际安装成功。miot 实现提交 `68b915e46ab989e3b904d753e0961c389d8a0a9c` 已推送，[对应 CI](https://github.com/songloft-org/songloft-plugin-miot/actions/runs/43862082872) 成功；自动版本提交 f0840ce 已拉回，正式 [v2026.11.16.0](https://github.com/songloft-org/songloft-plugin-miot/releases/tag/v2026.11.16.0) 已发布。
+
+下载的正式 ZIP SHA-256 为 `6b23acfe751b3230708b2df3cda77cd1fd9671be44879bb3bd795ae284bfbdb6`，包内 releaseSource 与上述实现提交一致，renderEngine 为 lynx。安装到隔离后端后，真实状态连接隐藏/恢复和真实主程序嵌套 frame 的定时 CRUD/多行保存再次通过（released-socket.log、released-web-frame.log）；仍不证明物理设备发声。发布元数据见 miot-release.json/miot-ci.json。文档提交仅补充验证记录，主仓库随后同步 SDK 和 miot 的最终子模块引用。用户 dev 进程与未提交的 2027 数据保留。
+
 ## Not run 与边界
 
 - iOS `xcodebuild`：Linux 无 Xcode；HarmonyOS HAP：本轮环境无 DevEco/Harmony 构建工具。已跑跨平台方法契约，不代表 Swift/ArkTS 编译通过。

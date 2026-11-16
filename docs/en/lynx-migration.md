@@ -137,6 +137,12 @@ Fresh frontend types/101 tests, backend types/1499 tests, native/Web bundles, Qu
 
 Evidence: `/tmp/miot-sdk-published-validation/`: frontend-typecheck.log, frontend-tests.log, backend-typecheck.log, backend-tests.log, build.log, validate.log, settings.log, player.log, socket-final.log, interaction.log, web-frame-final.log, paging.log and startup.log. npm-sdk-final.json, sdk-release.json and sdk-ci-release.json identify the published/installable object. Stable local package build/dist/miot.jsplugin.zip SHA-256: `237b09c23c3d1ed992b8e014696dea8a06389c8d7285b6984d1e00d82c2dc8fd`. Pending-worktree inventory: worktree-before-commit.json. Native Android/iOS/HarmonyOS UI and real cloud/speaker/audio are not rerun. The user's dev builder/uploader remains running, and the pre-existing 2027 holiday-data edit is excluded from this commit.
 
+## Remote delivery for this round
+
+SDK v2.21.0 recovery publication and an actual npm install succeed. miot implementation `68b915e46ab989e3b904d753e0961c389d8a0a9c` is pushed; [its CI](https://github.com/songloft-org/songloft-plugin-miot/actions/runs/43862082872) succeeds. Automatic version commit f0840ce has been pulled, and official [v2026.11.16.0](https://github.com/songloft-org/songloft-plugin-miot/releases/tag/v2026.11.16.0) is published.
+
+Downloaded release ZIP SHA-256: `6b23acfe751b3230708b2df3cda77cd1fd9671be44879bb3bd795ae284bfbdb6`. Its releaseSource matches that implementation and renderEngine is lynx. After installation on the isolated backend, real status-socket hide/resume and actual host nested-frame CRUD/multiline save pass again (released-socket.log/released-web-frame.log). This does not establish physical audio output. Metadata: miot-release.json/miot-ci.json. Documentation commits only record evidence; the parent then synchronizes the final SDK/miot references. The user's dev process and uncommitted 2027 data remain preserved.
+
 ## Not run and limits
 
 - iOS xcodebuild: Linux lacks Xcode. HarmonyOS HAP: DevEco/Harmony build tools unavailable in this run. Cross-platform method contracts do not prove Swift/ArkTS compilation.
