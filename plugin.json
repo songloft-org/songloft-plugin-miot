@@ -1,7 +1,7 @@
 {
   "$schema": "https://raw.githubusercontent.com/songloft-org/plugin-toolchain/main/schemas/plugin.schema.json",
   "name": "智能音箱",
-  "version": "2026.11.15.1",
+  "version": "2026.11.16.0",
   "description": "通过 MIoT 协议把歌曲投放到智能音箱设备",
   "author": "Songloft Team",
   "homepage": "https://github.com/songloft-org/songloft-plugin-miot",
@@ -22,11 +22,13 @@
     "net",
     "websocket"
   ],
-  "publicPaths": ["/dlna"],
+  "publicPaths": [
+    "/dlna"
+  ],
   "updateUrl": "https://raw.githubusercontent.com/songloft-org/songloft-plugin-miot/main/plugin.json",
-  "download_url": "https://github.com/songloft-org/songloft-plugin-miot/releases/download/v2026.11.15.1/miot.jsplugin.zip",
-  "entryHash": "27d16407078c0bdd24acdd948c05d4eba43846b98512cf3f1fcc2b5bf75c5866",
-  "zipHash": "761eb79bc3a293e4f8e6f25095263f50deb4a962a3e42175b5c237aba669ac43",
-  "releaseSource": "6b1bf4c2c2fcc03fdf0b43efb3e7c2d4a21f38af",
+  "download_url": "https://github.com/songloft-org/songloft-plugin-miot/releases/download/v2026.11.16.0/miot.jsplugin.zip",
+  "entryHash": "839af6341ee48e6db3bdbb9eec710d66afcf8224464d2dbcf81c4c63fd8d33af",
+  "zipHash": "5c9d89b6c348402ebe8d2128427b340178feafafb36e15cd9b7e96d60690ecaf",
+  "releaseSource": "68b915e46ab989e3b904d753e0961c389d8a0a9c",
   "staticHash": false
 }
