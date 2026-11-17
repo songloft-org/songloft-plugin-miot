@@ -234,27 +234,29 @@ function SongList() {
               </text>
               <SlIcon name="expand_more" size={14} color="muted" />
             </SlButton>
-            {device && (
-              <text
-                className={classes([
-                  "device-play-state",
-                  state.playerStatusState === "error" && "error",
-                ])}
-                text-maxline="1"
-              >
-                {state.deviceConnecting
-                  ? "连接中"
-                  : state.playerStatusState === "error"
-                    ? "状态暂不可用"
-                    : state.playerStatusState !== "ready"
-                      ? "同步中"
-                      : state.player.is_playing
-                        ? "播放中"
-                        : state.player.current_song
-                          ? "已暂停"
-                          : "待机"}
-              </text>
-            )}
+            <view className="device-play-state-slot">
+              {device && (
+                <text
+                  className={classes([
+                    "device-play-state",
+                    state.playerStatusState === "error" && "error",
+                  ])}
+                  text-maxline="1"
+                >
+                  {state.deviceConnecting
+                    ? "连接中"
+                    : state.playerStatusState === "error"
+                      ? "状态暂不可用"
+                      : state.playerStatusState !== "ready"
+                        ? "同步中"
+                        : state.player.is_playing
+                          ? "播放中"
+                          : state.player.current_song
+                            ? "已暂停"
+                            : "待机"}
+                </text>
+              )}
+            </view>
           </view>
         </view>
         <view className="appbar-actions row">

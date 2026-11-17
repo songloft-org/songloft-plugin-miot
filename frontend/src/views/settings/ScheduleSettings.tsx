@@ -326,7 +326,12 @@ const pageState = {
           timeZone: state.config.timezone,
         });
       } catch {
-        return new Intl.DateTimeFormat('zh-CN', options);
+        // Native Lynx engines may omit Intl entirely. Do not call it again in
+        // the fallback: computed bindings are evaluated before tasks are loaded.
+        return {
+          format: (date: Date) =>
+            `${date.toISOString().slice(0, 19).replace('T', ' ')} UTC`,
+        };
       }
     });
     function formatLogTime(executedAt: string | undefined): string {

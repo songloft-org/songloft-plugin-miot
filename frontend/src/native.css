@@ -480,6 +480,7 @@ text {
 }
 .section-heading {
   min-height: 44px;
+  flex-shrink: 0;
   flex-direction: row;
   align-items: flex-start;
   gap: 10px;
@@ -2362,6 +2363,12 @@ text {
   font-size: 11px;
   flex-shrink: 0;
 }
+.device-play-state-slot {
+  width: 72px;
+  height: 20px;
+  flex-shrink: 0;
+  justify-content: center;
+}
 .device-play-state {
   font-size: 11px;
   color: var(--md-on-surface-variant);
@@ -2407,6 +2414,7 @@ text {
 }
 .section-title-row {
   flex-direction: row;
+  flex-shrink: 0;
   align-items: center;
   gap: 6px;
   min-width: 0;
@@ -2420,9 +2428,28 @@ text {
   font-size: 11px;
   flex-shrink: 0;
 }
+.section-description-collapsed {
+  text-overflow: ellipsis;
+}
+.section-description-wrap {
+  position: relative;
+}
+.section-description-measure {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  opacity: 0;
+  pointer-events: none;
+}
+.section-description-actions {
+  flex-direction: row;
+  flex-shrink: 0;
+  margin-top: 4px;
+}
 .section-description-toggle {
-  height: 28px;
-  min-height: 28px;
+  height: 44px;
+  min-height: 44px;
   padding: 0 4px;
 }
 .section-description-toggle text {

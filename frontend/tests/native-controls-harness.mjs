@@ -3,15 +3,17 @@ import ts from "typescript";
 export function controls({
   measurePopover = () => Promise.reject(),
   navigation = {},
+  compactSettings = false,
 } = {}) {
+  const compactContext = {};
   const values = [];
   let cursor = 0;
   const counts = new Map();
   const pendingEffects = [];
   const hooks = {
-    useContext() {
+    useContext(context) {
       cursor++;
-      return false;
+      return context === compactContext ? compactSettings : false;
     },
     useEffect(callback, deps) {
       const index = cursor++,
@@ -80,7 +82,8 @@ export function controls({
     if (name === "@songloft/lynx-plugin-sdk")
       return { getTheme: () => "light" };
     if (name === "../runtime") return { navigation };
-    if (name === "./theme") return { ThemeContext: {} };
+    if (name === "./theme")
+      return { ThemeContext: {}, CompactSettingsContext: compactContext };
     if (name.endsWith("ai_headers")) return { parseAIHeaders: JSON.parse };
     throw new Error(name);
   }, exports);

@@ -533,7 +533,14 @@ export function SectionCard({
 }: Props) {
   const compact = useContext(CompactSettingsContext);
   const [expanded, setExpanded] = useState(false);
-  const canFold = compact && description && description.length > 40;
+  const [descriptionLayout, setDescriptionLayout] = useState({
+    text: description,
+    overflows: false,
+  });
+  const canFold =
+    compact &&
+    descriptionLayout.text === description &&
+    descriptionLayout.overflows;
   return (
     <view className={classes(["miot-section", tone && `miot-section-${tone}`])}>
       <view className="section-heading">
@@ -550,22 +557,53 @@ export function SectionCard({
                 {saveMode === "manual" ? "手动保存" : "自动保存"}
               </text>
             )}
-            {canFold && (
+          </view>
+          {description && (
+            <view className="section-description-wrap">
+              <text
+                className={classes([
+                  "section-description",
+                  canFold && !expanded && "section-description-collapsed",
+                ])}
+                text-maxline={canFold && !expanded ? "2" : undefined}
+              >
+                {description}
+              </text>
+              {compact && (
+                <text
+                  className="section-description section-description-measure"
+                  accessibility-element={false}
+                  event-through
+                  bindlayoutchange={(event: any) => {
+                    const height =
+                      event.detail?.height ?? event.detail?.layout?.height;
+                    if (!(height > 0)) return;
+                    // Measure the full text independently of the visible clamp, so
+                    // resizing or collapsing cannot feed a false "fits" result back.
+                    const overflows = height > 36.5;
+                    setDescriptionLayout((previous) =>
+                      previous.text === description &&
+                      previous.overflows === overflows
+                        ? previous
+                        : { text: description, overflows },
+                    );
+                  }}
+                >
+                  {description}
+                </text>
+              )}
+            </view>
+          )}
+          {canFold && (
+            <view className="section-description-actions">
               <SlButton
                 className="section-description-toggle"
-                label={expanded ? "收起" : "说明"}
+                label={expanded ? "收起说明" : "展开说明"}
+                icon={expanded ? "expand_less" : "expand_more"}
                 aria-label={`${expanded ? "收起" : "展开"}${title}说明`}
                 onClick={() => setExpanded((value) => !value)}
               />
-            )}
-          </view>
-          {description && (
-            <text
-              className="section-description"
-              text-maxline={canFold && !expanded ? "2" : undefined}
-            >
-              {description}
-            </text>
+            </view>
           )}
         </view>
         {slots?.actions}
