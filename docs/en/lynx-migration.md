@@ -179,6 +179,14 @@ A fresh SQLite instance on port 30618 receives this batch's ZIP. Docker Chromium
 
 No commit, push, release or parent gitlink update in this batch; earlier authorization does not apply. The client separately fixes home entries that failed to retain native frames. No Harmony crash stack or device reproduction establishes either image reloading or child-engine recreation as the crash cause. Not run: HarmonyOS device/emulator and native-shell rebuilds, real speaker interactions. This batch changes no ArkTS/Kotlin/Swift.
 
+### Internal settings/full-player navigation supplement
+
+The user confirmed an npm run dev installation and flicker when returning from internal settings/full player, including default covers. This was not attributed to mandatory plugin-container recreation. At baseline `cfe970655459f540fd42a298d3fd6ffd400d8d65`, settings unmounted SongList and replaced actual/default cover nodes on return. Full player retained nodes but removed the mini player from layout, resizing the list 438→504→438 at width 390. New `navigation_covers.browser.cjs` fails its size assertion against the old package and also records default-node replacement.
+
+The main list now stays mounted. Settings uses an opaque absolutely positioned layer; returning does not remount the list. A 90px wide/66px narrow player slot preserves list dimensions during full player/settings. Player itself still unmounts in settings, preserving its prior polling behavior. Work continues under the user's existing commit/push authorization; actual delivery is tracked in `/tmp/songloft-miot-delivery/delivery.json`.
+
+Types, 128 frontend tests, dual bundles/QuickJS and package validation pass. Docker Chromium 121 checks at widths 390/1100 and short 390×540 cover actual/default image nodes, list identity, size and scroll offset. Each group completes six settings/full-player round-trips with no removals or dimension/offset changes. The 1000-song/playlist player regression passes mode, speed, favorites, seek, volume, sleep and the 30-row virtualization limit. Logs: `nav-before.log`, `nav-final-{390,1100,540}.log`, `player-after-nav.log`, `nav-{types,tests,build,validate}.log`. Resume URL invalidation and internal list lifecycle are distinct defects. Native UI/keyboard/background/speaker checks are Not run; process crashes are not declared fixed.
+
 ## Not run and limits
 
 - iOS xcodebuild: Linux lacks Xcode. HarmonyOS HAP: DevEco/Harmony build tools unavailable in this run. Cross-platform method contracts do not prove Swift/ArkTS compilation.

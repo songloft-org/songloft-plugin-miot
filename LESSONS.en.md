@@ -24,6 +24,8 @@ Include rule, scope, full owner/repo#number, failure/fix commit SHAs, actual val
 - Rule / done right: recover failed/timed-out work only. Keep loaded, loading and queued images intact, retaining bounded automatic retries and later recovery. Routine state updates must not clear images or bypass cache. Assert network requests and node identity separately; page retention does not prove image retention. See the 2026-11-17 supplement in [migration verification](docs/en/lynx-migration.md).
 - Seen 1× (2026-11-17). Status: local fix/browser verification, uncommitted/unreleased. No Harmony crash stack or device acceptance; the crash is not declared fixed.
 
+- Same-day internal navigation supplement: a package installed with npm dev flashes even default covers when returning from settings/full player. Old settings navigation unmounted SongList; full-player transitions resized the list 438→504→438, independently of image networking. Retain the main list, use an opaque settings layer and reserve the player's 66/90px layout slot. Assert actual image/default-node identity, list size and scroll offset separately. [Migration record](docs/en/lynx-migration.md). Same incident, no Seen increment; native-device acceptance remains open.
+
 ### MIOT-033: verify generated entries, native text and actual nested frames during Lynx migration
 
 - Scope: baseline `fc46bdc5a717840780d8bef6a26d3079ed2ac6b3` plus this uncommitted full frontend migration.

@@ -1652,20 +1652,21 @@ export function App() {
         ])}
       >
         <Viewport.Provider value={{ width, height }}>
-          {navigation.page !== "settings" && (
-            <view className="main-shell">
-              <SongList />
-            </view>
-          )}
+          <view className="main-shell">
+            <SongList />
+          </view>
           {navigation.page === "settings" && (
             <view className="settings-shell">
               <Settings />
             </view>
           )}
-          {((navigation.page === "main" &&
-            store.currentDevice.value &&
+          {((store.currentDevice.value &&
             (state.player.current_song || width >= 600)) ||
-            navigation.page === "player") && <Player />}
+            navigation.page === "player") && (
+            <view className="player-slot">
+              {navigation.page !== "settings" && <Player />}
+            </view>
+          )}
         </Viewport.Provider>
         {navigation.devicePickerOpen && <DevicePicker height={height} />}
         {state.confirm.open && (
