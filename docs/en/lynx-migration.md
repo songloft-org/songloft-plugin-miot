@@ -165,6 +165,20 @@ The isolated build of this section's functional code has canonical zipHash 31d90
 
 Two dev watchers concurrently wrote dist/_build and caused ENOENT. Stop the duplicate started for this preview and retain the user's terminal npm run dev. Isolated test builds use a different output directory. Final read-only checks confirmed id=35 is active and its entryHash/zipHash and both Web/Lynx bundles match the local dev package. Install that same dev ZIP on the isolated service: all added 390px interactions and real status pause/resume pass again (dev-polish.log, dev-socket.log). No manual upload to the user's server.
 
+## 2026-11-17 · cover reloads in retained pages
+
+The user has now authorized this batch's commit, push and parent gitlink synchronization. Actual SHAs, automatic packaging and workflow results are in `/tmp/songloft-miot-delivery/delivery.json`. Uncommitted descriptions below retain the initial verification state; native acceptance remains open.
+
+The subsequent blank current-song locate has a separate [record](locate-current-song.md): reusing the old scroll target desynchronized virtual rows and the viewport. Every locate now issues a command. All 128 frontend/1499 plugin tests, dual outputs/validation and repeated browser locates at two widths pass; native devices remain unverified. This supplement and the cover fix below share an uncommitted, unreleased worktree.
+
+At baseline `6fba93e6f3bdb4e73c00a9a58da67475cd0519d1`, every resumed event cleared all sources, incremented nonce and replaced image keys; local URLs also gained `_r`. Healthy images therefore reloaded even in retained tabs. Recovery now targets failures/timeouts, preserving loading/queued tasks, two automatic retries and unchanged data/signed URLs.
+
+Five of ten cover checks fail with isolated old source; all ten pass after the fix. All 124 frontend and 1499 plugin backend tests, both type checks, Lynx/Web builds, QuickJS and ZIP validation pass. Evidence: `/tmp/songloft-miot-reentry/`, source hashes in `verification.json`. Full client tests have one existing desktop missing-key failure for `clientUpdate.download` and must not be reported green. All 112 related navigation/plugin checks, client types and dual builds pass.
+
+A fresh SQLite instance on port 30618 receives this batch's ZIP. Docker Chromium 121 renders it at widths 390/1100. MutationObserver, node identity and request assertions confirm ten pause/resume cycles cause no removal/source mutation of the first three healthy images and no new local image requests; the initially failing cover recovers. Data/signed sources, empty placeholders and list/mini/full-player checks pass. Logs: `browser-{390,1100}-final.log`; screenshots: `covers-{390,1100}-list.png`. Device/image APIs use fixtures without real speakers.
+
+No commit, push, release or parent gitlink update in this batch; earlier authorization does not apply. The client separately fixes home entries that failed to retain native frames. No Harmony crash stack or device reproduction establishes either image reloading or child-engine recreation as the crash cause. Not run: HarmonyOS device/emulator and native-shell rebuilds, real speaker interactions. This batch changes no ArkTS/Kotlin/Swift.
+
 ## Not run and limits
 
 - iOS xcodebuild: Linux lacks Xcode. HarmonyOS HAP: DevEco/Harmony build tools unavailable in this run. Cross-platform method contracts do not prove Swift/ArkTS compilation.

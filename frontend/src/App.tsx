@@ -26,6 +26,7 @@ import {
   setChatVisible,
 } from "./chat-stream";
 import { Cover } from "./Cover";
+import { useSongListScroll } from "./song-list-scroll";
 import { createPlayerDetails } from "./player-details";
 import { paletteFromMetadata } from "./player-palette";
 import type { PlayMode, SleepTimerStatus, Song } from "./types";
@@ -157,8 +158,16 @@ function SongList() {
   useObserved(state, navigation);
   const { width, height } = useContext(Viewport),
     rowHeight = width < 600 ? 64 : 56;
-  const [start, setStart] = useState(0),
-    [scrollTop, setScrollTop] = useState(0);
+  const { start, onScroll, locate: scrollToSong } = useSongListScroll({
+    rowHeight,
+    playlistId: state.selectedPlaylistId,
+    search: state.songSearch,
+    ready:
+      !!state.selectedPlaylistId &&
+      !state.loading &&
+      !state.songsLoading &&
+      !state.songsError,
+  });
   const [songAction, setSongAction] = useState<{
     song: Song;
     playlistId: string;
@@ -171,10 +180,6 @@ function SongList() {
     navigation.selectOpen = false;
   };
   const songs = store.visibleSongs.value;
-  useEffect(() => {
-    setStart(0);
-    setScrollTop(0);
-  }, [state.selectedPlaylistId, state.songSearch]);
   const first = Math.min(start, Math.max(0, songs.length - 30)),
     end = Math.min(songs.length, first + 30);
   const device = store.currentDevice.value;
@@ -209,8 +214,7 @@ function SongList() {
       store.notify("当前歌曲不在此歌单中");
       return;
     }
-    setStart(Math.max(0, index - 5));
-    setScrollTop(Math.max(0, index * rowHeight - 120));
+    scrollToSong(index);
   }
   return (
     <view className="main-page">
@@ -399,18 +403,11 @@ function SongList() {
           <>
             <SongListHeader />
             <scroll-view
+              id="miot-song-list"
               className="songs-scroll"
               scroll-y
-              scroll-top={scrollTop}
               bindscroll={(event: any) => {
-                setStart(
-                  Math.max(
-                    0,
-                    Math.floor(
-                      Number(event.detail.scrollTop || 0) / rowHeight,
-                    ) - 5,
-                  ),
-                );
+                onScroll(Number(event.detail.scrollTop || 0));
                 if (
                   Number(event.detail.scrollTop || 0) + height >=
                   songs.length * rowHeight - rowHeight * 10

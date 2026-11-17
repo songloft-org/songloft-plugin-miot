@@ -10,6 +10,20 @@ Include rule, scope, full owner/repo#number, failure/fix commit SHAs, actual val
 
 ## Entries
 
+### LIST-001: virtual windows must not depend on the previous locate value
+
+- Scope: current-song location and paged virtual lists; baseline `6fba93e6f3bdb4e73c00a9a58da67475cd0519d1` plus worktree.
+- Evidence: gestures updated start but not the last scroll-top target. Repeating a locate left the property unchanged; rows moved to the target while the actual offset stayed zero, exposing a blank top spacer. After an isolated old-App dual build, the browser regression times out on viewport visibility at the second locate, without page errors. [Record](docs/en/locate-current-song.md).
+- Rule / done right: issue a command for every explicit action, after new rows/spacers commit and the skeleton becomes a list. Gestures only update the virtual window. Assert actual viewport visibility, repeated actions and page requests, not merely selected-node existence. Four hook checks, 128 frontend/1499 plugin tests and repeated locates at two widths pass. Measure initial serial pagination separately.
+- Seen 1× (2026-11-17). Status: local fix, uncommitted/unreleased; native-device scrolling is unverified and does not establish the Harmony process crash as fixed.
+
+### COVER-001: resume should retry failures without refreshing healthy covers
+
+- Scope: Lynx list, mini-player and full-player covers; baseline `6fba93e6f3bdb4e73c00a9a58da67475cd0519d1`.
+- Evidence: every resumed event unconditionally incremented nonce, cleared source and replaced image keys. Healthy local URLs gained `_r`, and even data/signed images were remounted. Five of ten cover checks fail with isolated old source; all ten pass with the fix. At two browser widths, ten pause/resume cycles preserve healthy nodes/sources with no new healthy-cover requests while failed covers recover.
+- Rule / done right: recover failed/timed-out work only. Keep loaded, loading and queued images intact, retaining bounded automatic retries and later recovery. Routine state updates must not clear images or bypass cache. Assert network requests and node identity separately; page retention does not prove image retention. See the 2026-11-17 supplement in [migration verification](docs/en/lynx-migration.md).
+- Seen 1× (2026-11-17). Status: local fix/browser verification, uncommitted/unreleased. No Harmony crash stack or device acceptance; the crash is not declared fixed.
+
 ### MIOT-033: verify generated entries, native text and actual nested frames during Lynx migration
 
 - Scope: baseline `fc46bdc5a717840780d8bef6a26d3079ed2ac6b3` plus this uncommitted full frontend migration.

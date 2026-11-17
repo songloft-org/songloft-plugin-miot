@@ -192,6 +192,38 @@ const png = Buffer.from(
     assert.equal(sources[1].src, covers[1]);
     assert.equal(sources[2].src, covers[2]);
     await page.screenshot({ path: "/tmp/miot-covers-" + width + "-list.png" });
+    await page.evaluate(() => {
+      const root = document.getElementById("plugin-view").shadowRoot;
+      window.healthyCoverNodes = [...root.querySelectorAll(".song-row")]
+        .slice(0, 3)
+        .map((row) => row.querySelector(".cover-image"));
+      window.healthyCoverMutations = [];
+      window.coverObserver = new MutationObserver((records) => {
+        for (const record of records) {
+          if (
+            record.type === "attributes" &&
+            window.healthyCoverNodes.includes(record.target)
+          )
+            window.healthyCoverMutations.push(record.attributeName);
+          for (const node of record.removedNodes)
+            if (
+              window.healthyCoverNodes.some(
+                (image) => node === image || node.contains(image),
+              )
+            )
+              window.healthyCoverMutations.push("removed");
+        }
+      });
+      window.coverObserver.observe(root, {
+        childList: true,
+        subtree: true,
+        attributes: true,
+        attributeFilter: ["src"],
+      });
+    });
+    const healthyRequests = requests.filter(
+      (request) => request.id === 1,
+    ).length;
     recover = true;
     await page.evaluate(() =>
       document
@@ -208,6 +240,38 @@ const png = Buffer.from(
         ?.shadowRoot?.querySelector("img");
       return image?.naturalWidth === 128;
     });
+    for (let visit = 0; visit < 10; visit++) {
+      await page.evaluate(() => {
+        const frame = document.getElementById("plugin-view");
+        for (const state of ["paused", "resumed"])
+          frame.sendGlobalEvent("SongloftPluginBridge.push", [
+            { event: "lifecycle", data: JSON.stringify({ state }) },
+          ]);
+      });
+      await page.evaluate(
+        () => new Promise((resolve) => setTimeout(resolve, 50)),
+      );
+    }
+    assert.equal(
+      requests.filter((request) => request.id === 1).length,
+      healthyRequests,
+    );
+    assert.deepEqual(
+      await page.evaluate(() => {
+        const root = document.getElementById("plugin-view").shadowRoot;
+        const current = [...root.querySelectorAll(".song-row")]
+          .slice(0, 3)
+          .map((row) => row.querySelector(".cover-image"));
+        window.coverObserver.disconnect();
+        return {
+          sameNodes: current.every(
+            (node, i) => node === window.healthyCoverNodes[i],
+          ),
+          mutations: window.healthyCoverMutations,
+        };
+      }),
+      { sameNodes: true, mutations: [] },
+    );
     const point = await page.evaluate(() => {
       const r = document
         .getElementById("plugin-view")

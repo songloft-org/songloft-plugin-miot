@@ -45,7 +45,8 @@ export function Cover({
   style?: Record<string, string | number>;
 }) {
   const release = useRef<() => void>(() => {}),
-    retries = useRef(0);
+    retries = useRef(0),
+    needsRecovery = useRef(false);
   useEffect(() => {
     retries.current = 0;
   }, [song?.id, song?.cover_url]);
@@ -56,7 +57,11 @@ export function Cover({
     () =>
       onPush((event, raw) => {
         if (event !== "lifecycle") return;
-        if (JSON.parse(String(raw)).state === "resumed") {
+        if (
+          JSON.parse(String(raw)).state === "resumed" &&
+          needsRecovery.current
+        ) {
+          needsRecovery.current = false;
           retries.current = 0;
           setNonce((n) => n + 1);
         }
@@ -64,6 +69,7 @@ export function Cover({
     [],
   );
   useEffect(() => {
+    needsRecovery.current = false;
     if (!song?.cover_url?.trim()) {
       setSource("");
       return;
@@ -81,7 +87,10 @@ export function Cover({
     void reservation.ready
       .then(async () => {
         if (!alive) return;
-        timer = setTimeout(finish, 6000);
+        timer = setTimeout(() => {
+          needsRecovery.current = true;
+          finish();
+        }, 6000);
         let url = song.cover_url!.trim();
         if (/^\/?api\/v1\/songs\/\d+\/cover(?:\?|$)/.test(url)) {
           if (!url.startsWith("/")) url = "/" + url;
@@ -96,10 +105,17 @@ export function Cover({
           url = reply.ok ? String(reply.data) : "";
         }
         // Data URLs and signed CDN URLs must remain byte-for-byte intact.
-        if (alive) setSource(url);
-        if (!url) finish();
+        if (!alive) return;
+        setSource(url);
+        if (!url) {
+          needsRecovery.current = true;
+          finish();
+        }
       })
-      .catch(finish);
+      .catch(() => {
+        if (alive) needsRecovery.current = true;
+        finish();
+      });
     return () => {
       alive = false;
       finish();
@@ -115,10 +131,12 @@ export function Cover({
           mode="aspectFill"
           blur-radius={blur ? `${blur}px` : undefined}
           bindload={() => {
+            needsRecovery.current = false;
             retries.current = 0;
             release.current();
           }}
           binderror={() => {
+            needsRecovery.current = true;
             release.current();
             setFailed(true);
             if (retries.current++ < 2) setNonce((n) => n + 1);

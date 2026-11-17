@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 import ts from "typescript";
 
-function harness() {
+function harness({ reply } = {}) {
   let current;
   const calls = [],
     listeners = new Set(),
@@ -62,6 +62,7 @@ function harness() {
         return {
           invokeHost: async (ns, method, params) => {
             calls.push({ ns, method, params });
+            if (reply) return reply(params);
             return {
               ok: true,
               data:
@@ -204,3 +205,91 @@ test("queued covers keep their chance to load when the first requests stall", as
   assert.equal(h.calls.length, 8);
   assert.equal(image(rows[7]).type, "image");
 });
+
+test("resume preserves loaded cover sources and image keys across repeated tab visits", async () => {
+  const h = harness();
+  const rows = [song.cover_url, "https://cdn.invalid/cover?signature=abc"].map(
+    (cover_url) => h.mount({ song: { ...song, cover_url } }),
+  );
+  await h.flush();
+  for (const r of rows) image(r).props.bindload();
+  await h.flush();
+  const before = rows.map((r) => ({
+    src: image(r).props.src,
+    key: image(r).key,
+  }));
+  for (let visit = 0; visit < 20; visit++) {
+    h.resume();
+    await h.flush();
+    assert.deepEqual(
+      rows.map((r) => ({ src: image(r).props.src, key: image(r).key })),
+      before,
+      "healthy images must not be cleared or remounted on resume",
+    );
+  }
+  assert.equal(h.calls.length, 1, "resume must not resolve healthy URLs again");
+});
+
+test("resume keeps in-flight and queued covers instead of restarting the whole list", async () => {
+  const h = harness();
+  const rows = Array.from({ length: 8 }, (_, i) =>
+    h.mount({ song: { ...song, id: i + 1 } }),
+  );
+  await h.flush();
+  const before = image(rows[0]);
+  h.resume();
+  await h.flush();
+  assert.equal(h.calls.length, 6);
+  assert.equal(image(rows[0]).key, before.key);
+  assert.equal(image(rows[0]).props.src, before.props.src);
+  image(rows[0]).props.bindload();
+  await h.flush();
+  assert.equal(h.calls.length, 7);
+});
+
+test("a timed-out cover retries on resume and stays intact once it has loaded", async () => {
+  const h = harness(),
+    r = h.mount({ song });
+  await h.flush();
+  const first = image(r).key;
+  for (const timer of [...h.timers.values()]) timer.callback();
+  h.resume();
+  await h.flush();
+  assert.notEqual(image(r).key, first);
+  image(r).props.bindload();
+  const loaded = image(r).key;
+  h.resume();
+  await h.flush();
+  assert.equal(image(r).key, loaded);
+  assert.equal(h.calls.length, 2);
+});
+
+for (const failure of ["rejected", "unavailable"]) {
+  test(
+    "resource URL " +
+      failure +
+      " recovers on resume without reloading healthy covers",
+    async () => {
+      let available = false;
+      const h = harness({
+        reply: () => {
+          if (available)
+            return { ok: true, data: "https://host.invalid/recovered.png" };
+          if (failure === "rejected") throw Error("temporary host failure");
+          return { ok: false };
+        },
+      });
+      const r = h.mount({ song });
+      await h.flush();
+      assert.notEqual(image(r).type, "image");
+      available = true;
+      h.resume();
+      await h.flush();
+      assert.equal(image(r).props.src, "https://host.invalid/recovered.png");
+      image(r).props.bindload();
+      h.resume();
+      await h.flush();
+      assert.equal(h.calls.length, 2);
+    },
+  );
+}

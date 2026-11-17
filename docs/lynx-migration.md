@@ -165,6 +165,20 @@ SDK v2.21.0 的恢复发布和 npm 实际安装成功。miot 实现提交 `68b91
 
 发现两个 dev 进程同时写 dist/_build 导致 ENOENT；退出本轮启动的重复监听，保留用户终端的 npm run dev。独立测试构建与用户 dev 使用不同目录；最终只读核对用户 Docker 的 id=35：active、entryHash/zipHash 及 Web/Lynx 两份 bundle 均与本地 dev 包一致，确认自动上传。相同 dev ZIP 安装到隔离服务后，390px 全部追加交互与真实状态连接隐藏/恢复再次通过（dev-polish.log、dev-socket.log）。未手动上传用户服务器。
 
+## 2026-11-17 · 保留页面的封面重载
+
+本批现已获用户提交、推送及同步父指针授权，实际 SHA、自动发包与流水线结果见 `/tmp/songloft-miot-delivery/delivery.json`；下文未提交描述保留为初次验证状态，原生验收边界继续保留。
+
+后续当前歌曲定位空白另见[专项记录](locate-current-song.md)：旧滚动目标值复用导致虚拟行与视口脱节，改为每次显式命令；128 项前端、1499 项插件测试、双包/校验与两种宽度重复定位通过，原生未验。此补充与下文封面恢复属于同一未提交工作树，未发布。
+
+基线 `6fba93e6f3bdb4e73c00a9a58da67475cd0519d1` 的 Cover 在每次 resumed 时清空所有 source、增加 nonce、更换 image key；本地 URL 同时追加 `_r`。即使宿主保留同一 Tab，也会重载健康图片。本批只让失败/超时封面进入恢复路径，加载中和排队任务保持，保留两次自动重试与 data/签名 URL 的原样传递。
+
+十项封面专项在隔离旧源码中五项失败，修复后十项通过；124 项完整前端与 1499 项插件后端测试、两层类型、Lynx/Web 双包、QuickJS 与 ZIP 校验通过。证据 `/tmp/songloft-miot-reentry/`，源码摘要见 `verification.json`。完整客户端测试另有一项既有桌面 `clientUpdate.download` 缺键失败，不能记作全绿；相关导航/插件测试 112 项通过，客户端类型/双产物构建通过。
+
+独立 SQLite/端口 30618 安装本批 ZIP，Docker Chromium 121 在 390/1100 宽度实际渲染。增加 MutationObserver/节点身份与网络请求断言：十次暂停/恢复后，前三张健康封面无节点移除或地址修改，无新增本地图片请求，原 404 封面恢复；data/签名、无封面占位及列表/迷你/全屏检查通过。日志 `browser-{390,1100}-final.log`，截图 `covers-{390,1100}-list.png`。设备/图片 API 使用夹具，未接真实音箱。
+
+本批未提交/推送/发布或更新父指针；不沿用上文历史授权。客户端另修复首页入口未保留原生 frame 的机制。鸿蒙闪退尚无堆栈和设备复现，不能将封面重载或子引擎重建直接定为崩溃根因。Not run：HarmonyOS 真机/模拟器与原生壳重新编译、真实音箱交互；本批没有 ArkTS/Kotlin/Swift 修改。
+
 ## Not run 与边界
 
 - iOS `xcodebuild`：Linux 无 Xcode；HarmonyOS HAP：本轮环境无 DevEco/Harmony 构建工具。已跑跨平台方法契约，不代表 Swift/ArkTS 编译通过。
