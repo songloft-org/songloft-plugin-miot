@@ -181,6 +181,8 @@ No commit, push, release or parent gitlink update in this batch; earlier authori
 
 ### Internal settings/full-player navigation supplement
 
+The user's later clarification, a brief default icon despite available covers, has separate [loading-transition evidence and fixes](cover-placeholder.md). Earlier final-node checks missed transient fallback additions. New checks cover mini/full players, recycled rows, retries, resume protocol and simulated switching, without treating browser results as Harmony compositor acceptance.
+
 The user confirmed an npm run dev installation and flicker when returning from internal settings/full player, including default covers. This was not attributed to mandatory plugin-container recreation. At baseline `cfe970655459f540fd42a298d3fd6ffd400d8d65`, settings unmounted SongList and replaced actual/default cover nodes on return. Full player retained nodes but removed the mini player from layout, resizing the list 438→504→438 at width 390. New `navigation_covers.browser.cjs` fails its size assertion against the old package and also records default-node replacement.
 
 The main list now stays mounted. Settings uses an opaque absolutely positioned layer; returning does not remount the list. A 90px wide/66px narrow player slot preserves list dimensions during full player/settings. Player itself still unmounts in settings, preserving its prior polling behavior. Work continues under the user's existing commit/push authorization; actual delivery is tracked in `/tmp/songloft-miot-delivery/delivery.json`.

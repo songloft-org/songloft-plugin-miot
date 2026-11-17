@@ -3,7 +3,10 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 import ts from "typescript";
 
-function harness({ reply } = {}) {
+function harness({
+  reply,
+  globals = () => ({ serverUrl: "https://host.invalid" }),
+} = {}) {
   let current;
   const calls = [],
     listeners = new Set(),
@@ -73,7 +76,9 @@ function harness({ reply } = {}) {
             listeners.add(callback);
             return () => listeners.delete(callback);
           },
+          getGlobalProps: globals,
         };
+      if (name === "./ui/native") return { SlIcon: "icon" };
       throw new Error(name);
     },
     exports,
@@ -100,6 +105,11 @@ function harness({ reply } = {}) {
       instances.push(r);
       return r;
     },
+    paint(r) {
+      r.cursor = 0;
+      current = r;
+      return exports.Cover(r.props);
+    },
     async flush() {
       for (let i = 0; i < 12; i++) {
         for (const r of instances)
@@ -113,6 +123,17 @@ function harness({ reply } = {}) {
         await Promise.resolve();
       }
     },
+    async commit() {
+      for (const r of instances)
+        if (r.dirty) {
+          r.dirty = false;
+          r.cursor = 0;
+          current = r;
+          r.tree = exports.Cover(r.props);
+          for (const effect of r.effects.splice(0)) effect();
+        }
+      await Promise.resolve();
+    },
     resume() {
       for (const callback of listeners)
         callback("lifecycle", '{"state":"resumed"}');
@@ -125,6 +146,110 @@ const song = {
   cover_url: "/api/v1/songs/1/cover?v=123",
 };
 const image = (r) => (r.tree.type === "image" ? r.tree : r.tree.props.children);
+
+test("a known cover resolving its URL does not briefly paint a no-cover icon", () => {
+  const h = harness();
+  const row = h.mount({ song });
+  const initial = h.paint(row);
+  assert.ok(
+    !initial.props.children,
+    "pending cover resolution is not a missing cover",
+  );
+});
+
+test("missing covers use the synchronous SVG icon instead of a font glyph", () => {
+  const h = harness();
+  const row = h.mount({ song: { ...song, cover_url: "" } });
+  const initial = h.paint(row);
+  assert.equal(initial.props.children.type, "view");
+  assert.equal(initial.props.children.props.children.type, "icon");
+  assert.equal(initial.props.children.props.children.props.name, "music_note");
+});
+
+test("inline data covers can paint immediately without an address cache or bridge call", () => {
+  const h = harness(),
+    url = "data:image/png;base64,QUJDRA==";
+  const tree = h.paint(h.mount({ song: { ...song, cover_url: url } }));
+  assert.equal(tree.props.children.type, "image");
+  assert.equal(tree.props.children.props.src, url);
+  assert.equal(h.calls.length, 0);
+});
+
+test("a recycled row paints its already-loaded cover before effects and without another bridge request", async () => {
+  const h = harness();
+  const first = h.mount({ song });
+  await h.flush();
+  image(first).props.bindload();
+  const loaded = image(first).props.src;
+  const second = h.mount({ song });
+  const initial = h.paint(second);
+  assert.equal(initial.props.children.type, "image");
+  assert.equal(initial.props.children.props.src, loaded);
+  await h.flush();
+  assert.equal(h.calls.length, 1);
+});
+
+test("an automatic retry never inserts the default icon between image attempts", async () => {
+  const h = harness(),
+    row = h.mount({ song });
+  await h.flush();
+  image(row).props.binderror();
+  await h.commit();
+  assert.ok(
+    !row.tree.props.children,
+    "an in-flight retry must not paint a default icon",
+  );
+  await h.flush();
+  assert.equal(image(row).type, "image");
+});
+
+test("an old cache entry cannot show the wrong song on a reused component", async () => {
+  const h = harness(),
+    row = h.mount({ song });
+  await h.flush();
+  image(row).props.bindload();
+  row.props = { song: { ...song, id: 2, cover_url: "/api/v1/songs/2/cover" } };
+  const first = h.paint(row);
+  assert.ok(
+    !first.props.children,
+    "the previous song is not a loading placeholder",
+  );
+});
+
+test("cover size and content versions have separate cache entries", async () => {
+  const h = harness(),
+    row = h.mount({ song, width: 96 });
+  await h.flush();
+  image(row).props.bindload();
+  for (const props of [
+    { song, width: 640 },
+    { song: { ...song, cover_url: "/api/v1/songs/1/cover?v=next" }, width: 96 },
+  ])
+    assert.ok(!h.paint(h.mount(props)).props.children);
+});
+
+test("server changes do not reuse a credential-bearing cached address", async () => {
+  let serverUrl = "https://first.invalid";
+  const h = harness({ globals: () => ({ serverUrl }) }),
+    row = h.mount({ song });
+  await h.flush();
+  image(row).props.bindload();
+  serverUrl = "https://second.invalid";
+  assert.ok(!h.paint(h.mount({ song })).props.children);
+});
+
+test("a failed cached image is invalidated without showing a transient default", async () => {
+  const h = harness(),
+    row = h.mount({ song });
+  await h.flush();
+  image(row).props.bindload();
+  image(row).props.binderror();
+  assert.ok(!h.paint(h.mount({ song })).props.children);
+  await h.commit();
+  assert.ok(!row.tree.props.children);
+  await h.flush();
+  assert.equal(image(row).type, "image");
+});
 
 test("large cover keeps native image painting separate from shadow, radius and inline size", async () => {
   const h = harness(),

@@ -349,8 +349,9 @@ text {
   justify-content: center;
 }
 .cover-placeholder {
-  font-size: 24px;
-  color: var(--md-on-surface-variant);
+  width: 24px;
+  height: 24px;
+  flex-shrink: 0;
 }
 .song-copy {
   flex: 3;

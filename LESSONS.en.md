@@ -26,6 +26,8 @@ Include rule, scope, full owner/repo#number, failure/fix commit SHAs, actual val
 
 - Same-day internal navigation supplement: a package installed with npm dev flashes even default covers when returning from settings/full player. Old settings navigation unmounted SongList; full-player transitions resized the list 438→504→438, independently of image networking. Retain the main list, use an opaque settings layer and reserve the player's 66/90px layout slot. Assert actual image/default-node identity, list size and scroll offset separately. [Migration record](docs/en/lynx-migration.md). Same incident, no Seen increment; native-device acceptance remains open.
 
+- Same-day loading-transition supplement: the user clarified that the default icon briefly appears even with covers present. Correct final DOM misses transient fallbacks during resolution/retries. The old package produced 64 such additions in a real browser, and nine new behaviors among nineteen cover tests fail with old source. The fix distinguishes known-cover loading from missing covers, reuses bounded address-cache entries on first render and uses inline SVG for genuine defaults. Both browser widths produce zero false additions. [Record](docs/en/cover-placeholder.md); native compositing/real background reclamation remain unverified, with no Seen increment.
+
 ### MIOT-033: verify generated entries, native text and actual nested frames during Lynx migration
 
 - Scope: baseline `fc46bdc5a717840780d8bef6a26d3079ed2ac6b3` plus this uncommitted full frontend migration.
