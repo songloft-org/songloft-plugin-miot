@@ -50,3 +50,9 @@ Evidence directory: `/tmp/miot-settings-20261117/`.
 - The first isolated baseline frontend build lacked shared backend types/utilities. Copying those sources allowed `baseline-build-fixed.log` to pass. This missing fixture dependency is not counted as a product regression failure.
 
 Not run: Android/iOS/HarmonyOS native UI acceptance, physical speaker audio, remote CI and formal release. Host and backend business code are unchanged, so parent Go checks were not repeated. Web description interactions are verified; native UI acceptance remains incomplete.
+
+## Commits and remote delivery
+
+After user authorization, implementation [`c8fddc8e0bb3e53f100914476c8c810fbe305dad`](https://github.com/songloft-org/songloft-plugin-miot/commit/c8fddc8e0bb3e53f100914476c8c810fbe305dad) was pushed to main. Its [CI](https://github.com/songloft-org/songloft-plugin-miot/actions/runs/44051350630) passed types, backend/frontend tests, build and validation. The existing automatic workflow published [v2026.11.17.1](https://github.com/songloft-org/songloft-plugin-miot/releases/tag/v2026.11.17.1), with version-metadata commit `c61be31177183cefa7118ef49ce65ff14aea48a4`. This section records delivery only and does not create another business release.
+
+The downloaded release ZIP has SHA-256 `a8c9d5c710ff079932819ca992bf9853dd2691a0d5c87b3df291f4192ebf980a`; its `releaseSource` matches the implementation, `renderEngine=lynx`, and version is `2026.11.17.1`. The local dev package is not presented as the release archive. Evidence: `ci-plugin-current.json`, `release.json`, and `released/miot.jsplugin.zip`. The automatic commit changes version/download/hash metadata only; business source matches the verified implementation. The formal package was not manually installed on the user's Docker server, and the existing dev watcher remains active. Native UI and physical speaker acceptance remain Not run.

@@ -50,3 +50,9 @@ Android API 34 模拟器可启动，但进入 Lynx App 后宿主模拟器进程�
 - 隔离基线首轮前端构建因未复制共享后端类型/工具函数失败；补齐源码后 `baseline-build-fixed.log` 构建通过。该依赖缺失不计为产品回归失败。
 
 Not run：Android/iOS/HarmonyOS 原生 UI 验收、真实音箱发声、远端 CI/正式发布；本次未改宿主或后端业务，不重复父仓库 Go 检查。播放说明的网页交互已验证，原生验收仍未完成。
+
+## 提交与远端交付
+
+用户授权后，实现提交 [`c8fddc8e0bb3e53f100914476c8c810fbe305dad`](https://github.com/songloft-org/songloft-plugin-miot/commit/c8fddc8e0bb3e53f100914476c8c810fbe305dad) 已推送到 main；[对应 CI](https://github.com/songloft-org/songloft-plugin-miot/actions/runs/44051350630) 成功，类型、前后端测试、构建与校验通过。既有自动流程发布 [v2026.11.17.1](https://github.com/songloft-org/songloft-plugin-miot/releases/tag/v2026.11.17.1)，自动版本提交为 `c61be31177183cefa7118ef49ce65ff14aea48a4`。本节为纯文档交付记录，不新增业务发布。
+
+下载的正式 ZIP SHA-256 为 `a8c9d5c710ff079932819ca992bf9853dd2691a0d5c87b3df291f4192ebf980a`，包内 `releaseSource` 与实现提交一致，`renderEngine=lynx`，版本 `2026.11.17.1`；未将本机 dev 包冒充正式包。证据：`ci-plugin-current.json`、`release.json` 及 `released/miot.jsplugin.zip`。自动版本提交只更新版本/下载/哈希元数据，业务源码与已验证实现一致。没有手动安装正式包到用户 Docker，现有 dev 监听保持运行；原生 UI 和真实音箱验收仍为 Not run。
