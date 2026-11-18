@@ -180,7 +180,7 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
           .getElementById("plugin-view")
           .shadowRoot.querySelectorAll(".song-row").length,
     );
-    assert.equal(rows, 30);
+    assert.equal(rows, baseline ? 30 : songs.length);
     if (!baseline)
       for (const path of [
         "/lyric",
@@ -195,14 +195,23 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
     assert.equal(submissions, 1);
     let feedbackMs = null;
     if (!baseline) {
-      await visible(".device-play-state-slot");
-      await page.waitForFunction(() =>
-        document
-          .getElementById("plugin-view")
-          .shadowRoot.querySelector(".device-play-state-slot")
-          .textContent.includes("正在发送指令"),
+      await visible(
+        '.device-play-state-slot [accessibility-label^="正在发送指令"]',
       );
       feedbackMs = (await elapsed()) - clickMs;
+      const point = await page.evaluate(() => {
+        const root = document.getElementById("plugin-view").shadowRoot;
+        const target = root.querySelector(
+          ".songs-playback-busy .song-play-target",
+        );
+        if (!target || getComputedStyle(target).pointerEvents !== "none")
+          return null;
+        const rect = target.getBoundingClientRect();
+        return { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 };
+      });
+      assert.ok(point, "the Web list must block another tap while sending");
+      await page.mouse.click(point.x, point.y);
+      assert.equal(submissions, 1, "a busy tap must not send a second command");
     }
     await releaseCommand();
     const statusDeadline = Date.now() + 3000;
@@ -245,8 +254,15 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
       if (width < 600 && !counts["/voice-commands/sleep-timer"])
         await click('.sl-button[accessibility-label="延迟停止"]');
       await visible(".sleep-popup-header");
+      const sleepDeadline = Date.now() + 3000;
+      while (
+        !counts["/voice-commands/sleep-timer"] &&
+        Date.now() < sleepDeadline
+      )
+        await wait(20);
       assert.equal(counts["/voice-commands/sleep-timer"], 1);
     }
+    assert.equal(submissions, 1);
     assert.deepEqual(errors, []);
     console.log(
       JSON.stringify({

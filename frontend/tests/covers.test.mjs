@@ -161,9 +161,10 @@ test("missing covers use the synchronous SVG icon instead of a font glyph", () =
   const h = harness();
   const row = h.mount({ song: { ...song, cover_url: "" } });
   const initial = h.paint(row);
-  assert.equal(initial.props.children.type, "view");
-  assert.equal(initial.props.children.props.children.type, "icon");
-  assert.equal(initial.props.children.props.children.props.name, "music_note");
+  const placeholder = initial.props.children.type();
+  assert.equal(placeholder.type, "view");
+  assert.equal(placeholder.props.children.type, "icon");
+  assert.equal(placeholder.props.children.props.name, "music_note");
 });
 
 test("inline data covers can paint immediately without an address cache or bridge call", () => {

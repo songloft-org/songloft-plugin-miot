@@ -1,5 +1,6 @@
 import {
   createContext,
+  memo,
   useContext,
   useEffect,
   useMemo,
@@ -21,7 +22,7 @@ import {
 import * as store from "./store";
 import { get, post, query, messageOf } from "./api";
 import { stopChatSocket, setChatVisible } from "./chat-stream";
-import { Cover } from "./Cover";
+import { Cover, CoverPlaceholder } from "./Cover";
 import { useSongListScroll } from "./song-list-scroll";
 import { createPlayerDetails } from "./player-details";
 import { paletteFromMetadata } from "./player-palette";
@@ -285,6 +286,117 @@ function SongListHeader() {
     </view>
   );
 }
+type SongAction = { song: Song; playlistId: string };
+
+const SongListRow = memo(function SongListRow({
+  song,
+  index,
+  rowHeight,
+  selected,
+  playbackEnabled,
+  playlistId,
+  isVirtualPlaylist,
+  setSongAction,
+  web,
+  narrow,
+}: {
+  song: Song;
+  index: number;
+  rowHeight: number;
+  selected: boolean;
+  playbackEnabled: boolean;
+  playlistId: string;
+  isVirtualPlaylist: boolean;
+  setSongAction: (action: SongAction) => void;
+  web: boolean;
+  narrow: boolean;
+}) {
+  const [coverVisible, setCoverVisible] = useState(false);
+  const hasCover = !!song.cover_url?.trim();
+  const deferCover = web && hasCover;
+  const play = () => {
+    if (!state.playerBusy) run(() => store.playSong(song, index));
+  };
+
+  return (
+    <view
+      className={classes(["song-row", selected && "selected"])}
+      style={{ height: `${rowHeight}px` }}
+      exposure-id={deferCover ? `song-cover-${song.id}` : undefined}
+      binduiappear={deferCover ? () => setCoverVisible(true) : undefined}
+      binduidisappear={deferCover ? () => setCoverVisible(false) : undefined}
+    >
+      <view
+        className="song-play-target"
+        aria-disabled={!playbackEnabled}
+        bindtap={playbackEnabled ? play : undefined}
+      >
+        <text className="song-index">{index + 1}</text>
+        {!web || coverVisible ? (
+          <Cover song={song} />
+        ) : (
+          <view className="cover-frame song-cover">
+            {!hasCover && <CoverPlaceholder />}
+          </view>
+        )}
+        <view className="song-copy" event-through>
+          <text className="song-title" text-maxline="1">
+            {song.title || "未知歌曲"}
+          </text>
+          {(!web || narrow) && (
+            <view className="song-mobile-meta">
+              <text className="song-mobile-artist muted" text-maxline="1">
+                {song.artist || "未知艺术家"}
+              </text>
+              <text className="song-mobile-duration muted">
+                {duration(song.duration)}
+              </text>
+            </view>
+          )}
+        </view>
+        {(!web || !narrow) && (
+          <>
+            <text className="song-artist muted" text-maxline="1">
+              {song.artist || "未知艺术家"}
+            </text>
+            <text className="song-album muted" text-maxline="1">
+              {song.album || "未知专辑"}
+            </text>
+            <text className="song-duration muted">
+              {duration(song.duration)}
+            </text>
+          </>
+        )}
+      </view>
+      <view className="song-actions">
+        {(!web || !narrow) && (
+          <SlButton
+            variant="icon"
+            icon="play_arrow"
+            title="播放歌曲"
+            className="song-action-play"
+            disabled={!playbackEnabled}
+            onClick={play}
+          />
+        )}
+        {!isVirtualPlaylist && (
+          <SlButton
+            variant="icon"
+            icon="more_vert"
+            title="歌曲操作"
+            id={`miot-song-actions-${song.id}`}
+            onClick={() => {
+              navigation.selectOpen = true;
+              setSongAction({ song, playlistId });
+            }}
+          />
+        )}
+      </view>
+      <view className="song-row-separator" event-through />
+    </view>
+  );
+});
+
 function SongList() {
   useObservedFields(() => [
     state.loading,
@@ -331,10 +443,7 @@ function SongList() {
       !state.songsLoading &&
       !state.songsError,
   });
-  const [songAction, setSongAction] = useState<{
-    song: Song;
-    playlistId: string;
-  } | null>(null);
+  const [songAction, setSongAction] = useState<SongAction | null>(null);
   useEffect(() => {
     if (!navigation.selectOpen) setSongAction(null);
   });
@@ -343,8 +452,14 @@ function SongList() {
     navigation.selectOpen = false;
   };
   const songs = store.visibleSongs.value;
-  const first = Math.min(start, Math.max(0, songs.length - 30)),
-    end = Math.min(songs.length, first + 30);
+  const web = String(SystemInfo.platform).toLowerCase() === "web";
+  // Web lays out loaded rows ahead of scrolling and skips offscreen painting.
+  // Native keeps the fixed window updated by its scroll events.
+  const first = web ? 0 : Math.min(start, Math.max(0, songs.length - 30));
+  const end = web ? songs.length : Math.min(songs.length, first + 30);
+  const isVirtualPlaylist = !!state.playlists.find(
+    (p) => String(p.id) === state.selectedPlaylistId,
+  )?.is_virtual;
   const device = store.currentDevice.value;
   const narrow = width < 600;
   const deviceStatus = state.deviceConnecting
@@ -379,6 +494,42 @@ function SongList() {
     playbackReady &&
     !!state.playlistProgress?.song_id &&
     !(onThisPlaylist && state.player.is_playing);
+  const currentSongId = state.player.current_song?.id;
+  const playlistId = state.selectedPlaylistId;
+  const playbackEnabled = playbackReady && (web || !state.playerBusy);
+  const rows = useMemo(
+    () =>
+      songs
+        .slice(first, end)
+        .map((song, index) => (
+          <SongListRow
+            key={song.id}
+            song={song}
+            index={first + index}
+            rowHeight={rowHeight}
+            selected={currentSongId === song.id}
+            playbackEnabled={playbackEnabled}
+            playlistId={playlistId}
+            isVirtualPlaylist={isVirtualPlaylist}
+            setSongAction={setSongAction}
+            web={web}
+            narrow={narrow}
+          />
+        )),
+    [
+      songs,
+      first,
+      end,
+      rowHeight,
+      currentSongId,
+      playbackEnabled,
+      playlistId,
+      isVirtualPlaylist,
+      setSongAction,
+      web,
+      narrow,
+    ],
+  );
   async function remove(song: Song, fromLibrary: boolean, playlistId: string) {
     if (playlistId !== state.selectedPlaylistId) return;
     const answer = await store.confirmAction(
@@ -603,108 +754,38 @@ function SongList() {
             <SongListHeader />
             <scroll-view
               id="miot-song-list"
-              className="songs-scroll"
+              className={classes([
+                "songs-scroll",
+                web && "songs-scroll-web",
+                web && state.playerBusy && "songs-playback-busy",
+              ])}
+              aria-busy={web && state.playerBusy ? true : undefined}
               scroll-y
               bindscroll={(event: any) => {
-                onScroll(Number(event.detail.scrollTop || 0));
-                if (
-                  Number(event.detail.scrollTop || 0) + height >=
-                  songs.length * rowHeight - rowHeight * 10
-                )
+                const top = Number(event.detail.scrollTop || 0);
+                if (!web) onScroll(top);
+                if (top + height >= songs.length * rowHeight - rowHeight * 10)
                   void store.loadMoreSongs();
               }}
             >
-              <view
-                style={{ height: `${first * rowHeight}px`, flexShrink: 0 }}
-              />
-              {songs.slice(first, end).map((song, index) => (
+              {!web && (
                 <view
-                  key={song.id}
-                  className={classes([
-                    "song-row",
-                    state.player.current_song?.id === song.id && "selected",
-                  ])}
-                  style={{ height: `${rowHeight}px` }}
-                >
-                  <view
-                    className="song-play-target"
-                    aria-disabled={!playbackReady || state.playerBusy}
-                    bindtap={
-                      playbackReady && !state.playerBusy
-                        ? () => run(() => store.playSong(song, first + index))
-                        : undefined
-                    }
-                  >
-                    <text className="song-index">{first + index + 1}</text>
-                    <Cover song={song} />
-                    <view className="song-copy" event-through>
-                      <text className="song-title" text-maxline="1">
-                        {song.title || "未知歌曲"}
-                      </text>
-                      <view className="song-mobile-meta">
-                        <text
-                          className="song-mobile-artist muted"
-                          text-maxline="1"
-                        >
-                          {song.artist || "未知艺术家"}
-                        </text>
-                        <text className="song-mobile-duration muted">
-                          {duration(song.duration)}
-                        </text>
-                      </view>
-                    </view>
-                    <text className="song-artist muted" text-maxline="1">
-                      {song.artist || "未知艺术家"}
-                    </text>
-                    <text className="song-album muted" text-maxline="1">
-                      {song.album || "未知专辑"}
-                    </text>
-                    <text className="song-duration muted">
-                      {duration(song.duration)}
-                    </text>
-                  </view>
-                  <view className="song-actions">
-                    <SlButton
-                      variant="icon"
-                      icon="play_arrow"
-                      title="播放歌曲"
-                      className="song-action-play"
-                      disabled={!playbackReady || state.playerBusy}
-                      onClick={() =>
-                        run(() => store.playSong(song, first + index))
-                      }
-                    />
-                    {!state.playlists.find(
-                      (p) => String(p.id) === state.selectedPlaylistId,
-                    )?.is_virtual && (
-                      <SlButton
-                        variant="icon"
-                        icon="more_vert"
-                        title="歌曲操作"
-                        id={`miot-song-actions-${song.id}`}
-                        onClick={() => {
-                          navigation.selectOpen = true;
-                          setSongAction({
-                            song,
-                            playlistId: state.selectedPlaylistId,
-                          });
-                        }}
-                      />
-                    )}
-                  </view>
-                  <view className="song-row-separator" event-through />
-                </view>
-              ))}
-              <view
-                style={{
-                  height: `${Math.max(0, songs.length - end) * rowHeight}px`,
-                  flexShrink: 0,
-                }}
-              />
+                  style={{ height: `${first * rowHeight}px`, flexShrink: 0 }}
+                />
+              )}
+              {rows}
+              {!web && (
+                <view
+                  style={{
+                    height: `${(songs.length - end) * rowHeight}px`,
+                    flexShrink: 0,
+                  }}
+                />
+              )}
               <view className="songs-page-feedback">
                 <text className="muted">
                   {state.songsHasMore
-                    ? `已加载 ${state.songs.length} 首${state.songsTotal !== null && !state.playlists.find((p) => String(p.id) === state.selectedPlaylistId)?.is_virtual ? ` / 共 ${state.songsTotal} 首` : ""}`
+                    ? `已加载 ${state.songs.length} 首${state.songsTotal !== null && !isVirtualPlaylist ? ` / 共 ${state.songsTotal} 首` : ""}`
                     : state.songSearch.trim()
                       ? `找到 ${songs.length} 首`
                       : `已全部加载，共 ${songs.length} 首`}

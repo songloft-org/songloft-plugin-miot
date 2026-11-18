@@ -119,16 +119,16 @@ const png = Buffer.from(
       });
     else void request.continue();
   });
-  const decoded = async (selector) =>
+  const decoded = async (selector, minimum = 1) =>
     page.waitForFunction(
-      (selector) => {
+      (selector, minimum) => {
         const nodes = [
           ...document
             .getElementById("plugin-view")
             .shadowRoot.querySelectorAll(selector),
         ];
         return (
-          nodes.length > 0 &&
+          nodes.length >= minimum &&
           nodes.every((node) => {
             const img = node.shadowRoot?.querySelector("img");
             return img?.complete && img.naturalWidth === 128;
@@ -137,6 +137,7 @@ const png = Buffer.from(
       },
       {},
       selector,
+      minimum,
     );
   const click = async (selector) => {
     const p = await page.evaluate((selector) => {
@@ -185,6 +186,7 @@ const png = Buffer.from(
     );
     await decoded(
       ".song-row:nth-child(1) .cover-image, .song-row:nth-child(2) .cover-image, .song-row:nth-child(3) .cover-image",
+      3,
     );
     if (height < 600) {
       const point = await page.evaluate(() => {

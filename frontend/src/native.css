@@ -371,6 +371,13 @@ text {
   padding: 0 var(--song-inset);
   position: relative;
 }
+.songs-scroll-web .song-row {
+  content-visibility: auto;
+}
+.songs-playback-busy .song-play-target,
+.songs-playback-busy .song-action-play {
+  pointer-events: none;
+}
 .song-row-separator {
   position: absolute;
   left: calc(var(--song-inset) + var(--song-index-width) + var(--song-cover-size) + var(--song-gap) + var(--song-gap));
@@ -818,7 +825,8 @@ text {
 .sl-button-block {
   width: 100%;
 }
-.disabled {
+.disabled,
+.songs-playback-busy .song-action-play {
   opacity: 0.55;
 }
 .sl-input {

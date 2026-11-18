@@ -450,7 +450,7 @@ const height = Number(process.env.MIOT_TEST_HEIGHT || 740);
       () =>
         document
           .getElementById("plugin-view")
-          .shadowRoot.querySelectorAll(".song-row").length === 30 &&
+          .shadowRoot.querySelectorAll(".song-row").length === 1000 &&
         document
           .getElementById("plugin-view")
           .shadowRoot.querySelector(".song-row .song-title")
@@ -480,20 +480,13 @@ const height = Number(process.env.MIOT_TEST_HEIGHT || 740);
           .shadowRoot.querySelector(".songs-scroll").scrollTop > 1000,
     );
     await page.waitForFunction(
-      () =>
-        !document
-          .getElementById("plugin-view")
-          .shadowRoot.querySelector(".song-row")
-          .textContent.includes("Song 1 "),
-    );
-    assert.ok(
-      await page.evaluate(
-        () =>
-          !document
-            .getElementById("plugin-view")
-            .shadowRoot.querySelector(".song-row")
-            .textContent.includes("Song 1 "),
-      ),
+      ({ x, y }) => {
+        const root = document.getElementById("plugin-view").shadowRoot;
+        const row = root.elementFromPoint(x, y)?.closest(".song-row");
+        return Number(row?.querySelector(".song-index")?.textContent) > 20;
+      },
+      {},
+      listPoint,
     );
     const input = await page.evaluateHandle(() =>
       document
@@ -596,6 +589,11 @@ const height = Number(process.env.MIOT_TEST_HEIGHT || 740);
     );
     await click(".player-tools .sl-button", "更多");
     await click(".modal-card .sl-button", "音量");
+    await page.waitForFunction(() =>
+      document
+        .getElementById("plugin-view")
+        .shadowRoot.querySelector(".volume-vertical"),
+    );
     const vertical = await page.evaluate(() => {
       const r = document
         .getElementById("plugin-view")
@@ -685,7 +683,7 @@ const height = Number(process.env.MIOT_TEST_HEIGHT || 740);
         fixture: true,
         songs: 1000,
         playlists: 1000,
-        maxMountedSongs: 30,
+        loadedSongRows: 1000,
         width,
         height,
         commands,

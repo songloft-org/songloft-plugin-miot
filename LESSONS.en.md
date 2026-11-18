@@ -10,6 +10,14 @@ Include rule, scope, full owner/repo#number, failure/fix commit SHAs, actual val
 
 ## Entries
 
+### LIST-002 Check for visible song rows in every sampled frame during fast Web scrolling
+
+- Scope is the MIoT Web song list at baseline `ae2428e78ee7c774db77604887dce8e42cf178a1`.
+- After all 1,000 fixture songs returned in one response, fast wheel input repeatedly exposed empty spacers in the baseline. There were no further song requests while scrolling. Frame timing alone can miss empty viewports.
+- On Web, give loaded entries fixed-height rows and let the browser skip offscreen rendering. Load covers when they enter the viewport and retain pagination. Drive the page with real wheel and touch events, hit-test song rows on each sampled frame, and check repeated location, search, pagination, and offscreen cover requests.
+- Tested both the Chromium fallback page and the nested plugin. Evidence is in `/tmp/miot-web-scroll-fix.wDBdxf/`. Safari and the Android client on physical devices were Not run.
+- Seen 1× (2026-11-18).
+
 ### UI-004: Verify the actual blur and content dimensions of glass popups
 
 - Scope: MIoT Lynx Web fallback, native menus, and device picker.

@@ -38,6 +38,14 @@ function slot() {
     },
   };
 }
+export function CoverPlaceholder() {
+  return (
+    <view className="cover-placeholder">
+      <SlIcon name="music_note" size={24} color="muted" />
+    </view>
+  );
+}
+
 export function Cover({
   song,
   width = 96,
@@ -194,9 +202,7 @@ export function Cover({
           }}
         />
       ) : !path || currentFailed ? (
-        <view className="cover-placeholder">
-          <SlIcon name="music_note" size={24} color="muted" />
-        </view>
+        <CoverPlaceholder />
       ) : null}
     </view>
   );

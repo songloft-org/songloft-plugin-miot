@@ -150,7 +150,7 @@ const height = Number(process.env.MIOT_TEST_HEIGHT || 740);
       () =>
         document
           .getElementById("plugin-view")
-          ?.shadowRoot?.querySelectorAll(".song-row").length === 30,
+          ?.shadowRoot?.querySelectorAll(".song-row").length === 100,
     );
     const snapshot = () =>
       page.evaluate(() => {

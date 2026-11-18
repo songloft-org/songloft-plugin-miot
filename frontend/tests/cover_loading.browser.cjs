@@ -61,6 +61,7 @@ const png = Buffer.from(
   const page = await browser.newPage(),
     errors = [];
   let failLargeOnce = true;
+  const requestedCovers = new Set();
   page.on("pageerror", (error) => errors.push(error.message));
   await page.setViewport({ width, height: 800, hasTouch: width < 600 });
   await page.evaluateOnNewDocument(() => {
@@ -76,6 +77,7 @@ const png = Buffer.from(
       prefix = "/api/v1/jsplugin/miot/api";
     if (/^\/api\/v1\/songs\/\d+\/cover$/.test(url.pathname)) {
       const id = Number(url.pathname.split("/")[4]);
+      if (url.searchParams.get("w") === "96") requestedCovers.add(id);
       const transientFailure =
         id === 1 && url.searchParams.get("w") === "640" && failLargeOnce;
       if (transientFailure) failLargeOnce = false;
@@ -138,7 +140,7 @@ const png = Buffer.from(
       () =>
         document
           .getElementById("plugin-view")
-          ?.shadowRoot?.querySelectorAll(".song-row").length === 30,
+          ?.shadowRoot?.querySelectorAll(".song-row").length === 100,
     );
     await decoded(".mini-cover .cover-image");
     await page.evaluate(() => {
@@ -215,25 +217,25 @@ const png = Buffer.from(
       return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
     });
     await page.mouse.move(point.x, point.y);
+    await decoded(".song-row:first-child .cover-image");
+    assert.ok(!requestedCovers.has(99), "offscreen covers must not load");
     await page.mouse.wheel({ deltaY: 100000 });
-    await page.waitForFunction(
-      () =>
-        Number(
-          document
-            .getElementById("plugin-view")
-            .shadowRoot.querySelector(".song-row .song-index")?.textContent,
-        ) > 50,
-    );
-    await decoded(".song-row .cover-image");
+    await page.waitForFunction(() => {
+      const list = document
+        .getElementById("plugin-view")
+        .shadowRoot.querySelector(".songs-scroll");
+      return list.scrollTop > 5000;
+    });
+    await decoded(".song-row:nth-child(99) .cover-image");
+    assert.ok(requestedCovers.has(99), "scrolling into view loads the cover");
     await page.mouse.wheel({ deltaY: -100000 });
-    await page.waitForFunction(
-      () =>
-        document
-          .getElementById("plugin-view")
-          .shadowRoot.querySelector(".song-row .song-index")?.textContent ===
-        "1",
-    );
-    await decoded(".song-row .cover-image");
+    await page.waitForFunction(() => {
+      const list = document
+        .getElementById("plugin-view")
+        .shadowRoot.querySelector(".songs-scroll");
+      return list.scrollTop === 0;
+    });
+    await decoded(".song-row:first-child .cover-image");
     for (let cycle = 0; cycle < 5; cycle++) {
       await page.evaluate(() => {
         const f = document.getElementById("plugin-view");
