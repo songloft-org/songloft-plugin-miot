@@ -18,6 +18,7 @@ export interface ConversationViewModel {
   device_name: string;
   query: string;
   answer: string;
+  routing_trace?: string[];
 }
 
 /**
@@ -38,5 +39,6 @@ export function toConversationViewModel(msg: ConversationMessage): ConversationV
     device_name: msg.device_name,
     query: ans?.question || ans?.intention?.query || '',
     answer: ans?.content || '',
+    ...(msg.routing_trace ? { routing_trace: [...msg.routing_trace] } : {}),
   };
 }

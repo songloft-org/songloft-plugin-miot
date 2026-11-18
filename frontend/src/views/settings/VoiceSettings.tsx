@@ -520,8 +520,19 @@ const pageState = {
             const frame = JSON.parse(String(event.data));
             if (frame.type === 'snapshot')
               state.conversationMessages = frame.data || [];
-            else if (frame.type === 'message')
-              state.conversationMessages.unshift(frame.data);
+            else if (frame.type === 'message' || frame.type === 'update') {
+              const incoming = frame.data;
+              const index = state.conversationMessages.findIndex(
+                (item) =>
+                  item.account_id === incoming.account_id &&
+                  item.device_id === incoming.device_id &&
+                  item.id === incoming.id &&
+                  item.timestamp === incoming.timestamp,
+              );
+              if (index >= 0) state.conversationMessages[index] = incoming;
+              else if (frame.type === 'message')
+                state.conversationMessages.unshift(incoming);
+            }
           } catch {
             /* ignore malformed stream frame */
           }
@@ -1082,6 +1093,13 @@ export default function VoiceSettings(props: any) {
                           · {displayText(item.answer || '暂无回复')}
                         </text>
                       </NativeView>
+                      {item.routing_trace?.length ? (
+                        <NativeView className="list-item-subtitle">
+                          <text>
+                            {displayText(item.routing_trace.join(' → '))}
+                          </text>
+                        </NativeView>
+                      ) : null}
                     </NativeView>
                   </NativeView>
                 ))}
@@ -1753,9 +1771,7 @@ export default function VoiceSettings(props: any) {
                 onUpdateModelValue={($event: any) => {
                   vm.saveConfig({
                     search_priority: $event as
-                      | 'parallel'
-                      | 'local_first'
-                      | 'external_first',
+                      'parallel' | 'local_first' | 'external_first',
                   });
                 }}
               ></SlSelect>

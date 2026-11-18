@@ -13,6 +13,7 @@
 import { parseQuery } from '@songloft/plugin-sdk';
 import type { WebSocketRequest, InboundWebSocket } from '@songloft/plugin-sdk';
 import type { ConversationMonitor } from '../conversation/monitor';
+import { setConversationTraceListener } from '../conversation/query';
 import { toConversationViewModel } from '../conversation/viewmodel';
 import type { ConversationMessage } from '../types';
 
@@ -56,6 +57,9 @@ function ensureCallback(): void {
   conversationMonitor.registerCallback(CALLBACK_NAME, (msg: ConversationMessage) => {
     broadcast({ type: 'message', data: toConversationViewModel(msg) });
   });
+  setConversationTraceListener((msg) =>
+    broadcast({ type: 'update', data: toConversationViewModel(msg) }),
+  );
   callbackRegistered = true;
 }
 
@@ -65,6 +69,7 @@ function releaseCallbackIfIdle(): void {
   if (callbackRegistered && conversationMonitor) {
     conversationMonitor.unregisterCallback(CALLBACK_NAME);
   }
+  setConversationTraceListener();
   callbackRegistered = false;
 }
 

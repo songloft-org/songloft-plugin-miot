@@ -482,3 +482,34 @@ test('cached playing before TTS and repeated idle samples cannot confirm an unac
   assert.equal(await pending, 'unknown');
   assert.equal(sends, 1);
 });
+
+for (const text of [
+  '请播放周杰伦的菊花台',
+  '我要播放晴天',
+  '请帮我播放晴天',
+  '我想听晴天',
+]) {
+  test(`explicit music outranks generic chat trigger: ${text}`, async (t) => {
+    const h = dispatcherOf(t, {
+      config: { trigger_words: ['请', '我要', '我想'] },
+      handled: true,
+    });
+    h.send(text);
+    await flush();
+    assert.ok(h.calls.includes('music'));
+    assert.ok(
+      !h.calls.some((call) => Array.isArray(call) && call[0] === 'chat'),
+    );
+  });
+}
+for (const words of [
+  ['请', '请问'],
+  ['请问', '请'],
+]) {
+  test(`longest trigger independent of order: ${words}`, async (t) => {
+    const h = dispatcherOf(t, { config: { trigger_words: words } });
+    h.send('请问如何播放音乐');
+    await flush();
+    assert.deepEqual(h.calls, [['chat', '如何播放音乐']]);
+  });
+}

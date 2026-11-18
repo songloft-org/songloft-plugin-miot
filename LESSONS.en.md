@@ -10,6 +10,14 @@ Include rule, scope, full owner/repo#number, failure/fix commit SHAs, actual val
 
 ## Entries
 
+### ROUTE-001: validate chat prefixes and song parsing through the complete routing chain
+
+- Scope: chat triggers, voice requests, and local song candidates; baseline `589a2beeed6b19141d8d2feabaddeb92f17e382a`.
+- Evidence: following article feedback, new regressions against isolated old sources failed in 11 cases covering intercepted song requests, short-prefix precedence, missing system prompts in probes, connector lookup, and parallel ranking. The article alone was not treated as proof of current defects. Log: `/tmp/wechat-negative.log`.
+- Rule / done right: fixed controls first; explicit music requests at the start bypass chat prefixes; choose the longest prefix regardless of configuration order. Try literal titles first, validate artist and title separately for connector splits, and preserve both score and retry query. Scope live diagnostics to each message/device and update records without duplicates. Routing does not prove audible playback.
+- Validation: 1511 plugin and 138 frontend tests, both type checks, package build and validation pass. Real-index cases cover playlist/standalone songs, wrong artists, and literal titles containing “的”. Objects and boundaries: `/tmp/songloft-wechat-improvements/verification.json`. Real speakers and model-provider acceptance: Not run.
+- Seen 1× (2026-11-18). Status: local fix, uncommitted and unreleased.
+
 ### LIST-001: virtual windows must not depend on the previous locate value
 
 - Scope: current-song location and paged virtual lists; baseline `6fba93e6f3bdb4e73c00a9a58da67475cd0519d1` plus worktree.

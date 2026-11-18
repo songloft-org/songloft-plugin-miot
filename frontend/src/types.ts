@@ -181,6 +181,7 @@ export interface SleepTimerStatus {
 }
 
 export interface ConversationMessage {
+  routing_trace?: string[];
   id?: string;
   timestamp?: number | string;
   account_id?: string;

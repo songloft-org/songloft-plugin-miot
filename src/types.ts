@@ -353,6 +353,7 @@ export interface ConversationMessage {
   device_id: string;
   device_name: string;
   message: AskMessage;
+  routing_trace?: string[];
 }
 
 // ===== 播放状态 =====

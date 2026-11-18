@@ -11,7 +11,7 @@ import { ConfigManager } from '../config/manager';
 import { AccountManager } from '../account/manager';
 import { MinaService } from '../service/service';
 import { PlaylistManagerMap, resolvePlaylistResumeStart } from '../player/manager';
-import { normalizeSongMatchThreshold, songMatchScore } from '../indexing/song_match';
+import { normalizeSongMatchThreshold, songMatchScore, artistTitleQueries } from '../indexing/song_match';
 import { IndexingManager } from '../indexing/manager';
 import { GroupCoordinator } from '../group/coordinator';
 import { URLBuilder } from '../player/url_builder';
@@ -28,7 +28,7 @@ import type { MemoryRecord } from '../memory';
 import type { OnlineSearchResult } from '../voicecmd/online_searcher';
 import type { ConversationMessage, VoiceCommand, PlayMode, AIAnalysisResult, SearchPriority } from '../types';
 import { getDefaultVoiceCommands } from '../voicecmd/defaults';
-import { conversationQuery } from '../conversation/query';
+import { conversationQuery, traceConversation } from '../conversation/query';
 export { getDefaultVoiceCommands } from '../voicecmd/defaults';
 
 // ===== 类型定义 =====
@@ -76,10 +76,10 @@ interface PlayedSong {
   songIndex?: number;
 }
 
-type SongSearchCandidate =
+type SongSearchCandidate = { matchScore?: number; searchTerm?: string } & (
   | { source: 'local_index'; loc: SongLocation }
   | { source: 'remote_song'; song: StandaloneSongCandidate }
-  | { source: 'external_search'; song: OnlineSearchResult };
+  | { source: 'external_search'; song: OnlineSearchResult });
 
 /**
  * 并行搜歌竞速里的一个待 settle 任务。
@@ -273,10 +273,13 @@ export class MusicCommandService {
    * 处理新对话消息（由 ConversationMonitor 回调触发）
    * @param msg - 对话消息
    */
+  private traceSearch?: (detail: string) => void;
+
   async handleMessage(msg: ConversationMessage, options: MessageOptions = {}): Promise<boolean> {
     if (options.current) {
       this.getVoiceResume(); this.getSleepTimers();
       const request: MusicCommandService = Object.create(this);
+      request.traceSearch = detail => { if (options.current?.() !== false) traceConversation(msg, detail); };
       request.playlistManagerMap = guardedPlayers(this.playlistManagerMap, options.current);
       request.minaService = guardedDevices(this.minaService, options.current);
       if (this.groupCoordinator) request.groupCoordinator = new GroupCoordinator(request.playlistManagerMap, request.minaService, this.configManager);
@@ -313,6 +316,7 @@ export class MusicCommandService {
     if (options.current?.() === false) return false;
     const fixedResult = ruleResult && FIXED_CONTROL_COMMAND_TYPES.has(ruleResult.command.type) ? ruleResult : null;
     if (fixedResult) {
+      traceConversation(msg, `固定规则：${fixedResult.command.type} / ${fixedResult.keyword}`);
       songloft.log.info(`[MusicCommandService] [Rule] → Matched fixed control: type=${fixedResult.command.type} keyword="${fixedResult.keyword}" argument="${fixedResult.argument}"`);
       if (options.current?.() === false) return false;
       await this.executeCommand(fixedResult, accountId, msg.device_id, query, { current: options.current, nativeReply: msg.message.response.answer[0]?.content });
@@ -328,6 +332,7 @@ export class MusicCommandService {
       if (memoryEnabled) {
         const memoryHandled = await this.tryHandleMemory(query, accountId, msg.device_id);
         if (memoryHandled) {
+          traceConversation(msg, "命中点歌记忆");
           return true;
         }
       } else {
@@ -342,6 +347,7 @@ export class MusicCommandService {
     songloft.log.info(`[MusicCommandService] [Rule] Matching search query="${query}"`);
     const result = ruleResult && SEARCH_COMMAND_TYPES.has(ruleResult.command.type) ? ruleResult : null;
     if (result) {
+      traceConversation(msg, `点歌规则：${result.keyword}；参数：${result.argument}`);
       songloft.log.info(`[MusicCommandService] [Rule] → Matched search: type=${result.command.type} keyword="${result.keyword}" argument="${result.argument}"`);
 
       // 执行口令
@@ -361,6 +367,7 @@ export class MusicCommandService {
       const aiResult = await this.aiAnalyzer.analyze(query, aiConfig, options.current, JSON.stringify([accountId, msg.device_id]));
       if (options.current?.() === false) return false;
       if (aiResult) {
+        traceConversation(msg, `AI 分析：${aiResult.action}（${aiResult.confidence}）；参数：${JSON.stringify(aiResult.params)}`);
         songloft.log.info(`[MusicCommandService] [AI] Done: action=${aiResult.action} confidence=${aiResult.confidence} params=${JSON.stringify(aiResult.params)}`);
         if (aiResult.confidence !== 'low' && aiResult.action !== 'unknown') {
           songloft.log.info(`[MusicCommandService] [AI] → Executing fallback (high confidence, action=${aiResult.action})`);
@@ -1485,9 +1492,9 @@ export class MusicCommandService {
       this.findExternalSongCandidate(songName, hint),
     ]);
     const results = await Promise.all(tasks.map(task => task.promise));
-    const score = (candidate: SongSearchCandidate): number => candidate.source === 'local_index'
+    const score = (candidate: SongSearchCandidate): number => candidate.matchScore ?? (candidate.source === 'local_index'
       ? songMatchScore(searchTerm, candidate.loc.songTitle, candidate.loc.artist)
-      : songMatchScore(searchTerm, candidate.song.title, candidate.song.artist);
+      : songMatchScore(searchTerm, candidate.song.title, candidate.song.artist));
     const candidates = results.map(result => result.candidate).filter((candidate): candidate is SongSearchCandidate => !!candidate);
     candidates.sort((a, b) => score(b) - score(a)); // Stable ties retain local preference.
     let pending = this.pendingCandidateTasks(candidates.map(candidate => Promise.resolve(candidate)));
@@ -1643,8 +1650,10 @@ export class MusicCommandService {
     // 从索引中模糊匹配歌曲，获取歌单ID和歌曲索引（使用预加载缓存，纯内存操作）
     songloft.log.info(`[MusicCommandService] Searching local song: "${searchTerm}"`);
     const threshold = normalizeSongMatchThreshold((await this.configManager.getConfig()).song_match_threshold);
+    this.traceSearch?.(`本地搜索：${searchTerm}`);
     const loc = await this.indexingManager.findSongByName(searchTerm, threshold);
     if (loc) {
+      this.traceSearch?.(`本地命中：${loc.songTitle} / ${loc.artist}`);
       return { source: 'local_index', loc };
     }
 
@@ -1654,6 +1663,24 @@ export class MusicCommandService {
       return { source: 'remote_song', song: standalone };
     }
 
+    // 仅原始查询两条路径都未命中后尝试；分别验证歌手与标题，不能只删掉“的”。
+    for (const candidate of artistTitleQueries(searchTerm)) {
+      this.traceSearch?.(`原始查询未命中，拆分歌手：${candidate.artist}；歌名：${candidate.title}`);
+      const query = `${candidate.title} ${candidate.artist}`;
+      const match = await this.indexingManager.findSongByName(query, threshold);
+      if (match && songMatchScore(candidate.title, match.songTitle, '') >= threshold &&
+          songMatchScore(candidate.artist, '', match.artist) >= threshold) {
+        this.traceSearch?.(`本地命中：${match.songTitle} / ${match.artist}`);
+        return { source: 'local_index', loc: match, searchTerm: query, matchScore: songMatchScore(query, match.songTitle, match.artist) };
+      }
+      const remote = await this.indexingManager.findStandaloneSongByName(query, threshold);
+      if (remote && songMatchScore(candidate.title, remote.title, '') >= threshold &&
+          songMatchScore(candidate.artist, '', remote.artist) >= threshold) {
+        this.traceSearch?.(`独立歌曲命中：${remote.title} / ${remote.artist}`);
+        return { source: 'remote_song', song: remote, matchScore: songMatchScore(query, remote.title, remote.artist) };
+      }
+    }
+    this.traceSearch?.('本地曲库未命中');
     return null;
   }
 
@@ -1666,6 +1693,7 @@ export class MusicCommandService {
       return null;
     }
 
+    this.traceSearch?.(`进入在线搜索：${songName}（按搜索优先级或本地未命中）`);
     const song = await this.onlineSearcher.search(songName, hint);
     if (!song) {
       songloft.log.warn(`[MusicCommandService] Online search missed for: ${songName}`);
@@ -1695,7 +1723,7 @@ export class MusicCommandService {
 
     switch (candidate.source) {
       case 'local_index': {
-        const playedLoc = await this.playIndexedSong(candidate.loc, pm, searchTerm, requestedSongName, accountId, deviceId);
+        const playedLoc = await this.playIndexedSong(candidate.loc, pm, candidate.searchTerm ?? searchTerm, requestedSongName, accountId, deviceId);
         return playedLoc ? this.playedSongFromLocation(playedLoc) : null;
       }
       case 'remote_song': {

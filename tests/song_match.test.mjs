@@ -154,3 +154,101 @@ test('command preview uses the same voice threshold as actual playback', async t
   };
   assert.equal((await service.previewSearch('play_song', 'cctv九记录')).found, true);
 });
+
+for (const standalone of [false, true]) {
+  test(`artist connector finds a real indexed song: standalone=${standalone}`, async (t) => {
+    const song = {
+      id: 91,
+      title: '菊花台',
+      artist: '周杰伦',
+      type: 'music',
+      url: '/song',
+    };
+    const service = engine(t);
+    globalThis.songloft.songs = {
+      list: async () => [song],
+      getById: async () => song,
+    };
+    globalThis.songloft.playlists = {
+      list: async () =>
+        standalone ? [] : [{ id: 2, name: '专辑', song_count: 1 }],
+      getSongs: async () => [song],
+    };
+    const index = new IndexingManager();
+    await index.refresh();
+    await index.waitForPlaylistCache();
+    service.indexingManager = index;
+    const candidate = await service.findLocalSongCandidate('周杰伦的菊花台');
+    assert.equal(candidate?.source, standalone ? 'remote_song' : 'local_index');
+    assert.equal(standalone ? candidate.song.id : candidate.loc.songId, 91);
+    assert.equal(await service.findLocalSongCandidate('林俊杰的菊花台'), null);
+  });
+}
+test('literal title with 的 is searched first and never rewritten on a hit', async (t) => {
+  const service = engine(t),
+    queries = [];
+  service.indexingManager = {
+    waitForReady: async () => true,
+    findSongByName: async (query) => {
+      queries.push(query);
+      return { songTitle: '我的歌声里', artist: '曲婉婷' };
+    },
+  };
+  assert.ok(await service.findLocalSongCandidate('我的歌声里'));
+  assert.deepEqual(queries, ['我的歌声里']);
+});
+
+test('parallel ranking preserves the validated artist-title score', async (t) => {
+  const service = engine(t),
+    played = [];
+  const exact = { songTitle: '菊花台', artist: '周杰伦' };
+  service.indexingManager = {
+    waitForReady: async () => true,
+    findSongByName: async (query) => (query === '菊花台 周杰伦' ? exact : null),
+    findStandaloneSongByName: async () => null,
+  };
+  service.findExternalSongCandidate = async () => ({
+    source: 'external_search',
+    song: { title: '周杰伦的菊花台', artist: '翻唱' },
+  });
+  service.playSongCandidate = async (candidate) => {
+    played.push(candidate.source);
+    return {};
+  };
+  assert.ok(
+    await service.executePlaySongParallel(
+      '周杰伦的菊花台',
+      '周杰伦的菊花台',
+      null,
+      {},
+      'a',
+      'd',
+    ),
+  );
+  assert.deepEqual(played, ['local_index']);
+});
+
+test('a split query survives playback retry rather than reverting to the raw connector', async (t) => {
+  const service = engine(t);
+  service.indexingManager = {
+    waitForReady: async () => true,
+    findSongByName: async (query) =>
+      query === '菊花台 周杰伦'
+        ? { songTitle: '菊花台', artist: '周杰伦' }
+        : null,
+    findStandaloneSongByName: async () => null,
+  };
+  const candidate = await service.findLocalSongCandidate('周杰伦的菊花台');
+  service.playIndexedSong = async (_loc, _pm, query) => {
+    assert.equal(query, '菊花台 周杰伦');
+    return null;
+  };
+  await service.playSongCandidate(
+    candidate,
+    { setAnnounceOnSongChange() {} },
+    '周杰伦的菊花台',
+    '周杰伦的菊花台',
+    'a',
+    'd',
+  );
+});

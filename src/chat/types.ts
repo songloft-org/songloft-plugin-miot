@@ -1,5 +1,5 @@
 import type { AIConfig } from '../types';
-import type { AIConnection, AIProtocol } from '../ai/protocol';
+import type { AIMessage, AIConnection, AIProtocol } from '../ai/protocol';
 import { validateAIHeaders } from '../utils/ai_headers';
 export interface ChatConfig {
   enabled: boolean;
@@ -122,3 +122,7 @@ export interface ChatStatus {
   error?: string;
 }
 export const chatScope = (account: string, device: string): string => JSON.stringify([account, device]);
+
+export function chatSystemMessage(config: ChatConfig): AIMessage {
+  return { role: 'system', content: config.system_prompt };
+}

@@ -70,3 +70,15 @@ export function prepareSongMatch(query: string): (title: string, artist: string)
 export function songMatchScore(query: string, title: string, artist: string = ''): number {
   return prepareSongMatch(query)(title, artist);
 }
+
+/** 最多尝试三个连接词位置；原始标题优先，保留“的”属于歌名的可能。 */
+export function artistTitleQueries(text: string): { artist: string; title: string }[] {
+  const result: { artist: string; title: string }[] = [];
+  if (text.length > 120) return result;
+  for (let i = 1; i < text.length - 1 && result.length < 3; i++) {
+    if (text[i] !== '的') continue;
+    const artist = text.slice(0, i).trim(), title = text.slice(i + 1).trim();
+    if (artist && title) result.push({ artist, title });
+  }
+  return result;
+}

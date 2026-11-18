@@ -26,6 +26,10 @@ for (const [search, searched, expected] of [[false, false, 'not_requested'], [tr
       assert.equal(init.headers['x-session'], 'test-session');
       const body = JSON.parse(init.body);
       assert.equal(body.stream, false);
+      assert.deepEqual(body.input[0], {
+        role: 'system',
+        content: draft.system_prompt,
+      });
       assert.deepEqual(body.tools, search ? [{ type: 'web_search' }] : undefined);
       return Response.json(reply(searched));
     });

@@ -107,3 +107,35 @@ test('active stream failure falls back to one poller until it is disposed', () =
   h.disconnectConversation();
   assert.equal(h.timers.size, 0);
 });
+
+test('routing updates replace the matching record without mixing devices or duplicating messages', () => {
+  const h = fixture();
+  h.connectConversation();
+  const socket = h.sockets[0];
+  const send = (type, data) =>
+    socket.onmessage({ data: JSON.stringify({ type, data }) });
+  const a = {
+    id: 'same',
+    timestamp: 1,
+    account_id: 'a',
+    device_id: 'd',
+    query: '请播放菊花台',
+  };
+  const b = { ...a, device_id: 'e' };
+  send('message', a);
+  send('message', b);
+  send('update', {
+    ...a,
+    routing_trace: ['点歌规则：播放', '本地命中：菊花台'],
+  });
+  assert.equal(h.state.conversationMessages.length, 2);
+  assert.equal(h.state.conversationMessages[0].routing_trace, undefined);
+  assert.deepEqual(h.state.conversationMessages[1].routing_trace, [
+    '点歌规则：播放',
+    '本地命中：菊花台',
+  ]);
+  send('message', { ...a, routing_trace: ['最终结果'] });
+  assert.equal(h.state.conversationMessages.length, 2);
+  send('update', { ...a, id: 'not-in-buffer' });
+  assert.equal(h.state.conversationMessages.length, 2);
+});

@@ -4,7 +4,11 @@ import type { MusicCommandService } from '../music/service';
 import type { AIChatService } from '../chat/service';
 import type { PlaybackCoordinator } from '../playback/coordinator';
 import { DEFAULT_CHAT_CONFIG, chatScope } from '../chat/types';
-import { conversationQuery } from '../conversation/query';
+import {
+  conversationQuery,
+  hasExplicitMusicRequest,
+  traceConversation,
+} from '../conversation/query';
 /** 监听只提交任务；每设备最新消息使旧分析失效。 */
 export class VoiceDispatcher {
   private versions = new Map<string, number>();
@@ -69,17 +73,29 @@ export class VoiceDispatcher {
       return;
     }
     if (fixed || await this.music.hasFixedControl(text)) {
+      traceConversation(message, `固定控制：${fixed || '规则匹配'}`);
       if (!current())
         return;
       await this.chat.cancel(account, device, true, false);
       await this.music.handleMessage(message, { deferResume: true, current });
       return;
     }
-    const trigger = config.trigger_words.find(word => text.startsWith(word));
-    if (config.enabled && trigger) {
-      if (!current())
-        return;
-      const question = text.slice(trigger.length).replace(/^[，,：:\s]+/, '').trim();
+    const trigger = config.trigger_words
+      .filter((word) => text.startsWith(word))
+      .sort((a, b) => b.length - a.length)[0];
+    const musicRequest = hasExplicitMusicRequest(text);
+    if (trigger && musicRequest)
+      traceConversation(
+        message,
+        `明确点歌请求优先，跳过聊天前缀「${trigger}」`,
+      );
+    if (config.enabled && trigger && !musicRequest) {
+      traceConversation(message, `聊天触发词：${trigger}`);
+      if (!current()) return;
+      const question = text
+        .slice(trigger.length)
+        .replace(/^[，,：:\s]+/, '')
+        .trim();
       if (question)
         await this.chat.submit(account, device, question, true, current);
       return;
@@ -98,9 +114,11 @@ export class VoiceDispatcher {
       if (!current() || handled)
         return;
       if (canChatFallback()) {
+        traceConversation(message, '音乐未匹配，转入聊天（兜底或追问）');
         await this.chat.submit(account, device, text, true, current);
         return;
       }
+      traceConversation(message, '未匹配，交还音箱原生处理');
       this.music.resumeUnmatched(account, device);
     }
     finally {
