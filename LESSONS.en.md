@@ -10,6 +10,13 @@ Include rule, scope, full owner/repo#number, failure/fix commit SHAs, actual val
 
 ## Entries
 
+### UI-004: Verify the actual blur and content dimensions of glass popups
+
+- Scope: MIoT Lynx Web fallback, native menus, and device picker.
+- Evidence: a dynamic JSX tag produced an empty `x-blur-view` with no class, radius, or height. A literal tag produced a computed `blur(20px)` in Chromium and a blur layer covering the inside of the card.
+- Done right: keep blur and tint in separate layers and size the scroll area from available space and row count. Give the device name container a defined available width and reserve fixed widths for status and actions. Verify with screenshots, popup bounds, and the request from the last item on a short viewport. Evidence is in `/tmp/miot-glass.WnHXgh/`.
+- Seen 1× (2026-11-18).
+
 ### MIOT-036: Refreshing the status cache must preserve playback progress
 
 - Scope: playback status shared by HTTP and WebSocket. Baseline `bb8e4c1675f8c575e6c6d2e812fa8c84080e90e8`.

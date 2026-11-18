@@ -46,6 +46,7 @@ import ScheduleSettings from "./views/settings/ScheduleSettings";
 import ToolboxSettings from "./views/settings/ToolboxSettings";
 import SleepTimerPanel from "./views/SleepTimerPanel";
 import { Overlay } from "./ui/Overlay";
+import { PopupMaterial } from "./ui/PopupMaterial";
 import { ThemeContext } from "./ui/theme";
 import { measurePopover, placePopover } from "./ui/position";
 const { state, playerProgress } = store;
@@ -126,6 +127,7 @@ function Modal({
   close,
   className,
   cardStyle,
+  captureTarget,
   showClose = true,
 }: any) {
   return (
@@ -137,10 +139,11 @@ function Modal({
       >
         <view
           flatten={false}
-          className="modal-card"
+          className={classes(["modal-card", captureTarget && "popup-glass"])}
           style={cardStyle}
           catchtap={() => {}}
         >
+          {captureTarget && <PopupMaterial captureTarget={captureTarget} />}
           {children}
           {showClose && <SlButton label="关闭" onClick={close} />}
         </view>
@@ -148,6 +151,127 @@ function Modal({
     </Overlay>
   );
 }
+const menuRowHeight = 44;
+const popupInsets = 18; // 8px vertical padding and a 1px border on both sides.
+
+type MenuItem = {
+  label: string;
+  icon?: string;
+  selected?: boolean;
+  danger?: boolean;
+  action: () => void;
+};
+
+function useAnchoredPanel(
+  anchor: string | null,
+  panelWidth: number,
+  panelHeight: number,
+  align: "end" | "center" = "end",
+) {
+  const { width, height } = useContext(Viewport);
+  const [placement, setPlacement] = useState<{
+    key: string;
+    style: ReturnType<typeof placePopover>;
+  } | null>(null);
+  const key = JSON.stringify([
+    anchor,
+    width,
+    height,
+    panelWidth,
+    panelHeight,
+    align,
+  ]);
+  useEffect(() => {
+    if (!anchor) {
+      setPlacement(null);
+      return;
+    }
+    let active = true;
+    void measurePopover("#" + anchor, panelWidth, panelHeight, align)
+      .catch(() =>
+        placePopover(
+          { left: 0, top: 0, width, height },
+          {
+            left: width - 56,
+            top: Math.max(0, height - 56),
+            width: 40,
+            height: 40,
+          },
+          panelWidth,
+          panelHeight,
+          align,
+        ),
+      )
+      .then((style) => {
+        if (active) setPlacement({ key, style });
+      });
+    return () => {
+      active = false;
+    };
+  }, [key]);
+  return placement?.key === key ? placement.style : null;
+}
+
+function PopupMenu({
+  anchor,
+  panelWidth,
+  items,
+  className,
+  captureTarget,
+  close,
+}: {
+  anchor: string;
+  panelWidth: number;
+  items: MenuItem[];
+  className?: string;
+  captureTarget: string;
+  close: () => void;
+}) {
+  const position = useAnchoredPanel(
+    anchor,
+    panelWidth,
+    popupInsets + menuRowHeight * items.length,
+  );
+  if (!position) return null;
+  return (
+    <Modal
+      className={classes(["popup-menu", className])}
+      captureTarget={captureTarget}
+      cardStyle={position}
+      close={close}
+      showClose={false}
+    >
+      <scroll-view
+        className="popup-menu-scroll"
+        style={{
+          height: `${Math.max(1, parseFloat(position.height) - popupInsets)}px`,
+        }}
+        scroll-y
+      >
+        {items.map((item) => (
+          <SlButton
+            key={item.label}
+            variant="text"
+            title={item.label}
+            className={classes([
+              "popup-menu-item",
+              item.selected && "popup-menu-selected",
+              item.danger && "popup-menu-danger",
+            ])}
+            onClick={item.action}
+          >
+            {item.icon && <SlIcon name={item.icon} color="muted" size={18} />}
+            <text className="popup-menu-label" text-maxline="1">
+              {item.label}
+            </text>
+            {item.selected && <SlIcon name="check" size={18} />}
+          </SlButton>
+        ))}
+      </scroll-view>
+    </Modal>
+  );
+}
+
 function SongListHeader() {
   return (
     <view className="song-list-header">
@@ -222,6 +346,27 @@ function SongList() {
   const first = Math.min(start, Math.max(0, songs.length - 30)),
     end = Math.min(songs.length, first + 30);
   const device = store.currentDevice.value;
+  const narrow = width < 600;
+  const deviceStatus = state.deviceConnecting
+    ? "连接中"
+    : state.playerBusy
+      ? "正在发送指令…"
+      : state.playerSyncing
+        ? "正在同步状态…"
+        : state.playerStatusState === "error"
+          ? "状态暂不可用"
+          : state.playerStatusState !== "ready"
+            ? "同步中"
+            : state.player.is_playing
+              ? "播放中"
+              : state.player.current_song
+                ? "已暂停"
+                : "待机";
+  const shortStatus: Record<string, string> = {
+    "正在发送指令…": "发送中",
+    "正在同步状态…": "同步中",
+    状态暂不可用: "不可用",
+  };
   const noServer =
     state.configLoaded &&
     (!state.config.server_host ||
@@ -279,7 +424,7 @@ function SongList() {
                 navigation.devicePickerOpen = true;
               }}
             >
-              <text className="device-target-prefix">播放到</text>
+              {!narrow && <text className="device-target-prefix">播放到</text>}
               <text className="device-target-name" text-maxline="1">
                 {device ? store.deviceName(device) : "选择设备"}
               </text>
@@ -292,38 +437,30 @@ function SongList() {
                     "device-play-state",
                     state.playerStatusState === "error" && "error",
                   ])}
+                  accessibility-label={deviceStatus}
                   text-maxline="1"
                 >
-                  {state.deviceConnecting
-                    ? "连接中"
-                    : state.playerBusy
-                      ? "正在发送指令…"
-                      : state.playerSyncing
-                        ? "正在同步状态…"
-                        : state.playerStatusState === "error"
-                          ? "状态暂不可用"
-                          : state.playerStatusState !== "ready"
-                            ? "同步中"
-                            : state.player.is_playing
-                              ? "播放中"
-                              : state.player.current_song
-                                ? "已暂停"
-                                : "待机"}
+                  {narrow
+                    ? shortStatus[deviceStatus] || deviceStatus
+                    : deviceStatus}
                 </text>
               )}
             </view>
           </view>
         </view>
         <view className="appbar-actions row">
-          {width < 600 && state.player.current_song && state.selectedPlaylistId && (
-            <SlButton
-              variant="icon"
-              className="current-song-locate"
-              icon="my_location"
-              title="定位当前播放"
-              onClick={() => run(locate)}
-            />
-          )}
+          {narrow &&
+            (state.player.current_song && state.selectedPlaylistId ? (
+              <SlButton
+                variant="icon"
+                className="current-song-locate"
+                icon="my_location"
+                title="定位当前播放"
+                onClick={() => run(locate)}
+              />
+            ) : (
+              <view className="device-locate-placeholder" />
+            ))}
           <SlButton
             variant="icon"
             icon="settings"
@@ -544,6 +681,7 @@ function SongList() {
                         variant="icon"
                         icon="more_vert"
                         title="歌曲操作"
+                        id={`miot-song-actions-${song.id}`}
                         onClick={() => {
                           navigation.selectOpen = true;
                           setSongAction({
@@ -604,28 +742,34 @@ function SongList() {
         )}
       </view>
       {songAction && (
-        <Modal className="song-action-sheet" close={closeSongActions}>
-          <text className="section-title" text-maxline="2">
-            {songAction.song.title || "歌曲操作"}
-          </text>
-          <SlButton
-            label="从歌单移除"
-            onClick={() => {
-              const action = songAction;
-              closeSongActions();
-              run(() => remove(action.song, false, action.playlistId));
-            }}
-          />
-          <SlButton
-            className="danger-action"
-            label="从曲库永久删除"
-            onClick={() => {
-              const action = songAction;
-              closeSongActions();
-              run(() => remove(action.song, true, action.playlistId));
-            }}
-          />
-        </Modal>
+        <PopupMenu
+          anchor={`miot-song-actions-${songAction.song.id}`}
+          panelWidth={208}
+          className="song-action-sheet"
+          captureTarget="miot-main-content"
+          close={closeSongActions}
+          items={[
+            {
+              label: "从歌单移除",
+              icon: "delete",
+              action: () => {
+                closeSongActions();
+                run(() =>
+                  remove(songAction.song, false, songAction.playlistId),
+                );
+              },
+            },
+            {
+              label: "从曲库永久删除",
+              icon: "delete",
+              danger: true,
+              action: () => {
+                closeSongActions();
+                run(() => remove(songAction.song, true, songAction.playlistId));
+              },
+            },
+          ]}
+        />
       )}
     </view>
   );
@@ -1092,52 +1236,98 @@ function Player({ lyricCache }: { lyricCache: Map<number, LyricLine[]> }) {
   );
   const full = navigation.page === "player";
   const popup = navigation.playerPopup;
-  const [popupPosition, setPopupPosition] = useState<Record<
-    string,
-    string
-  > | null>(null);
-  useEffect(() => {
-    if (!popup) {
-      setPopupPosition(null);
-      return;
-    }
-    if (popup === "sleep") {
-      setPopupPosition({
-        width: `${Math.min(360, width - 32)}px`,
-        maxHeight: `${Math.max(1, height - 32)}px`,
-      });
-      return;
-    }
-    let active = true;
-    const sizes: Record<string, [number, number]> = {
-      volume: [76, 292],
-      mode: [160, 236],
-      speed: [160, 296],
-      more: [240, 236],
-      sleep: [304, 420],
-    };
-    const [panelWidth, panelHeight] = sizes[popup] || sizes.more;
-    setPopupPosition(null);
-    void measurePopover(
-      "#" + navigation.playerPopupAnchor,
-      panelWidth,
-      panelHeight,
-    )
-      .catch(() =>
-        placePopover(
-          { left: 0, top: 0, width, height },
-          { left: width / 2, top: height - 48, width: 0, height: 40 },
-          panelWidth,
-          panelHeight,
-        ),
-      )
-      .then((position) => {
-        if (active) setPopupPosition(position);
-      });
-    return () => {
-      active = false;
-    };
-  }, [popup, navigation.playerPopupAnchor, width, height, full]);
+  const popupPosition = useAnchoredPanel(
+    popup === "volume" ? navigation.playerPopupAnchor : null,
+    76,
+    294,
+    "center",
+  );
+  const closePopup = () => {
+    navigation.playerPopup = "";
+  };
+  const canRemoveSong =
+    song &&
+    Number(state.player.playlist_id) > 0 &&
+    !state.playlists.find((p) => p.id === state.player.playlist_id)?.is_virtual;
+  const popupItems: MenuItem[] =
+    popup === "mode"
+      ? modes.map((mode) => ({
+          label: mode.label,
+          icon: mode.icon,
+          selected: state.player.play_mode === mode.value,
+          action: () => {
+            closePopup();
+            run(() => store.setPlayMode(mode.value));
+          },
+        }))
+      : popup === "speed"
+        ? [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2].map((speed) => ({
+            label: `${speed}×`,
+            selected: speed === (state.player.speed || 1),
+            action: () => {
+              closePopup();
+              run(() => store.setPlaybackSpeed(speed));
+            },
+          }))
+        : popup === "more"
+          ? [
+              {
+                label: `音量 · ${state.player.volume || 0}%`,
+                icon: "volume_up",
+                action: () => {
+                  navigation.playerPopup = "volume";
+                },
+              },
+              {
+                label: `倍速 · ${state.player.speed || 1}×`,
+                icon: "equalizer",
+                action: () => {
+                  navigation.playerPopup = "speed";
+                },
+              },
+              {
+                label: "延迟停止",
+                icon: "bedtime",
+                action: () => {
+                  navigation.playerPopup = "sleep";
+                },
+              },
+              {
+                label: "停止播放",
+                icon: "stop",
+                action: () => {
+                  closePopup();
+                  run(() => store.playerCommand("/player/stop"));
+                },
+              },
+              ...(canRemoveSong
+                ? [
+                    {
+                      label: "从当前歌单移除",
+                      icon: "delete",
+                      danger: true,
+                      action: () =>
+                        run(async () => {
+                          const playlistId = state.player.playlist_id;
+                          const answer = await store.confirmAction(
+                            "从当前歌单移除",
+                            `将《${song.title}》从当前歌单移除？歌曲文件会保留。`,
+                            "移除",
+                            false,
+                          );
+                          if (answer.confirmed) {
+                            await store.removeSongFromPlaylist(song, {
+                              playlistId,
+                            });
+                            closePopup();
+                          }
+                        }),
+                    },
+                  ]
+                : []),
+            ]
+          : [];
+  const captureTarget = full ? "miot-player-content" : "miot-main-content";
   const shortWide = !narrow && height < 480;
   const palette =
     full && song?.cover_url?.trim() ? paletteFromMetadata(song) : null;
@@ -1230,6 +1420,7 @@ function Player({ lyricCache }: { lyricCache: Map<number, LyricLine[]> }) {
   return (
     <view
       flatten={false}
+      id="miot-player-content"
       className={classes([
         full ? "player-full" : "player-mini",
         palette && "player-tinted",
@@ -1432,182 +1623,108 @@ function Player({ lyricCache }: { lyricCache: Map<number, LyricLine[]> }) {
           </view>
         </>
       )}
-      {popup && popupPosition && (
+      {popupItems.length > 0 && (
+        <PopupMenu
+          anchor={navigation.playerPopupAnchor}
+          panelWidth={popup === "more" ? 218 : popup === "speed" ? 144 : 176}
+          className={`player-popup player-popup-${popup}`}
+          captureTarget={captureTarget}
+          close={closePopup}
+          items={popupItems}
+        />
+      )}
+      {popup === "volume" && popupPosition && (
         <Modal
+          className="player-popup player-popup-volume"
+          captureTarget={captureTarget}
           cardStyle={popupPosition}
+          close={closePopup}
           showClose={false}
-          className={`player-popup player-popup-${popup} ${full ? "player-popup-full" : "player-popup-mini"}`}
-          close={() => {
-            navigation.playerPopup = "";
-          }}
         >
-          {popup === "mode" && (
-            <>
-              {modes.map((mode) => (
-                <SlButton
-                  key={mode.value}
-                  icon={mode.icon}
-                  label={
-                    (state.player.play_mode === mode.value ? "✓ " : "") +
-                    mode.label
-                  }
-                  onClick={() =>
-                    run(async () => {
-                      await store.setPlayMode(mode.value);
-                      navigation.playerPopup = "";
-                    })
-                  }
-                />
-              ))}
-            </>
-          )}
-          {popup === "speed" && (
-            <>
-              {[0.5, 0.75, 1, 1.25, 1.5, 1.75, 2].map((speed) => (
-                <SlButton
-                  key={speed}
-                  label={speed + "×"}
-                  onClick={() =>
-                    run(async () => {
-                      await store.setPlaybackSpeed(speed);
-                      navigation.playerPopup = "";
-                    })
-                  }
-                />
-              ))}
-            </>
-          )}
-          {popup === "volume" && (
-            <VolumeControl
-              key={state.currentAccountId + ":" + state.currentDeviceId}
-              value={state.player.volume || 0}
-              onChange={(value: number) => run(() => store.setVolume(value))}
+          <VolumeControl
+            key={state.currentAccountId + ":" + state.currentDeviceId}
+            value={state.player.volume || 0}
+            onChange={(value: number) => run(() => store.setVolume(value))}
+            trackHeight={Math.max(
+              32,
+              Math.min(148, parseFloat(popupPosition.height) - 146),
+            )}
+          />
+        </Modal>
+      )}
+      {popup === "sleep" && (
+        <Modal
+          className="player-popup player-popup-sleep"
+          captureTarget={captureTarget}
+          cardStyle={{
+            width: `${Math.min(360, width - 32)}px`,
+            maxHeight: `${Math.max(1, height - 32)}px`,
+          }}
+          close={closePopup}
+          showClose={false}
+        >
+          <view className="sleep-popup-header">
+            <text className="section-title">延迟停止</text>
+            <SlButton
+              variant="icon"
+              icon="close"
+              title="关闭延迟停止"
+              onClick={() => {
+                navigation.playerPopup = "";
+              }}
             />
-          )}
-          {popup === "sleep" && (
-            <>
-              <view className="sleep-popup-header">
-                <text className="section-title">延迟停止</text>
+          </view>
+          <scroll-view
+            className="sleep-popup-scroll"
+            scroll-y
+            style={{
+              height: `${Math.max(1, Math.min(sleepPanelHeight, height - 112))}px`,
+            }}
+          >
+            <view
+              className="sleep-panel-content"
+              bindlayoutchange={(event) => {
+                const next = event.detail?.height;
+                if (next > 0) setSleepPanelHeight(next);
+              }}
+            >
+              {sleepError && (
                 <SlButton
-                  variant="icon"
-                  icon="close"
-                  title="关闭延迟停止"
-                  onClick={() => {
-                    navigation.playerPopup = "";
-                  }}
+                  label="定时状态读取失败，点击重试"
+                  onClick={() => setSleepRetry((attempt) => attempt + 1)}
                 />
-              </view>
-              <scroll-view
-                className="sleep-popup-scroll"
-                scroll-y
-                style={{
-                  height: `${Math.max(1, Math.min(sleepPanelHeight, height - 112))}px`,
-                }}
-              >
-                <view
-                  className="sleep-panel-content"
-                  bindlayoutchange={(event) => {
-                    const next = event.detail?.height;
-                    if (next > 0) setSleepPanelHeight(next);
-                  }}
-                >
-                  {sleepError && (
-                    <SlButton
-                      label="定时状态读取失败，点击重试"
-                      onClick={() => setSleepRetry((attempt) => attempt + 1)}
-                    />
-                  )}
-                  <SleepTimerPanel
-                    status={sleep}
-                    isLive={!!song?.is_live}
-                    onSet={(mode: "time" | "songs", value: number) =>
-                      run(() => setTimer(mode, value))
-                    }
-                    onCancel={() =>
-                      run(async () => {
-                        await post(
-                          "/voice-commands/sleep-timer/cancel",
-                          target(),
-                        );
-                        if (identity !== identityRef.current) return;
-                        sleepRevision.current++;
-                        setSleep({
-                          active: false,
-                          mode: "time",
-                          remaining: 0,
-                          total: 0,
-                        });
-                        navigation.playerPopup = "";
-                      })
-                    }
-                  />
-                </view>
-              </scroll-view>
-            </>
-          )}
-          {popup === "more" && (
-            <>
-              <SlButton
-                label={`音量 · ${state.player.volume || 0}%`}
-                onClick={() => {
-                  navigation.playerPopup = "volume";
-                }}
-              />
-              <SlButton
-                label={`倍速 · ${state.player.speed || 1}×`}
-                onClick={() => {
-                  navigation.playerPopup = "speed";
-                }}
-              />
-              <SlButton
-                label="延迟停止"
-                onClick={() => {
-                  navigation.playerPopup = "sleep";
-                }}
-              />
-              <SlButton
-                label="停止播放"
-                onClick={() =>
+              )}
+              <SleepTimerPanel
+                status={sleep}
+                isLive={!!song?.is_live}
+                onSet={(mode: "time" | "songs", value: number) =>
+                  run(() => setTimer(mode, value))
+                }
+                onCancel={() =>
                   run(async () => {
-                    await store.playerCommand("/player/stop");
+                    await post("/voice-commands/sleep-timer/cancel", target());
+                    if (identity !== identityRef.current) return;
+                    sleepRevision.current++;
+                    setSleep({
+                      active: false,
+                      mode: "time",
+                      remaining: 0,
+                      total: 0,
+                    });
                     navigation.playerPopup = "";
                   })
                 }
               />
-              {song &&
-                Number(state.player.playlist_id) > 0 &&
-                !state.playlists.find((p) => p.id === state.player.playlist_id)
-                  ?.is_virtual && (
-                  <SlButton
-                    label="从当前歌单移除"
-                    onClick={() =>
-                      run(async () => {
-                        const playlistId = state.player.playlist_id;
-                        const answer = await store.confirmAction(
-                          "从当前歌单移除",
-                          `将《${song.title}》从当前歌单移除？歌曲文件会保留。`,
-                          "移除",
-                          false,
-                        );
-                        if (answer.confirmed) {
-                          await store.removeSongFromPlaylist(song, {
-                            playlistId,
-                          });
-                          navigation.playerPopup = "";
-                        }
-                      })
-                    }
-                  />
-                )}
-            </>
-          )}
+            </view>
+          </scroll-view>
         </Modal>
       )}
     </view>
   );
 }
 
-function DevicePicker({ height }: { height: number }) {
+function DevicePicker() {
+  const { width, height } = useContext(Viewport);
   useObservedFields(() => [
     state.devices,
     state.currentAccountId,
@@ -1644,6 +1761,8 @@ function DevicePicker({ height }: { height: number }) {
   return (
     <Modal
       className="device-picker-overlay"
+      captureTarget="miot-main-content"
+      cardStyle={{ width: `${Math.min(420, Math.max(1, width - 32))}px` }}
       close={() => {
         navigation.devicePickerOpen = false;
       }}
@@ -1818,11 +1937,15 @@ export function App() {
         ])}
       >
         <Viewport.Provider value={viewport}>
-          <view className="main-shell">
+          <view id="miot-main-content" className="main-shell" flatten={false}>
             <SongList />
           </view>
           {navigation.page === "settings" && (
-            <view className="settings-shell">
+            <view
+              id="miot-settings-content"
+              className="settings-shell"
+              flatten={false}
+            >
               <Settings />
             </view>
           )}
@@ -1835,8 +1958,8 @@ export function App() {
               )}
             </view>
           )}
+          {navigation.devicePickerOpen && <DevicePicker />}
         </Viewport.Provider>
-        {navigation.devicePickerOpen && <DevicePicker height={height} />}
         {state.confirm.open && (
           <Modal
             className="confirm-overlay"

@@ -78,6 +78,7 @@ export function controls({
       return { classes: (values) => values.filter(Boolean).join(" ") };
     if (name === "./icons") return { iconPaths: {}, lynxIcons: {} };
     if (name === "./Overlay") return { Overlay: "overlay" };
+    if (name === "./PopupMaterial") return { PopupMaterial: "popup-material" };
     if (name === "./position") return { measurePopover };
     if (name === "./VerticalVolume")
       return { VerticalVolume: "vertical-volume" };

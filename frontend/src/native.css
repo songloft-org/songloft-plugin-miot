@@ -7,6 +7,7 @@
   --switch-off: #e5e5ea;
   --selection-fill: rgba(0, 136, 255, 0.12);
   --floating-surface: #ffffff;
+  --popup-tint: rgba(255, 255, 255, 0.90);
   --secondary-label: #666670;
   --action-fill: #0068c7;
   --tap-target: 44px;
@@ -87,6 +88,7 @@
   --switch-off: #39393d;
   --selection-fill: rgba(0, 145, 255, 0.18);
   --floating-surface: #1c1c1e;
+  --popup-tint: rgba(28, 28, 30, 0.90);
   --secondary-label: #a1a1aa;
   --action-fill: #006dcc;
 
@@ -1200,6 +1202,35 @@ text {
   background-color: var(--floating-surface);
   gap: 8px;
 }
+.modal-card.popup-glass {
+  position: relative;
+  z-index: 1;
+  background-color: transparent;
+  border: 1px solid var(--separator);
+  box-shadow: var(--md-shadow-3);
+  overflow: hidden;
+}
+.popup-menu .modal-card.popup-glass,
+.player-popup-volume .modal-card.popup-glass,
+.modal-card.select-popup {
+  position: absolute;
+}
+.popup-blur,
+.popup-tint {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  pointer-events: none;
+}
+.popup-blur {
+  z-index: -2;
+}
+.popup-tint {
+  z-index: -1;
+  background-color: var(--popup-tint);
+}
 .select-options {
   height: 300px;
   width: 100%;
@@ -1885,35 +1916,6 @@ text {
 .narrow .player-mobile-tabs {
   display: flex;
 }
-.player-popup {
-  background-color: transparent;
-  align-items: flex-end;
-  justify-content: flex-end;
-  padding: 8px 16px 102px;
-}
-.player-popup .modal-card {
-  width: 280px;
-  max-width: 100%;
-  max-height: 100%;
-  border: 1px solid var(--md-outline-variant);
-  border-radius: 12px;
-  padding: 12px 8px;
-  background-color: var(--md-surface);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.18);
-}
-.player-popup-mode .modal-card,
-.player-popup-speed .modal-card {
-  width: 190px;
-}
-.player-popup .sl-button {
-  min-height: 40px;
-}
-.narrow .player-popup-mini {
-  padding-bottom: 78px;
-}
-.player-popup-full {
-  padding-bottom: 132px;
-}
 .select-overlay {
   z-index: 200;
 }
@@ -1951,28 +1953,46 @@ text {
   min-height: 36px;
   height: 36px;
 }
-.modal-mask.player-popup {
+.modal-mask.popup-menu,
+.modal-mask.player-popup-volume {
   padding: 0;
+  background-color: transparent;
 }
-.player-popup .modal-card {
+.popup-menu .modal-card,
+.player-popup-volume .modal-card {
   position: absolute;
   padding: 8px 0;
   gap: 0;
-  border-width: 0.5px;
-  overflow: hidden;
+  border-radius: 12px;
 }
-.player-popup .sl-button {
-  min-height: 44px;
+.popup-menu-scroll {
+  width: 100%;
+  min-height: 0;
+  flex-shrink: 1;
+}
+.popup-menu-item.sl-button {
+  width: 100%;
   height: 44px;
-  padding: 0 14px;
-  align-items: flex-start;
-  justify-content: center;
+  min-height: 44px;
+  padding: 0 12px;
   border-radius: 0;
-  flex-shrink: 0;
+  justify-content: flex-start;
 }
-.player-popup-speed .sl-button {
-  min-height: 40px;
-  height: 40px;
+.popup-menu-item .popup-menu-label {
+  flex: 1;
+  min-width: 0;
+  color: var(--md-on-surface);
+  font-weight: 400;
+  text-overflow: ellipsis;
+}
+.popup-menu-selected.sl-button {
+  background-color: var(--selection-fill);
+}
+.popup-menu-selected .popup-menu-label {
+  color: var(--md-primary);
+}
+.popup-menu-danger .popup-menu-label {
+  color: var(--md-error);
 }
 .volume-control {
   width: 100%;
@@ -2047,8 +2067,8 @@ text {
 }
 .device-picker-overlay .modal-card {
   max-width: 420px;
-  padding: 20px;
-  gap: 12px;
+  padding: 16px;
+  gap: 8px;
 }
 .device-picker-overlay .section-title {
   flex-shrink: 0;
@@ -2301,11 +2321,22 @@ text {
 
 /* First settings refinement: quiet saves and a visible playback destination. */
 .device-target-row {
+  width: 100%;
   flex-direction: row;
   align-items: center;
   gap: 8px;
   min-width: 0;
   margin-top: 0;
+}
+.narrow .device-target-row {
+  gap: 4px;
+}
+.narrow .device-play-state-slot {
+  width: 44px;
+}
+.device-locate-placeholder {
+  width: var(--tap-target);
+  flex-shrink: 0;
 }
 .device-target {
   max-width: 320px;
@@ -2330,13 +2361,14 @@ text {
   flex-shrink: 0;
 }
 .device-play-state-slot {
-  width: 72px;
+  width: 88px;
   height: 20px;
   flex-shrink: 0;
   justify-content: center;
 }
 .device-play-state {
   font-size: 11px;
+  line-height: 16px;
   color: var(--md-on-surface-variant);
   flex-shrink: 0;
 }
@@ -2345,8 +2377,14 @@ text {
   color: var(--md-error);
 }
 .device-picker-choice.selected {
-  background-color: var(--md-primary-container);
+  background-color: var(--selection-fill);
   border-radius: 8px;
+}
+.device-picker-choice text {
+  color: var(--md-on-surface);
+}
+.device-picker-choice .device-picker-current {
+  color: var(--md-primary);
 }
 .device-picker-name {
   flex: 1;
@@ -2462,7 +2500,8 @@ text {
 }
 .player-popup-sleep .modal-card {
   position: relative;
-  padding: 12px 16px 16px;
+  padding: 8px 16px 12px;
+  gap: 0;
   border-radius: 20px;
 }
 .sleep-popup-header {
@@ -2528,20 +2567,6 @@ text {
 .page-dot.active .page-dot-mark {
   opacity: 1;
   background-color: var(--player-content);
-}
-
-.song-action-sheet .modal-card {
-  max-width: 360px;
-}
-.danger-action text {
-  color: var(--md-error);
-}
-.song-action-sheet .sl-button {
-  justify-content: flex-start;
-  min-height: 44px;
-}
-.song-action-sheet .sl-button:last-child {
-  justify-content: center;
 }
 
 .sl-number-field {

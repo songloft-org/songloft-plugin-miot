@@ -39,7 +39,9 @@ test("selector first paints at its measured anchor, never as a centered dialog",
   assert.ok(card.props.className.includes("select-popup"));
   assert.deepEqual(card.props.style, position);
   assert.ok(
-    !card.props.children[0],
+    !card.props.children.some(
+      (child) => child?.props?.className === "section-title",
+    ),
     "no centered-dialog heading flashes before the options",
   );
 });
@@ -50,7 +52,11 @@ test("failed selector measurement shows the fallback once instead of hanging", a
   const card = h.render("SlSelect", props).props.children[1].props.children
     .props.children;
   assert.ok(!card.props.className.includes("select-popup"));
-  assert.ok(card.props.children[0]);
+  assert.ok(
+    card.props.children.some(
+      (child) => child?.props?.className === "section-title",
+    ),
+  );
 });
 test("back during pending selector measurement prevents a late popup", async () => {
   let resolve;

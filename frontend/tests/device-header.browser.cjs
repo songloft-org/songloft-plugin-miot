@@ -65,7 +65,9 @@ const puppeteer = require(process.env.BROWSER_PUPPETEER || 'puppeteer');
           if (
             key === '/config' ||
             key === '/mina/devices' ||
-            (key === '/player/status' && firstStatus)
+            (key === '/player/status' &&
+              (firstStatus || phase === 'syncing')) ||
+            (key === '/player/toggle' && request.method() === 'POST')
           ) {
             if (key === '/player/status') firstStatus = false;
             held.set(key, request);
@@ -127,13 +129,18 @@ const puppeteer = require(process.env.BROWSER_PUPPETEER || 'puppeteer');
                 width: r.width,
                 height: r.height,
                 right: r.right,
+                bottom: r.bottom,
               };
             };
+            const status = root.querySelector('.device-play-state');
+            const range = status && document.createRange();
+            if (range) range.selectNodeContents(status);
             return {
               target: rect(root.querySelector('.device-target')),
+              name: rect(root.querySelector('.device-target-name')),
               slot: rect(root.querySelector('.device-play-state-slot')),
-              status:
-                root.querySelector('.device-play-state')?.textContent || '',
+              text: rect(range),
+              status: status?.textContent || '',
             };
           });
         const snapshots = [await geometry()];
@@ -153,17 +160,18 @@ const puppeteer = require(process.env.BROWSER_PUPPETEER || 'puppeteer');
           },
         ]);
         await requested('/player/status');
-        const waitStatus = (label) =>
+        const waitStatus = (...labels) =>
           page.waitForFunction(
-            (label) =>
-              document
-                .getElementById('plugin-view')
-                .shadowRoot.querySelector('.device-play-state')?.textContent ===
-              label,
+            (labels) =>
+              labels.includes(
+                document
+                  .getElementById('plugin-view')
+                  .shadowRoot.querySelector('.device-play-state')?.textContent,
+              ),
             { timeout: 15000 },
-            label,
+            labels,
           );
-        await waitStatus('连接中');
+        await waitStatus('连接中', '同步中');
         snapshots.push(await geometry());
         await respond(held.get('/player/status'), {
           current_song: { id: 1, title: 'Fixture', duration: 240 },
@@ -176,6 +184,35 @@ const puppeteer = require(process.env.BROWSER_PUPPETEER || 'puppeteer');
         });
         await waitStatus('已暂停');
         snapshots.push(await geometry());
+        const toggle = await page.evaluate(() => {
+          const button = document
+            .getElementById('plugin-view')
+            .shadowRoot.querySelector(
+              '.player-mini [accessibility-label="播放/暂停"]',
+            );
+          const r = button.getBoundingClientRect();
+          return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
+        });
+        await page.mouse.click(toggle.x, toggle.y);
+        await requested('/player/toggle');
+        await waitStatus(width < 600 ? '发送中' : '正在发送指令…');
+        snapshots.push(await geometry());
+        held.delete('/player/status');
+        phase = 'syncing';
+        await respond(held.get('/player/toggle'), {});
+        await requested('/player/status');
+        await waitStatus(width < 600 ? '同步中' : '正在同步状态…');
+        snapshots.push(await geometry());
+        phase = 'playing';
+        await respond(held.get('/player/status'), {
+          current_song: { id: 1, title: 'Fixture', duration: 240 },
+          is_playing: true,
+          position: 10,
+          duration: 240,
+          volume: 40,
+          play_mode: 'order',
+          speed: 1,
+        });
         for (const sample of snapshots)
           for (const key of ['x', 'width'])
             assert.ok(
@@ -187,15 +224,28 @@ const puppeteer = require(process.env.BROWSER_PUPPETEER || 'puppeteer');
         await waitStatus('播放中');
         snapshots.push(await geometry());
         phase = 'error';
-        await waitStatus('状态暂不可用');
+        await waitStatus(width < 600 ? '不可用' : '状态暂不可用');
         snapshots.push(await geometry());
         for (const sample of snapshots) {
           for (const key of ['x', 'width'])
             assert.ok(
               Math.abs(sample.target[key] - snapshots[0].target[key]) <= 1,
             );
-          assert.ok(sample.slot.width >= 66);
+          assert.equal(sample.slot.width, width < 600 ? 44 : 88);
           assert.ok(sample.target.right <= sample.slot.x + 1);
+          assert.equal(
+            sample.slot.y + sample.slot.height / 2,
+            sample.target.y + sample.target.height / 2,
+          );
+          assert.equal(sample.name.width, snapshots[0].name.width);
+          if (sample.status) {
+            assert.ok(
+              sample.text.y >= sample.slot.y - 1 &&
+                sample.text.bottom <= sample.slot.bottom + 1 &&
+                sample.text.right <= sample.slot.right,
+              JSON.stringify(sample),
+            );
+          }
         }
         report.push({
           width,

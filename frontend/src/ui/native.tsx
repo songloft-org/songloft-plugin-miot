@@ -11,6 +11,7 @@ import { parseAIHeaders } from "../../../src/utils/ai_headers";
 import { iconAscent, iconPaths, iconViewBox, lynxIcons } from "./icons";
 import { navigation } from "../runtime";
 import { Overlay } from "./Overlay";
+import { PopupMaterial } from "./PopupMaterial";
 import { measurePopover } from "./position";
 import { VerticalVolume } from "./VerticalVolume";
 import { ThemeContext, CompactSettingsContext, themeColors } from "./theme";
@@ -369,7 +370,7 @@ export function SlSelect({
           8,
       ),
     );
-    void measurePopover("#" + triggerId.current, null, height, true)
+    void measurePopover("#" + triggerId.current, null, height, "start")
       .then((position) => {
         if (token === measurement.current) setAnchor(position);
       })
@@ -445,10 +446,21 @@ export function SlSelect({
           >
             <view
               flatten={false}
-              className={classes(["modal-card", anchor && "select-popup"])}
+              className={classes([
+                "modal-card",
+                "popup-glass",
+                anchor && "select-popup",
+              ])}
               style={anchor || undefined}
               catchtap={() => {}}
             >
+              <PopupMaterial
+                captureTarget={
+                  navigation.page === "settings"
+                    ? "miot-settings-content"
+                    : "miot-main-content"
+                }
+              />
               {!anchor && (
                 <text className="section-title">
                   {props["aria-label"] || placeholder}
@@ -489,7 +501,8 @@ export function SlSelect({
                   />
                 )}
                 {filtered.slice(0, limit).map((option: any) => {
-                  const isSelected = String(option.value) === String(modelValue);
+                  const isSelected =
+                    String(option.value) === String(modelValue);
                   return (
                     <view
                       key={option.value}
@@ -720,7 +733,12 @@ export function AIHeadersField(props: Props) {
   );
 }
 
-export function VolumeControl({ value, disabled, onChange }: Props) {
+export function VolumeControl({
+  value,
+  disabled,
+  onChange,
+  trackHeight,
+}: Props) {
   const [preview, setPreview] = useState<number | null>(null);
   const previous = useRef(50);
   const shown = preview ?? value;
@@ -735,6 +753,7 @@ export function VolumeControl({ value, disabled, onChange }: Props) {
       />
       <VerticalVolume
         value={shown}
+        trackHeight={trackHeight}
         disabled={disabled}
         onPreview={setPreview}
         onCommit={onChange}

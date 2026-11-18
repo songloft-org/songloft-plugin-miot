@@ -9,7 +9,7 @@ export function placePopover(
   trigger: Rect,
   width: number,
   height: number,
-  start = false,
+  align: "center" | "start" | "end" = "center",
 ) {
   const margin = 8,
     gap = 6;
@@ -20,12 +20,10 @@ export function placePopover(
   const below = Math.max(0, root.height - y - trigger.height - gap - margin);
   const upward = above >= height || above >= below;
   height = Math.max(1, Math.min(height, upward ? above : below));
+  const offset = align === "start" ? 0 : align === "end" ? 1 : 0.5;
   const left = Math.max(
     margin,
-    Math.min(
-      start ? x : x + (trigger.width - width) / 2,
-      root.width - width - margin,
-    ),
+    Math.min(x + (trigger.width - width) * offset, root.width - width - margin),
   );
   const top = Math.max(
     margin,
@@ -81,11 +79,11 @@ export async function measurePopover(
   selector: string,
   width: number | null,
   height: number,
-  start = false,
+  align: "center" | "start" | "end" = "center",
 ) {
   const [root, trigger] = await Promise.all([
     rect("#miot-app"),
     rect(selector),
   ]);
-  return placePopover(root, trigger, width ?? trigger.width, height, start);
+  return placePopover(root, trigger, width ?? trigger.width, height, align);
 }

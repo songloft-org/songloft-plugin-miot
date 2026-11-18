@@ -367,6 +367,55 @@ const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
       assert.ok(moreRequests > requests);
     }
     await click(".player-mini .player-copy");
+    if (height < 400) {
+      await click(".player-tools .sl-button", "1×");
+      await wait(() =>
+        document
+          .getElementById("plugin-view")
+          .shadowRoot.querySelector(".player-popup-speed .popup-menu-scroll"),
+      );
+      const menu = await inspect(() => {
+        const scroll = document
+          .getElementById("plugin-view")
+          .shadowRoot.querySelector(".player-popup-speed .popup-menu-scroll");
+        const rect = scroll.getBoundingClientRect();
+        return {
+          x: rect.x + rect.width / 2,
+          y: rect.y + rect.height / 2,
+          height: rect.height,
+          scrollHeight: scroll.scrollHeight,
+        };
+      });
+      assert.ok(menu.scrollHeight > menu.height, "short speed menu scrolls");
+      await page.mouse.move(menu.x, menu.y);
+      await page.mouse.wheel({ deltaY: menu.scrollHeight });
+      await wait(() => {
+        const root = document.getElementById("plugin-view").shadowRoot;
+        const scroll = root.querySelector(
+          ".player-popup-speed .popup-menu-scroll",
+        );
+        const last = scroll?.querySelector('[accessibility-label="2×"]');
+        return (
+          last &&
+          last.getBoundingClientRect().bottom <=
+            scroll.getBoundingClientRect().bottom + 1
+        );
+      });
+      await click(".player-popup-speed .popup-menu-item", "2×");
+      await wait(
+        () =>
+          !document
+            .getElementById("plugin-view")
+            .shadowRoot.querySelector(".player-popup-speed"),
+      );
+      assert.ok(
+        commands.some(
+          (command) =>
+            command.path === "/player/speed" && command.body.speed === 2,
+        ),
+        "last speed remains selectable in a short viewport",
+      );
+    }
     await openSleep();
     const initial = await sleepBounds("initial");
     await click(".sleep-timer-options .native-button", "自定义");

@@ -3,11 +3,13 @@ import { createVerticalDrag, volumeBounds } from "./vertical-drag";
 let sequence = 0;
 export function VerticalVolume({
   value,
+  trackHeight = 148,
   disabled,
   onPreview,
   onCommit,
 }: {
   value: number;
+  trackHeight?: number;
   disabled?: boolean;
   onPreview: (v: number | null) => void;
   onCommit: (v: number) => void;
@@ -72,6 +74,7 @@ export function VerticalVolume({
       id={id.current}
       flatten={false}
       className="volume-vertical"
+      style={{ height: `${trackHeight}px` }}
       accessibility-role="adjustable"
       accessibility-label="设备音量"
       consume-slide-event={[[-180, 180]]}

@@ -170,6 +170,8 @@ const height = Number(process.env.MIOT_TEST_HEIGHT || 740);
       geometry.y >= 0 && geometry.bottom <= height + 1,
       JSON.stringify(geometry),
     );
+    assert.equal(geometry.w, Math.min(420, width - 32));
+    assert.ok(Math.abs(geometry.x - (width - geometry.w) / 2) <= 1);
     if (deviceCount <= 1)
       assert.ok(
         geometry.h < 280,
@@ -229,13 +231,24 @@ const height = Number(process.env.MIOT_TEST_HEIGHT || 740);
     const destination = await page.evaluate(() => {
       const root = document.getElementById("plugin-view").shadowRoot;
       const d = root.querySelector(".device-target").getBoundingClientRect();
+      const name = root
+        .querySelector(".device-target-name")
+        .getBoundingClientRect();
       const a = root.querySelector(".appbar-actions").getBoundingClientRect();
-      return { left: d.left, right: d.right, actionsLeft: a.left };
+      return {
+        left: d.left,
+        right: d.right,
+        actionsLeft: a.left,
+        nameWidth: name.width,
+      };
     });
     assert.ok(
       destination.left >= 0 && destination.right <= destination.actionsLeft,
       JSON.stringify(destination),
     );
+    if (width === 320) {
+      assert.ok(destination.nameWidth >= 96, JSON.stringify(destination));
+    }
     console.log(
       JSON.stringify({ passed: true, width, height, deviceCount, geometry }),
     );

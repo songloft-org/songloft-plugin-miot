@@ -187,6 +187,15 @@ const height = Number(process.env.MIOT_TEST_HEIGHT || 740);
         y: r.y,
         right: r.right,
         bottom: r.bottom,
+        height: r.height,
+        isMenu: mask.matches(
+          ".player-popup-more,.player-popup-mode,.player-popup-speed",
+        ),
+        menuRows: card.querySelectorAll(".popup-menu-item").length,
+        glass: Boolean(card.querySelector(".popup-tint")),
+        backdropFilter: card.querySelector(".popup-blur")
+          ? getComputedStyle(card.querySelector(".popup-blur")).backdropFilter
+          : "",
       };
     }, selector);
     assert.ok(
@@ -194,6 +203,15 @@ const height = Number(process.env.MIOT_TEST_HEIGHT || 740);
       "overlay must escape scroll/player stacking contexts",
     );
     assert.ok(geometry.onTop, "overlay must receive hits above the player");
+    if (geometry.isMenu) {
+      assert.ok(geometry.menuRows > 0, "popup menu has actionable rows");
+      assert.ok(geometry.glass, "popup menu has a glass material layer");
+      assert.equal(geometry.backdropFilter, "blur(20px)");
+      assert.ok(
+        geometry.height <= geometry.menuRows * 44 + 19,
+        JSON.stringify(geometry),
+      );
+    }
     assert.ok(
       geometry.x >= 0 &&
         geometry.y >= 0 &&
@@ -219,7 +237,8 @@ const height = Number(process.env.MIOT_TEST_HEIGHT || 740);
       const fill = track?.querySelector(".mini-progress-fill");
       if (!fill || root.querySelector(".player-mini .sl-slider")) return false;
       const ratio =
-        fill.getBoundingClientRect().width / track.getBoundingClientRect().width;
+        fill.getBoundingClientRect().width /
+        track.getBoundingClientRect().width;
       // 20 seconds into the 240-second fixture, rounded like the Lynx client.
       return Math.abs(ratio - 0.08) < 0.01;
     });
