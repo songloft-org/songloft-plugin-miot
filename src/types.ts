@@ -70,6 +70,7 @@ export interface PlaylistProgress {
   song_id: number;       // 主键：按 ID 定位，歌单排序变化/增删歌之后仍准（同 #59 / #420 的教训）
   song_index: number;    // 兜底提示：song_id 已不在歌单里时退回这个下标
   position_sec: number;  // 该歌曲内的位置（秒）。当前只记录不消费，续播一律从这首歌开头开始
+  play_mode?: PlayMode;  // 该设备上次用于此歌单的模式
   updated_at: number;    // Date.now()，超出每设备条数上限时按它淘汰最久没播的歌单
 }
 
@@ -257,7 +258,7 @@ export interface TaskParams {
   song_name?: string;      // 用于 play_playlist_from 指定起始歌曲
   song_id?: number;        // 用于 play_playlist_from 按 ID 指定起始歌曲（前端选择器产出）
   start_position?: StartPosition; // 用于 play_playlist 指定起始位置,缺省=first
-  play_mode?: string;      // 空串表示「跟随上次」(沿用设备持久化的播放模式)
+  play_mode?: string;      // 空串表示「跟随上次」，由播放管理器按设备与歌单决定
   volume?: number;         // 对 set_volume：目标音量；对 play_playlist(_from)：播放前预设音量，缺省=不改
   stop_after_minutes?: number; // 仅 play_playlist(_from) 生效：播放成功后 N 分钟自动停止；缺省=不启用
 }

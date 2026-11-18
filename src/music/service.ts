@@ -514,7 +514,7 @@ export class MusicCommandService {
         songTitle: songName,
         artist: record.artist || '',
       };
-      const playedLoc = await this.playIndexedSong(loc, pm, searchTerm, songName, accountId, deviceId);
+      const playedLoc = await this.playIndexedSong(loc, pm, searchTerm, songName);
       return playedLoc ? this.playedSongFromLocation(playedLoc) : null;
     }
 
@@ -1130,15 +1130,6 @@ export class MusicCommandService {
 
     songloft.log.info(`[MusicCommandService] Matched playlist: ${matchedPlaylist.name} (id=${matchedPlaylist.id})`);
 
-    // 获取设备配置中的播放模式
-    let playMode: PlayMode = 'order';
-
-    const devices = await this.configManager.getDevices(accountId);
-    const devCfg = devices.find(d => d.device_id === deviceId);
-    if (devCfg && devCfg.play_mode) {
-      playMode = devCfg.play_mode as PlayMode;
-    }
-
     // 起始位置查「每设备 × 每歌单」的进度表：中途切去别的歌单再切回来，这个歌单
     // 依然从自己上次那首接着播。按 song_id 定位，歌单排序变化/增删歌后不会串歌。
     const resume = await resolvePlaylistResumeStart(this.configManager, pm.getPrimary(), matchedPlaylist.id);
@@ -1147,10 +1138,10 @@ export class MusicCommandService {
     // 播放歌单
     pm.setAnnounceOnSongChange(true);
     const ok = resume && resume.songId > 0
-      ? await pm.playPlaylistFromSong(matchedPlaylist.id, resume.songId, playMode, startIndex)
-      : await pm.play(matchedPlaylist.id, startIndex, playMode);
+      ? await pm.playPlaylistFromSong(matchedPlaylist.id, resume.songId, undefined, startIndex)
+      : await pm.play(matchedPlaylist.id, startIndex);
     if (ok) {
-      songloft.log.info(`[MusicCommandService] Play playlist success: ${matchedPlaylist.name} index=${startIndex} mode=${playMode}`);
+      songloft.log.info(`[MusicCommandService] Play playlist success: ${matchedPlaylist.name} index=${startIndex}`);
       return;
     }
 
@@ -1163,7 +1154,7 @@ export class MusicCommandService {
       if (newPlaylist) {
         songloft.log.info(`[MusicCommandService] Re-matched playlist after refresh: ${newPlaylist.name} (id=${newPlaylist.id})`);
         pm.setAnnounceOnSongChange(true);
-        const retryOk = await pm.play(newPlaylist.id, 0, playMode);
+        const retryOk = await pm.play(newPlaylist.id, 0);
         if (retryOk) {
           songloft.log.info(`[MusicCommandService] Retry play playlist success: ${newPlaylist.name}`);
           return;
@@ -1723,7 +1714,7 @@ export class MusicCommandService {
 
     switch (candidate.source) {
       case 'local_index': {
-        const playedLoc = await this.playIndexedSong(candidate.loc, pm, candidate.searchTerm ?? searchTerm, requestedSongName, accountId, deviceId);
+        const playedLoc = await this.playIndexedSong(candidate.loc, pm, candidate.searchTerm ?? searchTerm, requestedSongName);
         return playedLoc ? this.playedSongFromLocation(playedLoc) : null;
       }
       case 'remote_song': {
@@ -1787,26 +1778,16 @@ export class MusicCommandService {
     pm: PlaylistManager,
     searchTerm: string,
     requestedSongName: string,
-    accountId: string,
-    deviceId: string,
   ): Promise<SongLocation | null> {
     songloft.log.info(`[MusicCommandService] Matched song: ${loc.songTitle} - ${loc.artist} playlist="${loc.playlistName}" playlistId=${loc.playlistId} songIndex=${loc.songIndex}`);
-
-    // 获取设备配置中的播放模式
-    let playMode: PlayMode = 'order';
-    const devices = await this.configManager.getDevices(accountId);
-    const devCfg = devices.find(d => d.device_id === deviceId);
-    if (devCfg && devCfg.play_mode) {
-      playMode = devCfg.play_mode as PlayMode;
-    }
 
     // 按 songId 定位播放：songIndex 来自缓存快照，歌单增删歌曲后会错位（#420）；
     // songId 是稳定标识，playPlaylistFromSong 在重新加载歌单后按 ID 精确定位。
     const ok = loc.songId
-      ? await pm.playPlaylistFromSong(loc.playlistId, loc.songId, playMode, loc.songIndex)
-      : await pm.play(loc.playlistId, loc.songIndex, playMode);
+      ? await pm.playPlaylistFromSong(loc.playlistId, loc.songId, undefined, loc.songIndex)
+      : await pm.play(loc.playlistId, loc.songIndex);
     if (ok) {
-      songloft.log.info(`[MusicCommandService] Play song success: ${loc.songTitle} playlist="${loc.playlistName}" index=${loc.songIndex} mode=${playMode}`);
+      songloft.log.info(`[MusicCommandService] Play song success: ${loc.songTitle} playlist="${loc.playlistName}" index=${loc.songIndex}`);
       return loc;
     }
 
@@ -1819,8 +1800,8 @@ export class MusicCommandService {
       if (newLoc) {
         songloft.log.info(`[MusicCommandService] Re-matched after refresh: ${newLoc.songTitle} playlist="${newLoc.playlistName}" playlistId=${newLoc.playlistId} songIndex=${newLoc.songIndex}`);
         const retryOk = newLoc.songId
-          ? await pm.playPlaylistFromSong(newLoc.playlistId, newLoc.songId, playMode, newLoc.songIndex)
-          : await pm.play(newLoc.playlistId, newLoc.songIndex, playMode);
+          ? await pm.playPlaylistFromSong(newLoc.playlistId, newLoc.songId, undefined, newLoc.songIndex)
+          : await pm.play(newLoc.playlistId, newLoc.songIndex);
         if (retryOk) {
           songloft.log.info(`[MusicCommandService] Retry play song success: ${newLoc.songTitle}`);
           return newLoc;

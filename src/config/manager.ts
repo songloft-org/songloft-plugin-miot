@@ -143,6 +143,7 @@ export class ConfigManager {
   // 歌单进度表：每次切歌都要读改写，不缓存就是每首歌一次多余的 storage.get。
   // 与上面两个 key 同一套约定（缓存 in-flight Promise + 写穿透）。
   private playlistProgressCache: Promise<PlaylistProgressStore> | null = null;
+  private playlistProgressWrite: Promise<void> = Promise.resolve();
 
   private chatConfigWrite: Promise<unknown> = Promise.resolve();
 
@@ -372,14 +373,21 @@ export class ConfigManager {
     return store;
   }
 
-  private async savePlaylistProgressStore(store: PlaylistProgressStore): Promise<void> {
-    await this.save(STORAGE_KEY_PLAYLIST_PROGRESS, store);
-    this.playlistProgressCache = Promise.resolve(store);
+  private updatePlaylistProgressStore(update: (store: PlaylistProgressStore) => boolean): Promise<void> {
+    const pending = this.playlistProgressWrite.catch(() => {}).then(async () => {
+      const store = { ...await this.getPlaylistProgressStore() };
+      if (!update(store)) return;
+      await this.save(STORAGE_KEY_PLAYLIST_PROGRESS, store);
+      this.playlistProgressCache = Promise.resolve(store);
+    });
+    this.playlistProgressWrite = pending;
+    return pending;
   }
 
   /** 读取某设备在某歌单的播放进度；无有效记录返回 null */
   async getPlaylistProgress(scopeKey: string, playlistId: number): Promise<PlaylistProgress | null> {
     if (!scopeKey || !playlistId || playlistId <= 0) return null;
+    await this.playlistProgressWrite.catch(() => {});
     const store = await this.getPlaylistProgressStore();
     const list = store[scopeKey];
     if (!Array.isArray(list)) return null;
@@ -388,48 +396,47 @@ export class ConfigManager {
   }
 
   /** 写入某设备在某歌单的播放进度（同歌单覆盖，超出上限淘汰最久没播的） */
-  async savePlaylistProgress(scopeKey: string, progress: PlaylistProgress): Promise<void> {
+  async savePlaylistProgress(scopeKey: string, progress: PlaylistProgress, modeOnly = false): Promise<void> {
     if (!scopeKey || !progress || progress.playlist_id <= 0 || progress.song_id <= 0) return;
-    const store = await this.getPlaylistProgressStore();
-    const kept = (Array.isArray(store[scopeKey]) ? store[scopeKey] : [])
-      .filter(p => p && p.playlist_id > 0 && p.song_id > 0 && p.playlist_id !== progress.playlist_id);
-    kept.push(progress);
-    kept.sort((a, b) => (b.updated_at || 0) - (a.updated_at || 0));
-    store[scopeKey] = kept.slice(0, MAX_PLAYLIST_PROGRESS_PER_DEVICE);
-    await this.savePlaylistProgressStore(store);
+    await this.updatePlaylistProgressStore(store => {
+      const list = (Array.isArray(store[scopeKey]) ? store[scopeKey] : [])
+        .filter(p => p && p.playlist_id > 0 && p.song_id > 0);
+      const previous = list.find(p => p.playlist_id === progress.playlist_id);
+      const kept = list.filter(p => p.playlist_id !== progress.playlist_id);
+      const anchor = modeOnly && previous ? previous : progress;
+      kept.push({ ...anchor, play_mode: progress.play_mode ?? previous?.play_mode });
+      kept.sort((a, b) => (b.updated_at || 0) - (a.updated_at || 0));
+      store[scopeKey] = kept.slice(0, MAX_PLAYLIST_PROGRESS_PER_DEVICE);
+      return true;
+    });
   }
 
   /** 删除某设备在某歌单的播放进度（歌单 ID 已失效时清理）；无记录则静默 */
   async removePlaylistProgress(scopeKey: string, playlistId: number): Promise<void> {
     if (!scopeKey || !playlistId || playlistId <= 0) return;
-    const store = await this.getPlaylistProgressStore();
-    const list = store[scopeKey];
-    if (!Array.isArray(list)) return;
-    const filtered = list.filter(p => !p || p.playlist_id !== playlistId);
-    if (filtered.length === list.length) return;
-    if (filtered.length === 0) {
-      delete store[scopeKey];
-    } else {
-      store[scopeKey] = filtered;
-    }
-    await this.savePlaylistProgressStore(store);
+    await this.updatePlaylistProgressStore(store => {
+      const list = store[scopeKey];
+      if (!Array.isArray(list)) return false;
+      const filtered = list.filter(p => !p || p.playlist_id !== playlistId);
+      if (filtered.length === list.length) return false;
+      if (filtered.length === 0) {
+        delete store[scopeKey];
+      } else {
+        store[scopeKey] = filtered;
+      }
+      return true;
+    });
   }
 
   /** 删除某账号下所有设备的歌单进度（账号被移除时调用） */
   async removePlaylistProgressByAccount(accountId: string): Promise<void> {
     if (!accountId) return;
-    const store = await this.getPlaylistProgressStore();
     const prefix = accountId + ':';
-    let changed = false;
-    for (const key of Object.keys(store)) {
-      if (key.startsWith(prefix)) {
-        delete store[key];
-        changed = true;
-      }
-    }
-    if (changed) {
-      await this.savePlaylistProgressStore(store);
-    }
+    await this.updatePlaylistProgressStore(store => {
+      const keys = Object.keys(store).filter(key => key.startsWith(prefix));
+      for (const key of keys) delete store[key];
+      return keys.length > 0;
+    });
   }
 
   // ===== Webhook管理 =====

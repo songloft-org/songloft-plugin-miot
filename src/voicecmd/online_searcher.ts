@@ -9,7 +9,7 @@ import { URLBuilder, playbackOptionsOf } from '../player/url_builder';
 import { ConfigManager } from '../config/manager';
 import { IndexingManager } from '../indexing/manager';
 import { GroupCoordinator } from '../group/coordinator';
-import type { ExternalSearchSource, PlayMode } from '../types';
+import type { ExternalSearchSource } from '../types';
 import type { PlaylistManager } from '../player/manager';
 
 // 外部搜索 API 请求体
@@ -372,16 +372,7 @@ export class OnlineSearcher {
     // 开始，播完后由 PlaylistManager 的切歌定时器自动续播歌单其余歌曲。
     // （直接 playURL 单曲推送不会注册切歌定时器，播完即停，见 issue #53）
     if (pm && appendedPlaylistId !== undefined) {
-      let playMode: PlayMode = 'order';
-      try {
-        const devices = await this.configManager.getDevices(accountId);
-        const devCfg = devices.find((d) => d.device_id === deviceId);
-        if (devCfg && devCfg.play_mode) playMode = devCfg.play_mode as PlayMode;
-      } catch (e) {
-        songloft.log.warn('[OnlineSearcher] Failed to read play mode, fallback to order: ' + String(e));
-      }
-
-      const ok = await pm.playPlaylistFromSong(appendedPlaylistId, imported.id, playMode);
+      const ok = await pm.playPlaylistFromSong(appendedPlaylistId, imported.id);
       if (ok) {
         // 增量把这首独立远程歌曲加入内存索引，避免为一首歌重建全部歌单缓存。
         if (indexingManager) {

@@ -10,6 +10,13 @@ Include rule, scope, full owner/repo#number, failure/fix commit SHAs, actual val
 
 ## Entries
 
+### MIOT-035: Resolve the saved mode in the player when entering a playlist
+
+- Scope covers web play and continue, voice control, and scheduled playback. Baseline `87a1a6753bed0e5c9e305871d59e4f3f65470221`.
+- Evidence. The web client passed the current mode to the next playlist, while voice and scheduled playback read the device-wide mode. This let audiobooks inherit shuffle. Seven of eight new regressions failed as expected on the isolated baseline, including device and playlist isolation, reloads, and concurrent saves.
+- Rule. Key the mode by device and playlist, using the primary device for groups. Explicit requests override the saved mode. Queue position and mode writes through the same storage path. A mode change merges just the mode, while routine position writes preserve it. After reading the mode, check that the start request is still current.
+- Validation covers all five modes, dispatched chapter URLs, end-of-audiobook stopping, and stale requests. Physical speaker and firmware verification is Not run. Seen 1× (2026-11-18).
+
 ### MIOT-034: Keep sampling around the metadata end when device duration is overstated
 
 - Scope covers the [songloft-org/songloft-plugin-miot#130 follow-up](https://github.com/songloft-org/songloft-plugin-miot/issues/130#issuecomment-6418357065) and [songloft-org/songloft#577](https://github.com/songloft-org/songloft/issues/577). The local #130 validation baseline was `ec8c2e0f58ebc3d5dc9921b284bb02b089a8ce6a`.

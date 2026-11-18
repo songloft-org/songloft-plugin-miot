@@ -160,7 +160,7 @@ for (const [action, name] of [['play_artist', '刘德华'], ['play_playlist', '�
     const f = fixture(t, { append: '7' });
     await execute(f.engine, action, name);
     assert.ok(f.requests.some(r => r.url.endsWith('/playlists/7/songs')));
-    assert.deepEqual(f.localPlays, [[7, 42, 'order']]);
+    assert.deepEqual(f.localPlays, [[7, 42]]);
     assert.deepEqual(f.pushes, []);
     assert.deepEqual(f.speech, []);
   });
@@ -196,7 +196,7 @@ test('local playlist hit keeps playlist playback without external requests', asy
   const f = fixture(t, { playlist: { id: 7, name: '抖音热门榜', songCount: 2 } });
   await execute(f.engine, 'play_playlist', '抖音热门榜');
   assert.deepEqual(f.requests, []);
-  assert.deepEqual(f.localPlays, [[7, 0, 'order']]);
+  assert.deepEqual(f.localPlays, [[7, 0]]);
 });
 
 test('empty named playlist falls back externally', async t => {

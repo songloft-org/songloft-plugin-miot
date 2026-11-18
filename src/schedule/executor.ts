@@ -7,13 +7,13 @@
 import { ConfigManager } from '../config/manager';
 import { AccountManager } from '../account/manager';
 import { MinaService } from '../service/service';
-import { PlaylistManagerMap, resolvePlaylistResumeStart } from '../player/manager';
+import { PlaylistManagerMap, parsePlayMode, resolvePlaylistResumeStart } from '../player/manager';
 import { IndexingManager } from '../indexing/manager';
 import type { IndexedPlaylist } from '../indexing/manager';
 import { ConversationMonitor } from '../conversation/monitor';
 import { GroupCoordinator } from '../group/coordinator';
 import type { VoiceEngine } from '../voicecmd/engine';
-import type { ScheduledTask, TaskLog, TaskTarget, TaskParams, PlayMode, DeviceConfig } from '../types';
+import type { ScheduledTask, TaskLog, TaskTarget, TaskParams, PlayMode } from '../types';
 
 /** 解析后的单个目标设备 */
 interface DeviceTarget {
@@ -295,7 +295,7 @@ export class TaskExecutor {
    * - first  : 从第一首开始（默认，兼容旧任务）
    * - resume : 沿用设备持久化的 current_song_index（仅当上次播的就是同一歌单）
    * - random : 每次执行随机挑一首作为起点
-   * 播放模式：params.play_mode 指定则用它；为空表示「跟随上次」→ 用设备持久化模式；再兜底 order。
+   * 播放模式：params.play_mode 指定则用它；为空时由播放器按目标歌单的记录和标签决定。
    */
   private async executePlayPlaylist(target: DeviceTarget, params: TaskParams, withSong: boolean): Promise<string> {
     if (!params.playlist_name && !params.playlist_id) {
@@ -320,11 +320,7 @@ export class TaskExecutor {
 
     songloft.log.info(`[TaskExecutor] 匹配到歌单 name=${params.playlist_name || ''} id=${playlist.id} matched=${playlist.name}`);
 
-    // 读取设备持久化状态，供「从上次进度继续」和「跟随上次播放模式」使用
-    const devCfg = await this.getDeviceConfig(target);
-
-    // 确定播放模式：显式指定 > 跟随上次（设备持久化） > 兜底 order
-    const playMode: PlayMode = ((params.play_mode || devCfg?.play_mode || 'order') as PlayMode);
+    const playMode = parsePlayMode(params.play_mode);
 
     // 计算给定歌单 ID 下的起始位置（歌单 ID 失效重试时会用新 ID 再算一次）
     // songId：有明确目标歌曲时返回其 ID，供 playPlaylistFromSong 按 ID 精确定位（#420）。
@@ -481,19 +477,6 @@ export class TaskExecutor {
     } catch (e) {
       songloft.log.warn(`[TaskExecutor] 挂播放时长失败 device=${target.deviceId}: ${String(e)}`);
       return false;
-    }
-  }
-
-  /**
-   * 读取目标设备的持久化配置（找不到返回 null）
-   */
-  private async getDeviceConfig(target: DeviceTarget): Promise<DeviceConfig | null> {
-    try {
-      const devices = await this.configManager.getDevices(target.accountId);
-      return devices.find(d => d.device_id === target.deviceId) ?? null;
-    } catch (e) {
-      songloft.log.warn(`[TaskExecutor] 读取设备配置失败 device=${target.deviceId}: ${String(e)}`);
-      return null;
     }
   }
 

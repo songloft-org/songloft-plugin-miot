@@ -288,7 +288,7 @@ export async function resolvePlaylistResumeStart(
 }
 
 /** 统一播放模式，并兼容旧版 Web 前端曾写入的别名。 */
-export function normalizePlayMode(mode: unknown, fallback: PlayMode = 'order'): PlayMode {
+export function parsePlayMode(mode: unknown): PlayMode | undefined {
   switch (String(mode || '')) {
     case 'order':
       return 'order';
@@ -305,9 +305,11 @@ export function normalizePlayMode(mode: unknown, fallback: PlayMode = 'order'): 
     case 'random':
     case 'shuffle':
       return 'random';
-    default:
-      return fallback;
   }
+}
+
+export function normalizePlayMode(mode: unknown, fallback: PlayMode = 'order'): PlayMode {
+  return parsePlayMode(mode) ?? fallback;
 }
 
 // ===== 歌曲类型 =====
@@ -322,15 +324,15 @@ interface Song {
   duration: number;   // 秒
   file_path: string;
   url: string;
-  cover_path: string;
+  cover_path?: string;
   cover_url: string;
-  lyric_url: string;  // 歌词URL（后端统一端点）
+  lyric_url?: string;  // 歌词URL（后端统一端点）
   file_size: number;
   format: string;
   bit_rate: number;
   sample_rate: number;
   is_live: boolean;
-  cache_hash: string;
+  cache_hash?: string;
 }
 
 /** 宿主API歌单歌曲响应 */
@@ -558,124 +560,75 @@ export class PlaylistManager {
     this.announceOnSongChange = enabled;
   }
 
-  /**
-   * 播放歌单
-   * @param playlistId - 歌单ID
-   * @param startIndex - 起始歌曲索引（默认0）
-   * @param mode - 播放模式（默认order）
-   * @param opts.randomStart - 忽略 startIndex，加载歌单后随机挑一首作为起点
-   * @returns 是否成功
-   */
+  /** 播放歌单；randomStart 只选择起点。 */
   async play(playlistId: number, startIndex?: number, mode?: PlayMode, opts?: { randomStart?: boolean; isCurrent?: () => boolean }): Promise<boolean> {
-    if (opts?.isCurrent?.() === false) return false;
+    return this.startPlaylist(playlistId, { startIndex, mode, ...opts });
+  }
+
+  /** 优先用歌曲 ID 定位，找不到时退回指定下标或第一首。 */
+  async playPlaylistFromSong(playlistId: number, songId: number, mode?: PlayMode, fallbackIndex?: number, isCurrent?: () => boolean): Promise<boolean> {
+    return this.startPlaylist(playlistId, { songId, startIndex: fallbackIndex, mode, isCurrent });
+  }
+
+  private async startPlaylist(playlistId: number, options: {
+    startIndex?: number;
+    songId?: number;
+    mode?: PlayMode;
+    randomStart?: boolean;
+    isCurrent?: () => boolean;
+  }): Promise<boolean> {
+    if (options.isCurrent?.() === false) return false;
     this.endExternalPlayback();
-    // 立即停止定时器和重置状态，防止 loadPlaylistSongs 期间旧定时器触发 onSongFinished
     this.stopCheckTimer();
     this.state = 'idle';
     this.playStartTimeMs = 0;
     this._lastLoadNotFound = false;
 
-    // 加载歌单歌曲
-    const loaded = await this.loadPlaylistSongs(playlistId, opts?.isCurrent);
-    if (!loaded) {
-      songloft.log.error('[PlaylistManager] play: loadPlaylistSongs returned false, playlistId=' + playlistId);
-      return false;
-    }
+    const generation = this.checkTimerGeneration;
+    const epoch = this.playbackEpoch;
+    const isCurrent = () => options.isCurrent?.() !== false && generation === this.checkTimerGeneration &&
+      epoch === this.playbackEpoch && !this.externalPlayback;
+    const queue = await this.loadPlaylistSongs(playlistId, isCurrent);
+    if (!queue || !isCurrent()) return false;
 
-    if (this.songs.length === 0) {
-      songloft.log.warn('[PlaylistManager] Playlist is empty: ' + playlistId);
-      return false;
-    }
+    const mode = parsePlayMode(options.mode) ?? await this.resolvePlaylistPlayMode(playlistId, queue.audiobook);
+    if (!isCurrent()) return false;
 
-    // 设置播放参数
+    const { songs } = queue;
+    const fallbackIndex = options.startIndex ?? 0;
+    const songIndex = options.songId === undefined ? -1 : songs.findIndex(song => song.id === options.songId);
+    this.songs = songs;
+    this.totalSongs = songs.length;
     this.playlistId = playlistId;
     this.tempPlaylistName = '';
     this.tempArtistQuery = '';
     this.pendingTempArtist = '';
-    if (opts?.randomStart && this.songs.length > 0) {
-      this.currentIndex = Math.floor(Math.random() * this.songs.length);
-    } else {
-      this.currentIndex = (startIndex !== undefined && startIndex >= 0 && startIndex < this.songs.length)
-        ? startIndex : 0;
-    }
-    this.playMode = normalizePlayMode(mode);
+    this.currentIndex = options.randomStart ? Math.floor(Math.random() * songs.length)
+      : songIndex >= 0 ? songIndex
+      : fallbackIndex >= 0 && fallbackIndex < songs.length ? fallbackIndex : 0;
+    this.playMode = mode;
     this.randomPlayed = new Set();
     this.clearPendingNextIndex();
 
-    // 开始播放当前歌曲
-    const ok = await this.playCurrent({ isCurrent: opts?.isCurrent });
-    if (!ok) {
-      songloft.log.error('[PlaylistManager] Failed to play current song');
-      return false;
-    }
+    const ok = await this.playCurrent({ isCurrent: options.isCurrent });
+    if (!ok || !this.isPlaying() || this.songs !== songs) return false;
 
-    // 持久化播放状态到设备配置
-    await this.persistState();
-
-    songloft.log.info(`[PlaylistManager] Playlist started id=${playlistId} index=${this.currentIndex} mode=${this.playMode} total=${this.songs.length}`);
+    await this.persistState(true);
+    songloft.log.info(`[PlaylistManager] Playlist started id=${playlistId} index=${this.currentIndex} mode=${this.playMode} total=${songs.length}`);
     return true;
   }
 
-  /**
-   * 播放歌单并从指定歌曲 ID 开始播放
-   * 用于外部搜索导入并追加到歌单后，接管为「完整歌单播放」，
-   * 使歌曲播完后由切歌定时器自动续播歌单其余歌曲（issue #53）；
-   * 也用于网页端点列表播放——按歌曲 ID 定位比按下标可靠，前端列表与
-   * 服务端刚拉取的歌单顺序不一致时不会串歌（#59）。
-   * 找不到该歌曲时回退到 fallbackIndex（未传则歌单头部）。
-   * @param playlistId - 歌单ID
-   * @param songId - 起始歌曲ID（通常是刚追加到歌单末尾的那首）
-   * @param mode - 播放模式（默认order）
-   * @param fallbackIndex - 歌单内找不到 songId 时的兜底起始下标
-   * @returns 是否成功
-   */
-  async playPlaylistFromSong(playlistId: number, songId: number, mode?: PlayMode, fallbackIndex?: number, isCurrent?: () => boolean): Promise<boolean> {
-    if (isCurrent?.() === false) return false;
-    this.endExternalPlayback();
-    // 立即停止定时器和重置状态，防止 loadPlaylistSongs 期间旧定时器触发 onSongFinished
-    this.stopCheckTimer();
-    this.state = 'idle';
-    this.playStartTimeMs = 0;
-    this._lastLoadNotFound = false;
-
-    const loaded = await this.loadPlaylistSongs(playlistId, isCurrent);
-    if (!loaded) {
-      songloft.log.error('[PlaylistManager] playPlaylistFromSong: loadPlaylistSongs returned false, playlistId=' + playlistId);
-      return false;
+  private async resolvePlaylistPlayMode(playlistId: number, audiobook: boolean): Promise<PlayMode> {
+    try {
+      const progress = await this.configManager.getPlaylistProgress(
+        playlistProgressScope(this.accountId, this.deviceId), playlistId,
+      );
+      const remembered = parsePlayMode(progress?.play_mode);
+      if (remembered) return remembered;
+    } catch (e) {
+      songloft.log.warn('[PlaylistManager] Failed to read playlist play mode: ' + String(e));
     }
-
-    if (this.songs.length === 0) {
-      songloft.log.warn('[PlaylistManager] Playlist is empty: ' + playlistId);
-      return false;
-    }
-
-    // 定位目标歌曲索引；追加的歌曲通常在末尾，找不到时回退到 fallbackIndex（默认歌单头部）
-    let startIndex = this.songs.findIndex(s => s.id === songId);
-    if (startIndex < 0) {
-      startIndex = (fallbackIndex !== undefined && fallbackIndex >= 0 && fallbackIndex < this.songs.length)
-        ? fallbackIndex : 0;
-      songloft.log.warn(`[PlaylistManager] Song ${songId} not found in playlist ${playlistId}, falling back to index ${startIndex}`);
-    }
-
-    this.playlistId = playlistId;
-    this.tempPlaylistName = '';
-    this.tempArtistQuery = '';
-    this.pendingTempArtist = '';
-    this.currentIndex = startIndex;
-    this.playMode = normalizePlayMode(mode);
-    this.randomPlayed = new Set();
-    this.clearPendingNextIndex();
-
-    const ok = await this.playCurrent({ isCurrent: isCurrent });
-    if (!ok) {
-      songloft.log.error('[PlaylistManager] playPlaylistFromSong: Failed to play current song');
-      return false;
-    }
-
-    await this.persistState();
-
-    songloft.log.info(`[PlaylistManager] Playlist started from song id=${songId} playlistId=${playlistId} index=${startIndex} mode=${this.playMode} total=${this.songs.length}`);
-    return true;
+    return audiobook ? 'order' : this.playMode;
   }
 
   /**
@@ -971,6 +924,7 @@ export class PlaylistManager {
       this.randomPlayed = new Set();
     }
 
+    const saveProgress = this.persistPlaylistProgress(normalizedMode, true);
     // 持久化到设备配置
     try {
       await this.configManager.updateDevice(this.accountId, this.deviceId, {
@@ -980,6 +934,7 @@ export class PlaylistManager {
       songloft.log.warn('[PlaylistManager] Failed to save play mode: ' + String(e));
     }
 
+    await saveProgress;
     songloft.log.info('[PlaylistManager] Play mode set to ' + normalizedMode);
   }
 
@@ -1709,27 +1664,24 @@ export class PlaylistManager {
    * 加载歌单歌曲（通过宿主API桥接）
    * 首次返回空时延迟 500ms 重试一次（规避 SQLite WAL 长时间运行后的间歇性空返回）
    */
-  private async loadPlaylistSongs(playlistId: number, taskCurrent?: () => boolean): Promise<boolean> {
-    const generation = this.checkTimerGeneration, epoch = this.playbackEpoch;
-    const isCurrent = () => taskCurrent?.() !== false && generation === this.checkTimerGeneration && epoch === this.playbackEpoch && !this.externalPlayback;
+  private async loadPlaylistSongs(playlistId: number, isCurrent: () => boolean): Promise<{ songs: Song[]; audiobook: boolean } | null> {
     if (isAllSongsPlaylist(playlistId)) {
       try {
         const songs = await loadAllSongs(isCurrent);
-        if (!isCurrent()) return false;
-        this.songs = songs as any;
-        this.totalSongs = songs.length;
-        return songs.length > 0;
+        return isCurrent() && songs.length > 0 ? { songs, audiobook: false } : null;
       } catch (e) {
         songloft.log.error('[PlaylistManager] Failed to load all songs: ' + String(e));
-        return false;
+        return null;
       }
     }
     // 获取歌单排序偏好
+    let audiobook = false;
     let sortBy = '';
     let sortOrder = '';
     try {
       const pl: any = await songloft.playlists.getById(playlistId);
-      if (pl && pl.sort_by) {
+      audiobook = Array.isArray(pl?.labels) && pl.labels.includes('audiobook');
+      if (pl?.sort_by) {
         sortBy = pl.sort_by;
         sortOrder = pl.sort_order || 'asc';
       }
@@ -1737,46 +1689,40 @@ export class PlaylistManager {
       songloft.log.warn(`[PlaylistManager] loadPlaylistSongs: getById for sort failed playlistId=${playlistId}: ${String(e)}`);
     }
 
-    const attempt = async (retry: boolean): Promise<boolean> => {
+    const attempt = async (retry: boolean): Promise<Song[] | null> => {
       try {
         const songs = await songloft.playlists.getSongs(playlistId, { limit: 100000, sort: sortBy, order: sortOrder } as any);
         const desc = songs ? (Array.isArray(songs) ? String(songs.length) : 'non-array') : 'null';
         songloft.log.info(`[PlaylistManager] loadPlaylistSongs playlistId=${playlistId} sort=${sortBy} order=${sortOrder} returned=${desc}${retry ? ' (retry)' : ''}`);
         if (!songs || !Array.isArray(songs)) {
           songloft.log.error('[PlaylistManager] Bridge returned invalid data for playlist: ' + playlistId);
-          return false;
+          return null;
         }
-        if (isCurrent?.() === false) return false;
-        this.songs = songs as any;
-        this.totalSongs = songs.length;
-        return songs.length > 0;
+        if (!isCurrent()) return null;
+        return songs.length > 0 ? songs : null;
       } catch (e) {
         songloft.log.error(`[PlaylistManager] loadPlaylistSongs exception playlistId=${playlistId}${retry ? ' (retry)' : ''}: ${String(e)}`);
-        return false;
+        return null;
       }
     };
 
-    if (isCurrent?.() === false) return false;
-    const ok = await attempt(false);
-    if (ok) {
-      return true;
-    }
+    if (!isCurrent()) return null;
+    const songs = await attempt(false);
+    if (songs) return { songs, audiobook };
 
-    if (isCurrent?.() === false) return false;
+    if (!isCurrent()) return null;
     songloft.log.warn(`[PlaylistManager] loadPlaylistSongs empty or failed, retrying in 500ms playlistId=${playlistId}`);
     await new Promise(r => setTimeout(r, 500));
-    if (isCurrent?.() === false) return false;
-    const retryOk = await attempt(true);
-    if (retryOk) {
-      return true;
-    }
+    if (!isCurrent()) return null;
+    const retriedSongs = await attempt(true);
+    if (retriedSongs) return { songs: retriedSongs, audiobook };
 
-    if (isCurrent?.() === false) return false;
+    if (!isCurrent()) return null;
     // retry 后仍为空/失败：检测歌单是否真的不存在（扫描后 auto-create 歌单 ID 变化会导致旧 ID 失效）。
     // 区分「歌单不存在(ID 过期)」与「歌单存在但为空」，供上层决定是否刷新索引重试。
     try {
       const pl = await songloft.playlists.getById(playlistId);
-      if (!isCurrent()) return false;
+      if (!isCurrent()) return null;
       if (!pl) {
         this._lastLoadNotFound = true;
         songloft.log.warn(`[PlaylistManager] playlist ${playlistId} not found (stale ID), signaling caller to refresh index`);
@@ -1789,7 +1735,7 @@ export class PlaylistManager {
     } catch (e) {
       songloft.log.warn(`[PlaylistManager] getById check failed playlistId=${playlistId}: ${String(e)}`);
     }
-    return false;
+    return null;
   }
 
   /**
@@ -3813,7 +3759,7 @@ export class PlaylistManager {
   /**
    * 持久化播放状态到设备配置
    */
-  private async persistState(): Promise<void> {
+  private async persistState(rememberPlaylistMode = false): Promise<void> {
     const anchor = this.buildResumeAnchor();
     if (isTempPlaylistId(this.playlistId)) {
       try {
@@ -3837,6 +3783,7 @@ export class PlaylistManager {
       }
       return;
     }
+    const saveProgress = this.persistPlaylistProgress(rememberPlaylistMode ? this.playMode : undefined);
     try {
       await this.configManager.updateDevice(this.accountId, this.deviceId, {
         playlist_id: this.playlistId,
@@ -3851,7 +3798,7 @@ export class PlaylistManager {
     } catch (e) {
       songloft.log.warn('[PlaylistManager] Failed to persist state: ' + String(e));
     }
-    await this.persistPlaylistProgress();
+    await saveProgress;
   }
 
   /**
@@ -3865,7 +3812,7 @@ export class PlaylistManager {
    * previous / 自动切歌的唯一收口，跟着它走就不会有哪条路漏记。
    * 停止态也照记（要的就是「停在哪首」），只是曲内位置归零。
    */
-  private async persistPlaylistProgress(): Promise<void> {
+  private async persistPlaylistProgress(mode?: PlayMode, modeOnly = false): Promise<void> {
     const song = this.getCurrentSong();
     if (!song || song.id <= 0 || this.playlistId <= 0) return;
     let positionSec = 0;
@@ -3883,7 +3830,9 @@ export class PlaylistManager {
           song_index: this.currentIndex,
           position_sec: positionSec,
           updated_at: Date.now(),
+          ...(mode ? { play_mode: mode } : {}),
         },
+        modeOnly,
       );
     } catch (e) {
       songloft.log.warn('[PlaylistManager] Failed to persist playlist progress: ' + String(e));
@@ -4290,6 +4239,8 @@ export class PlaylistManagerMap {
       const devices = await this.configManager.getDevices(accountId);
       const devCfg = devices.find(d => d.device_id === deviceId);
       if (!devCfg) return null;
+      const deviceMode = normalizePlayMode(devCfg.play_mode);
+      manager.initWithSongs([], 0, deviceMode, 0);
 
       // 检测临时歌手歌单：记录待恢复标记，等索引就绪后由 restoreTempPlaylists 完成
       const tempArtist = devCfg.temp_artist;
@@ -4340,7 +4291,15 @@ export class PlaylistManagerMap {
           ? songs.findIndex(song => song.id === devCfg.resume_song_id)
           : -1;
         const startIndex = restoredSongIndex >= 0 ? restoredSongIndex : devCfg.current_song_index || 0;
-        const playMode = normalizePlayMode(devCfg.play_mode);
+        let playMode = deviceMode;
+        try {
+          const progress = await this.configManager.getPlaylistProgress(
+            playlistProgressScope(accountId, deviceId), devCfg.playlist_id,
+          );
+          playMode = normalizePlayMode(progress?.play_mode, deviceMode);
+        } catch (e) {
+          songloft.log.warn('[PlaylistManagerMap] Failed to restore playlist play mode: ' + String(e));
+        }
         manager.initWithSongs(songs, startIndex, playMode, devCfg.playlist_id);
         // 恢复持久化的倍速（缺省 1.0）。仅设字段，不触发重推——恢复时本就不在播。
         const speed = typeof devCfg.play_speed === 'number' && devCfg.play_speed > 0

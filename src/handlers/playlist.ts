@@ -7,6 +7,7 @@ import {
   PlaylistManagerMap,
   isTempPlaylistId,
   normalizePlayMode,
+  parsePlayMode,
   resolvePlaylistResumeStart,
 } from "../player/manager";
 import type { PlaylistManager } from "../player/manager";
@@ -631,7 +632,7 @@ export function registerPlaylistHandlers(
         account_id,
         device_id,
       );
-      const mode = normalizePlayMode(play_mode);
+      const mode = parsePlayMode(play_mode);
       const playlistId = Number(playlist_id);
       const startIndex = Number(start_index) || 0;
       const songId = Number(song_id) || 0;
@@ -665,7 +666,7 @@ export function registerPlaylistHandlers(
         ok = await manager.playWithSongs(
           songs as any,
           idx >= 0 ? idx : startIndex,
-          mode,
+          mode ?? localStatus.play_mode,
           localStatus.playlist_name,
         );
       } else if (songId > 0) {
@@ -708,14 +709,15 @@ export function registerPlaylistHandlers(
         });
       }
 
+      const status = manager.getStatus();
       return jsonResponse({
         success: true,
         data: {
           message: "playlist started",
           playlist_id: playlistId,
-          play_mode: mode,
+          play_mode: status.play_mode,
           // 前端据此纠正高亮/列表：与请求的 start_index 不一致说明本地列表已过期
-          current_index: manager.getStatus().current_index,
+          current_index: status.current_index,
           current_song: manager.getCurrentSong(),
         },
       });

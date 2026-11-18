@@ -31,7 +31,7 @@ const height = Number(process.env.MIOT_TEST_HEIGHT || 740);
     position: 20,
     duration: 240,
     volume: 40,
-    play_mode: "order",
+    play_mode: "random",
     speed: 1,
   };
   const commands = [];
@@ -152,14 +152,12 @@ const height = Number(process.env.MIOT_TEST_HEIGHT || 740);
     else await page.mouse.click(rect.x, rect.y);
     await new Promise((r) => setTimeout(r, 150));
   };
-  const waitCommand = async (path) => {
+  const waitCommand = async (path, count = 1) => {
     await page.waitForFunction(() => true);
-    for (let i = 0; i < 30 && !commands.some((c) => c.path === path); i++)
+    const received = () => commands.filter((c) => c.path === path).length;
+    for (let i = 0; i < 30 && received() < count; i++)
       await new Promise((r) => setTimeout(r, 100));
-    assert.ok(
-      commands.some((c) => c.path === path),
-      path,
-    );
+    assert.ok(received() >= count, path);
   };
   const assertOverlay = async (selector) => {
     await page.waitForFunction(
@@ -245,6 +243,16 @@ const height = Number(process.env.MIOT_TEST_HEIGHT || 740);
     await new Promise((resolve) => setTimeout(resolve, 250));
     const beforeToolbar = await toolbarGeometry();
     status.is_playing = false;
+    await click(".song-play-target", "Song 1 ");
+    await waitCommand("/player/play");
+    const pointPlay = commands.find((c) => c.path === "/player/play");
+    assert.equal(pointPlay.body.song_id, 1);
+    assert.equal(Object.hasOwn(pointPlay.body, "play_mode"), false);
+    await click(".resume-playlist");
+    await waitCommand("/player/play", 2);
+    const resumePlay = commands.filter((c) => c.path === "/player/play")[1];
+    assert.equal(resumePlay.body.start_position, "resume");
+    assert.equal(Object.hasOwn(resumePlay.body, "play_mode"), false);
     progressAvailable = false;
     assert.equal(
       await page.evaluate(() =>
