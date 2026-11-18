@@ -12,11 +12,13 @@
 
 ### MIOT-034：设备上报流长偏大时，仍要采样元数据曲尾
 
-- 范围：[songloft-org/songloft-plugin-miot#130 的复测](https://github.com/songloft-org/songloft-plugin-miot/issues/130#issuecomment-6418357065)，基线 `ec8c2e0f58ebc3d5dc9921b284bb02b089a8ce6a`。
+- 范围：[songloft-org/songloft-plugin-miot#130 的复测](https://github.com/songloft-org/songloft-plugin-miot/issues/130#issuecomment-6418357065) 和 [songloft-org/songloft#577](https://github.com/songloft-org/songloft/issues/577)，#130 本地验证基线 `ec8c2e0f58ebc3d5dc9921b284bb02b089a8ce6a`。
 - 证据：2026-10-26 复测中，262.920 秒的歌曲上报 537.340 秒。后端先收到旧曲再次取流，设备进度从 262.717 秒回到 4.445 秒，插件却在 30 秒宽限到期后才下发下一首。顺序单曲另有回零、旧 URL 取流和本地队列结束的完整记录。
 - 规则与 Done right：稳定的上报流长、相邻新采样、与元数据曲尾相符的回拨时刻共同构成重播证据。主校验推迟后仍要采样元数据曲尾。对仍在推进或证据不足的设备保留结束确认宽限。在无下一首时把确认的设备重播传到实际停止路径，新操作可作废在途的停止。
 - 验证：22 项专项通过，隔离基线 20 项按预期失败。集成用例走真实 Mina 请求构造和共享状态缓存，覆盖两次自然切歌的 URL、三种倍速、两种下发方式和状态页开关。命令、工作树与实际验证边界见 [#130 复测记录](docs/issue-130.md#10-月-26-日音箱复测)。
-- Seen 1× (2026-10-26)。状态：本地实现通过，真实音箱与固件待复测。
+- #577 的独立复现：报告安装 `v2026.11.18.0`（`dec2837a1d28fec8927f44e5979dfea9fb56e1b7`）。147.879 秒歌曲从 58 秒续播，设备报流长 224.690 秒。服务端在曲尾收到同一首的取流请求，设备位置在 5.477 秒内从 89.682 秒回拨到 4.808 秒，旧版进入 30 秒宽限且在手动暂停前未切歌。排查 Music API 要追踪 `stream.url` 与设备取流请求，`startaudioid` 可沿用默认封面 ID，`music_length` 记录序列化 `music` 的字符串长度。
+- #577 验证：Linux amd64、Node 22.17.1，以同一组采样运行真实 Mina 请求构造和共享缓存。`.0` 在首次回拨采样后未下发下一首，[`v2026.11.18.2`](https://github.com/songloft-org/songloft-plugin-miot/releases/tag/v2026.11.18.2) 的 `84ee563204cd25f2212d96e2072534f32a8efc98` 当次下发下一首 URL。持续向前播放的对照在两个版本均未提前切歌。四组播放回归在 `853e260b70a8926d9e0493bcb48249194f649f53` 通过 670 项。复现脚本和测试日志在 `/tmp/songloft-issue-577.qchVdE/`。报告人真机、固件及长期播放待复验，早期只有切歌回执的片段缺少设备取流记录。
+- Seen 2× (2026-10-26, 2026-11-18)。状态：曲尾回拨修复随 `v2026.11.18.2` 发布。
 
 ### ROUTE-001：聊天前缀与点歌解析要验证整条分流链路
 
