@@ -98,9 +98,10 @@ export interface ConfirmState {
 
 export const state = reactive({
   chatStatus: null as ChatStatus | null,
-  initialized: false,
   loading: true,
   startupError: "",
+  configError: "",
+  deviceError: "",
   deviceConnecting: false,
   refreshing: false,
   config: { ...defaultConfig } as MiotConfig,
@@ -128,8 +129,9 @@ export const state = reactive({
   // 当前设备在当前所选歌单上次播到哪一首。切歌单/切设备都要重取：进度是按
   // 「设备 × 歌单」记的，换任一维度都是另一条记录。
   playlistProgress: null as PlaylistProgress | null,
-  player: {} as PlayerStatus,
+  player: {} as Omit<PlayerStatus, "position">,
   playerBusy: false,
+  playerSyncing: false,
   statusConnected: false,
   playerStatusState: "unknown" as "unknown" | "loading" | "ready" | "error",
   schedules: [] as ScheduledTask[],
@@ -156,6 +158,10 @@ export const state = reactive({
     dangerous: false,
   } as ConfirmState,
   operationLog: [] as OperationLogEntry[],
+});
+
+export const playerProgress = reactive({
+  position: undefined as number | undefined,
 });
 
 export function deviceId(device: Device): string {
@@ -346,6 +352,7 @@ export async function loadConfig(): Promise<void> {
   };
   Object.assign(state.config, normalized);
   state.configLoaded = true;
+  state.configError = "";
 }
 
 let savedConfig = "";
@@ -430,6 +437,7 @@ export async function loadAccountsAndDevices(): Promise<void> {
   state.accounts = accounts || [];
   state.devices = devices || [];
   ensureCurrentDevice();
+  state.deviceError = "";
 }
 
 function ensureCurrentDevice(): void {
@@ -441,6 +449,7 @@ function ensureCurrentDevice(): void {
       ),
   );
   if (currentExists) return;
+  if (state.currentDeviceId) resetPlayerTarget();
   for (const account of state.devices) {
     const selected =
       account.devices.find(
@@ -467,7 +476,7 @@ export async function selectDevice(
   const revision = selectionRevision;
   state.currentAccountId = accountId;
   state.currentDeviceId = selectedDeviceId;
-  state.player = {};
+  resetPlayerTarget();
   // 进度是按设备记的：换了设备，当前歌单的续播位置也换了一条记录
   state.playlistProgress = null;
   void refreshPlaylistProgress();
@@ -633,6 +642,7 @@ export async function ensureSongLoaded(id: number): Promise<number> {
   return playlistId === state.selectedPlaylistId ? index : -1;
 }
 export async function selectPlaylist(playlistId: string): Promise<void> {
+  stopInitialPlaylistSelection();
   clearTimeout(songSearchTimer);
   state.selectedPlaylistId = playlistId;
   state.songSearch = "";
@@ -688,7 +698,7 @@ export const lastPlayedSong = computed(() => {
   return state.songs.find((song) => song.id === songId) || null;
 });
 
-async function selectCurrentPlaylistOnEntry(): Promise<void> {
+function selectCurrentPlaylistOnEntry(): void {
   if (state.selectedPlaylistId) return;
 
   if (state.player.current_song) {
@@ -707,14 +717,14 @@ async function selectCurrentPlaylistOnEntry(): Promise<void> {
           )
         : undefined);
     if (matched) {
-      await selectPlaylist(String(matched.id));
+      void selectPlaylist(String(matched.id));
       return;
     }
   }
 
   // 有歌单但没有匹配到当前播放时，默认选第一个歌单
   if (state.playlists.length > 0) {
-    await selectPlaylist(String(state.playlists[0].id));
+    void selectPlaylist(String(state.playlists[0].id));
   }
 }
 
@@ -730,7 +740,7 @@ function targetBody() {
 
 /**
  * 播放指令去重窗口（songloft-org/songloft#449）。
- * playerCommand 的 playerBusy 只覆盖请求在途期间：它在 refreshPlayerStatus 走完就释放，
+ * playerCommand 的 playerBusy 只覆盖控制请求在途期间，
  * 紧随其后的同一个播放意图（一次点击触发两个事件，或用户手抖点了两下）照样发得出去，
  * 结果是同一首歌在一两秒内向音箱连推两次 play-music。这种重复下发没有意义，丢掉后一次。
  */
@@ -740,7 +750,7 @@ let lastPlayIntentAt = 0;
 
 async function runPlayIntent(
   key: string,
-  run: () => Promise<void>,
+  run: () => Promise<boolean>,
 ): Promise<void> {
   const now = Date.now();
   if (
@@ -751,10 +761,10 @@ async function runPlayIntent(
   lastPlayIntentKey = key;
   lastPlayIntentAt = now;
   try {
-    await run();
+    if (!(await run()) && lastPlayIntentKey === key) lastPlayIntentKey = "";
   } catch (error) {
     // 下发失败不该连用户紧接着的重试一起吞掉
-    lastPlayIntentKey = "";
+    if (lastPlayIntentKey === key) lastPlayIntentKey = "";
     throw error;
   }
 }
@@ -768,13 +778,14 @@ export async function playSong(
   await runPlayIntent(
     `song:${state.selectedPlaylistId}:${song.id}`,
     async () => {
-      await playerCommand("/player/play", {
+      const accepted = await playerCommand("/player/play", {
         ...targetBody(),
         playlist_id: Number(state.selectedPlaylistId),
         song_id: song.id,
         start_index: fallbackIndex >= 0 ? fallbackIndex : visibleIndex || 0,
       });
-      void refreshPlaylistProgress();
+      if (accepted) void refreshPlaylistProgress();
+      return accepted;
     },
   );
 }
@@ -787,13 +798,35 @@ export async function playSong(
 export async function resumePlaylist(): Promise<void> {
   if (!state.selectedPlaylistId) throw new Error("请先选择歌单");
   await runPlayIntent(`resume:${state.selectedPlaylistId}`, async () => {
-    await playerCommand("/player/play", {
+    const accepted = await playerCommand("/player/play", {
       ...targetBody(),
       playlist_id: Number(state.selectedPlaylistId),
       start_position: "resume",
     });
-    void refreshPlaylistProgress();
+    if (accepted) void refreshPlaylistProgress();
+    return accepted;
   });
+}
+
+let commandRevision = 0;
+let confirmedPosition: number | undefined;
+let commandRefreshTimer: ReturnType<typeof setTimeout> | undefined;
+
+function finishCommandRefresh() {
+  clearTimeout(commandRefreshTimer);
+  commandRefreshTimer = undefined;
+  state.playerSyncing = false;
+}
+
+function resetPlayerTarget() {
+  commandRevision++;
+  state.playerBusy = false;
+  finishCommandRefresh();
+  lastPlayIntentKey = "";
+  volumeSetAt = 0;
+  confirmedPosition = undefined;
+  state.player = {};
+  playerProgress.position = undefined;
 }
 
 export async function playerCommand(
@@ -805,25 +838,24 @@ export async function playerCommand(
     path === "/mina/tts" && typeof body.text === "string"
       ? body.text.trim()
       : undefined;
+  const target = targetBody();
+  const revision = ++commandRevision;
   state.playerBusy = true;
   try {
-    await post(path, { ...targetBody(), ...body });
+    await post(path, { ...target, ...body });
+    if (revision !== commandRevision) return false;
     if (ttsText) addOperation("文字播报已发送", true, ttsText);
-    try {
-      requestStatusRefresh();
-    } catch (error) {
-      // 指令已被接受，状态连接异常时继续通过 HTTP 刷新。
-      console.warn("[miot] status refresh request failed", messageOf(error));
-    }
-    await refreshPlayerStatus();
+    refreshAfterCommand();
     return true;
   } catch (error) {
+    if (revision !== commandRevision) return false;
+    if (path === "/player/seek") playerProgress.position = confirmedPosition;
     const message = messageOf(error);
     addOperation(message, false, ttsText);
     notify(message, "error");
     throw error;
   } finally {
-    state.playerBusy = false;
+    if (revision === commandRevision) state.playerBusy = false;
   }
 }
 
@@ -837,12 +869,12 @@ export async function setPlaybackSpeed(speed: number): Promise<void> {
 
 export async function seekPlayer(position: number): Promise<void> {
   const duration = Number(state.player.duration || 0);
-  if (duration <= 0) return;
+  if (duration <= 0 || state.playerBusy || !currentDevice.value) return;
   const normalized = Math.max(
     0,
     Math.min(Math.max(0, duration - 3), Math.round(position)),
   );
-  state.player.position = normalized;
+  playerProgress.position = normalized;
   await playerCommand("/player/seek", { position: normalized });
 }
 
@@ -863,6 +895,7 @@ export async function refreshPlayerStatus(): Promise<void> {
   if (statusRequestBusy) return;
   statusRequestBusy = true;
   const generation = statusRequestGeneration;
+  const socketFrame = statusFrameRevision;
   if (state.playerStatusState !== "ready") state.playerStatusState = "loading";
   try {
     const status = await get<PlayerStatus>(
@@ -871,14 +904,22 @@ export async function refreshPlayerStatus(): Promise<void> {
         device_id: state.currentDeviceId,
       })}`,
     );
-    if (generation === statusRequestGeneration) applyPlayerStatus(status);
+    if (
+      generation === statusRequestGeneration &&
+      socketFrame === statusFrameRevision
+    )
+      applyPlayerStatus(status);
   } catch (error) {
     if (generation === statusRequestGeneration && !state.statusConnected) {
       state.playerStatusState = "error";
       console.warn("[miot] status refresh failed", messageOf(error));
+      resolveInitialPlaylist();
     }
   } finally {
-    if (generation === statusRequestGeneration) statusRequestBusy = false;
+    if (generation === statusRequestGeneration) {
+      statusRequestBusy = false;
+      finishCommandRefresh();
+    }
   }
 }
 
@@ -890,7 +931,24 @@ function applyPlayerStatus(incoming: PlayerStatus): void {
   if (volumeSetAt && Date.now() - volumeSetAt < VOLUME_GRACE_MS) {
     incoming = { ...incoming, volume: state.player.volume };
   }
-  state.player = incoming;
+  const { position, ...status } = incoming;
+  const previous = state.player;
+  if (
+    status.current_song &&
+    JSON.stringify(status.current_song) ===
+      JSON.stringify(previous.current_song)
+  )
+    status.current_song = previous.current_song;
+  if (
+    Object.keys(previous).some((key) => !(key in status)) ||
+    Object.entries(status).some(
+      ([key, value]) => previous[key as keyof typeof previous] !== value,
+    )
+  )
+    state.player = status;
+  confirmedPosition = position;
+  playerProgress.position = position;
+  resolveInitialPlaylist();
 }
 
 let statusLifecycle: (() => void) | undefined;
@@ -907,6 +965,7 @@ export function setAppVisible(visible: boolean) {
 let statusRequestBusy = false;
 // 恢复、切设备或卸载后，旧 HTTP 请求的结果和 finally 都不能影响新一轮请求。
 let statusRequestGeneration = 0;
+let statusFrameRevision = 0;
 // 每次开连自增。一次断线可能同时打到 onerror 和 onclose，用它保证回收只做一遍，
 // 免得重连退避的 statusAttempts 被多加一次。
 let statusSocketGen = 0;
@@ -923,6 +982,22 @@ const STATUS_OPEN_TIMEOUT_MS = 8000;
 function resetStatusRequests(): void {
   statusRequestGeneration += 1;
   statusRequestBusy = false;
+}
+
+function refreshAfterCommand() {
+  finishCommandRefresh();
+  resetStatusRequests();
+  if (!appVisible) return;
+  state.playerSyncing = true;
+  try {
+    if (requestStatusRefresh()) {
+      commandRefreshTimer = setTimeout(() => void refreshPlayerStatus(), 1500);
+      return;
+    }
+  } catch (error) {
+    console.warn("[miot] status refresh request failed", messageOf(error));
+  }
+  void refreshPlayerStatus();
 }
 
 function resumeStatusStream(): void {
@@ -984,11 +1059,8 @@ function abandonStatusSocket(gen: number, recover: boolean) {
 }
 
 function openStatusSocket() {
-  if (
-    !state.currentAccountId ||
-    !state.currentDeviceId ||
-    typeof WebSocket === "undefined"
-  ) {
+  if (!state.currentAccountId || !state.currentDeviceId) return;
+  if (typeof WebSocket === "undefined") {
     startStatusPolling();
     return;
   }
@@ -1015,8 +1087,11 @@ function openStatusSocket() {
       if (gen !== statusSocketGen) return;
       try {
         const frame = JSON.parse(String(event.data));
-        if (frame?.type === "status" && frame.data)
+        if (frame?.type === "status" && frame.data) {
+          statusFrameRevision++;
+          finishCommandRefresh();
           applyPlayerStatus(frame.data);
+        }
       } catch {
         // Ignore malformed frames; the next valid status replaces them.
       }
@@ -1053,6 +1128,7 @@ export function connectStatusStream(): void {
       appVisible = false;
       statusManualClose = true;
       resetStatusRequests();
+      finishCommandRefresh();
       if (statusReconnect) clearTimeout(statusReconnect);
       if (statusPoll) clearInterval(statusPoll);
       statusReconnect = null;
@@ -1063,14 +1139,17 @@ export function connectStatusStream(): void {
   if (appVisible) openStatusSocket();
 }
 
-export function requestStatusRefresh(): void {
+export function requestStatusRefresh(): boolean {
   // 同上：读实例上的常量比对 readyState，类上的静态成员在部分宿主环境是 undefined。
   if (statusSocket && statusSocket.readyState === statusSocket.OPEN) {
     statusSocket.send(JSON.stringify({ type: "refresh" }));
+    return true;
   }
+  return false;
 }
 
 export function disconnectStatusStream(): void {
+  finishCommandRefresh();
   statusManualClose = true;
   statusLifecycle?.();
   statusLifecycle = undefined;
@@ -1252,7 +1331,7 @@ export async function refreshAll(): Promise<void> {
     ]);
     savedConfig = configFingerprint();
     connectStatusStream();
-    await refreshPlayerStatus();
+    await Promise.all([refreshPlayerStatus(), refreshPlaylistProgress()]);
     notify("内容已刷新", "success");
   } catch (error) {
     notify(messageOf(error), "error");
@@ -1261,37 +1340,100 @@ export async function refreshAll(): Promise<void> {
   }
 }
 
-export async function initialize(): Promise<void> {
+const INITIAL_PLAYLIST_WAIT_MS = 3000;
+let initialPlaylistTimer: ReturnType<typeof setTimeout> | undefined;
+let initialPlaylistPending = true;
+let playlistsReady = false;
+
+function stopInitialPlaylistSelection() {
+  initialPlaylistPending = false;
+  clearTimeout(initialPlaylistTimer);
+  initialPlaylistTimer = undefined;
+}
+
+function resolveInitialPlaylist(force = false) {
+  if (!initialPlaylistPending || !playlistsReady) return;
+  if (
+    !force &&
+    state.playerStatusState !== "ready" &&
+    state.playerStatusState !== "error" &&
+    (state.deviceConnecting || currentDevice.value)
+  )
+    return;
+  stopInitialPlaylistSelection();
+  selectCurrentPlaylistOnEntry();
+}
+
+function sharePending(operation: () => Promise<void>) {
+  let pending: Promise<void> | undefined;
+  return () =>
+    (pending ??= operation().finally(() => {
+      pending = undefined;
+    }));
+}
+
+export const retryInitialPlaylists = sharePending(async () => {
   state.loading = true;
   state.startupError = "";
   try {
-    await Promise.all([loadConfig(), loadPlaylists()]);
-    savedConfig = configFingerprint();
-    state.initialized = true;
+    await loadPlaylists();
+    playlistsReady = true;
+    if (initialPlaylistPending) {
+      initialPlaylistTimer = setTimeout(
+        () => resolveInitialPlaylist(true),
+        INITIAL_PLAYLIST_WAIT_MS,
+      );
+      resolveInitialPlaylist();
+    }
   } catch (error) {
     state.startupError = messageOf(error);
-    return;
   } finally {
     state.loading = false;
   }
-  connectDevicesInBackground();
-}
+});
 
-async function connectDevicesInBackground(): Promise<void> {
-  state.deviceConnecting = true;
+export const retryInitialConfig = sharePending(async () => {
+  state.configError = "";
   try {
-    await Promise.all([loadAccountsAndDevices(), loadGroups()]);
-    connectStatusStream();
-    await refreshPlayerStatus();
-    await selectCurrentPlaylistOnEntry();
+    await loadConfig();
+    savedConfig = configFingerprint();
   } catch (error) {
-    notify(messageOf(error), "error");
+    state.configError = messageOf(error);
+  }
+});
+
+export const retryInitialDevices = sharePending(async () => {
+  state.deviceConnecting = true;
+  state.deviceError = "";
+  try {
+    await loadAccountsAndDevices();
+    connectStatusStream();
+    if (state.currentDeviceId) {
+      void refreshPlayerStatus();
+      void refreshPlaylistProgress();
+    }
+  } catch (error) {
+    state.deviceError = messageOf(error);
   } finally {
     state.deviceConnecting = false;
+    resolveInitialPlaylist();
   }
+});
+
+export async function initialize(): Promise<void> {
+  initialPlaylistPending = true;
+  playlistsReady = false;
+  await Promise.all([
+    retryInitialDevices(),
+    retryInitialConfig(),
+    retryInitialPlaylists(),
+    loadGroups().catch((error) => notify(messageOf(error), "error")),
+  ]);
 }
 
 export function disposeStore(): void {
+  stopInitialPlaylistSelection();
+  resetPlayerTarget();
   clearTimeout(songSearchTimer);
   songRequest++;
   disconnectStatusStream();

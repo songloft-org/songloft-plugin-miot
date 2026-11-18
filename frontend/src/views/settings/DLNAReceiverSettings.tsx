@@ -12,6 +12,7 @@ import {
   onUnmounted,
   reactive,
   ref,
+  watch,
 } from "../../page-state";
 import { get, put } from "../../api";
 import { messageOf, notify, state } from "../../store";
@@ -83,14 +84,29 @@ const pageState = {
       );
     }
     let revision = 0;
-    async function refresh(initial = false) {
+    let loaded = false;
+    function stopRefresh() {
+      if (timer !== null) clearTimeout(timer);
+      timer = null;
+    }
+    function scheduleRefresh() {
+      stopRefresh();
+      if (!disposed && input.active !== false) {
+        timer = setTimeout(() => {
+          void refresh();
+        }, 5000);
+      }
+    }
+    async function refresh() {
+      if (disposed || input.active === false || saving.value) return;
       const current = revision;
       try {
         const result = await get<ReceiverStatus>("/receiver/config");
         if (disposed || current !== revision) return;
         status.value = result;
         error.value = result.error;
-        if (initial) {
+        if (!loaded) {
+          loaded = true;
           form.enabled = result.enabled;
           form.enabled_ids = result.enabled_ids.slice();
           form.name = result.name;
@@ -99,10 +115,7 @@ const pageState = {
       } catch (cause) {
         if (!disposed && current === revision) error.value = messageOf(cause);
       }
-      if (!disposed && current === revision)
-        timer = setTimeout(() => {
-          void refresh();
-        }, 5000);
+      if (current === revision) scheduleRefresh();
     }
     function selectReceiver(id: string, enabled: boolean): void {
       form.enabled_ids = enabled
@@ -111,7 +124,7 @@ const pageState = {
     }
     async function save() {
       revision++;
-      if (timer !== null) clearTimeout(timer);
+      stopRefresh();
       saving.value = true;
       try {
         const result = await put<ReceiverStatus>("/receiver/config", {
@@ -131,18 +144,26 @@ const pageState = {
         }
       } finally {
         saving.value = false;
-        if (!disposed)
-          timer = setTimeout(() => {
-            void refresh();
-          }, 5000);
+        scheduleRefresh();
       }
     }
     onMounted(() => {
-      void refresh(true);
+      void refresh();
     });
+    watch(
+      () => input.active,
+      (active) => {
+        if (active === false) {
+          revision++;
+          stopRefresh();
+        } else {
+          void refresh();
+        }
+      },
+    );
     onUnmounted(() => {
       disposed = true;
-      if (timer !== null) clearTimeout(timer);
+      stopRefresh();
     });
     const bindings = {
       form,

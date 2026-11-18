@@ -148,9 +148,10 @@ function script(file, env, exports) {
   return new Function(
     'isDashScopeEndpoint',
     'parseAIHeaders',
+    'input',
     ...Object.keys(env),
     js,
-  )(isDashScopeEndpoint, parseAIHeaders, ...Object.values(env));
+  )(isDashScopeEndpoint, parseAIHeaders, {}, ...Object.values(env));
 }
 test('late HTTP chat status cannot overwrite a newer WebSocket status; old devices are ignored', async () => {
   const requests = [],

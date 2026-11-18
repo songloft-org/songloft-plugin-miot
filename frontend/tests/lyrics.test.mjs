@@ -86,6 +86,7 @@ test("old song results cannot overwrite a replacement or a disposed player", asy
   await old;
   assert.equal(details.lyrics.value[0].text, "新歌曲");
   assert.equal(details.isFavorite.value, true);
+  id = 3;
   const late = details.loadSongDetails();
   details.dispose();
   requests[4].resolve({ lyric: "[00:00]卸载后" });
@@ -139,4 +140,22 @@ test("a late favorite query cannot undo a local add or remove", async () => {
       "a newer user action owns favorite state",
     );
   }
+});
+
+test("mini player loads only favorite state and lyric views reuse successful responses", async () => {
+  const paths = [];
+  const cache = new Map();
+  const get = async (path) => {
+    paths.push(path);
+    return path.startsWith("/lyric")
+      ? { lyric: "[00:00]缓存" }
+      : { is_favorited: true };
+  };
+  const details = createPlayerDetails(get, () => 1, cache);
+  await details.loadSongDetails(false);
+  assert.deepEqual(paths, ["/player/favorite/status?song_id=1"]);
+  await details.ensureLyrics();
+  await createPlayerDetails(get, () => 1, cache).ensureLyrics();
+  assert.equal(paths.filter((path) => path.startsWith("/lyric")).length, 1);
+  assert.equal(details.lyrics.value[0].text, "缓存");
 });

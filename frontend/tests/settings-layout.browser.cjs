@@ -130,6 +130,8 @@ const categories = {
             const path = u.pathname.slice(prefix.length);
             if (path === "/config") data = fixtureConfig;
             if (path === "/receiver/config") data = receivers;
+            if (path === "/memory/stats") data = {};
+            if (path === "/memory/ambiguous") data = { records: [] };
             if (path === "/memory/entities")
               data = {
                 entities: [
@@ -355,7 +357,20 @@ const categories = {
               ),
               "server/DLNA manual save areas must be labeled",
             );
-            if (width < 600) {
+            const dlnaDescriptionOverflows = await page.evaluate(() => {
+              const root = document.getElementById("plugin-view").shadowRoot;
+              const section = [...root.querySelectorAll(".miot-section")].find(
+                (item) =>
+                  item.querySelector(".section-title")?.textContent ===
+                  "DLNA 接收器",
+              );
+              return (
+                section
+                  ?.querySelector(".section-description-measure")
+                  ?.getBoundingClientRect().height > 36.5
+              );
+            });
+            if (dlnaDescriptionOverflows) {
               await click(
                 '.section-description-toggle[accessibility-label="展开DLNA 接收器说明"]',
               );

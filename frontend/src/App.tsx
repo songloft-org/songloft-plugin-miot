@@ -9,7 +9,7 @@ import {
 import { getTheme, onPush, onThemeChange } from "@songloft/lynx-plugin-sdk";
 import { watch } from "@vue/reactivity";
 import { CompactSettingsContext } from "./ui/theme";
-import { useObserved, classes } from "./page-state";
+import { useObserved, useObservedFields, classes } from "./page-state";
 import {
   consumeBack,
   closePage,
@@ -20,16 +20,13 @@ import {
 } from "./runtime";
 import * as store from "./store";
 import { get, post, query, messageOf } from "./api";
-import {
-  connectChatSocket,
-  stopChatSocket,
-  setChatVisible,
-} from "./chat-stream";
+import { stopChatSocket, setChatVisible } from "./chat-stream";
 import { Cover } from "./Cover";
 import { useSongListScroll } from "./song-list-scroll";
 import { createPlayerDetails } from "./player-details";
 import { paletteFromMetadata } from "./player-palette";
 import type { PlayMode, SleepTimerStatus, Song } from "./types";
+import type { LyricLine } from "./lyrics";
 import {
   SlIcon,
   SlEmptyState,
@@ -51,8 +48,12 @@ import SleepTimerPanel from "./views/SleepTimerPanel";
 import { Overlay } from "./ui/Overlay";
 import { ThemeContext } from "./ui/theme";
 import { measurePopover, placePopover } from "./ui/position";
-const { state } = store;
-const Viewport = createContext({ width: 390, height: 800 });
+const { state, playerProgress } = store;
+const Viewport = createContext({
+  width: 390,
+  height: 800,
+  locateSong: { current: null } as { current: (() => Promise<void>) | null },
+});
 const categories = [
   {
     id: "device",
@@ -155,10 +156,42 @@ function SongListHeader() {
   );
 }
 function SongList() {
-  useObserved(state, navigation);
-  const { width, height } = useContext(Viewport),
+  useObservedFields(() => [
+    state.loading,
+    state.startupError,
+    state.configLoaded,
+    state.configError,
+    state.deviceError,
+    state.deviceConnecting,
+    state.playerStatusState,
+    state.config.server_host,
+    state.config.server_host_status,
+    store.currentDevice.value,
+    state.selectedPlaylistId,
+    state.playlists,
+    store.visibleSongs.value,
+    state.songsLoading,
+    state.songsError,
+    state.songsLoadingMore,
+    state.songsMoreError,
+    state.songsHasMore,
+    state.songsTotal,
+    state.songSearch,
+    state.playlistProgress,
+    state.player.playlist_id,
+    state.player.is_playing,
+    state.player.current_song?.id,
+    state.playerBusy,
+    state.playerSyncing,
+    navigation.selectOpen,
+  ]);
+  const { width, height, locateSong } = useContext(Viewport),
     rowHeight = width < 600 ? 64 : 56;
-  const { start, onScroll, locate: scrollToSong } = useSongListScroll({
+  const {
+    start,
+    onScroll,
+    locate: scrollToSong,
+  } = useSongListScroll({
     rowHeight,
     playlistId: state.selectedPlaylistId,
     search: state.songSearch,
@@ -189,8 +222,10 @@ function SongList() {
       state.config.server_host_status === "loopback");
   const onThisPlaylist =
     String(state.player.playlist_id ?? "") === state.selectedPlaylistId;
+  const playbackReady = !!device && state.configLoaded && !noServer;
   const canResume =
-    !!device &&
+    !!state.selectedPlaylistId &&
+    playbackReady &&
     !!state.playlistProgress?.song_id &&
     !(onThisPlaylist && state.player.is_playing);
   async function remove(song: Song, fromLibrary: boolean, playlistId: string) {
@@ -206,6 +241,12 @@ function SongList() {
     if (answer.confirmed && playlistId === state.selectedPlaylistId)
       await store.removeSongFromPlaylist(song, { fromLibrary });
   }
+  useEffect(() => {
+    locateSong.current = locate;
+    return () => {
+      locateSong.current = null;
+    };
+  });
   async function locate() {
     const index = await store.ensureSongLoaded(
       state.player.current_song?.id || 0,
@@ -227,7 +268,7 @@ function SongList() {
               icon="speaker_group"
               iconSize={16}
               title="选择设备"
-              disabled={state.loading}
+              disabled={state.deviceConnecting}
               onClick={() => {
                 navigation.devicePickerOpen = true;
               }}
@@ -249,15 +290,19 @@ function SongList() {
                 >
                   {state.deviceConnecting
                     ? "连接中"
-                    : state.playerStatusState === "error"
-                      ? "状态暂不可用"
-                      : state.playerStatusState !== "ready"
-                        ? "同步中"
-                        : state.player.is_playing
-                          ? "播放中"
-                          : state.player.current_song
-                            ? "已暂停"
-                            : "待机"}
+                    : state.playerBusy
+                      ? "正在发送指令…"
+                      : state.playerSyncing
+                        ? "正在同步状态…"
+                        : state.playerStatusState === "error"
+                          ? "状态暂不可用"
+                          : state.playerStatusState !== "ready"
+                            ? "同步中"
+                            : state.player.is_playing
+                              ? "播放中"
+                              : state.player.current_song
+                                ? "已暂停"
+                                : "待机"}
                 </text>
               )}
             </view>
@@ -291,6 +336,18 @@ function SongList() {
             />
           </view>
         )}
+        {!!state.configError && (
+          <SlButton
+            label="配置加载失败，点击重试"
+            onClick={() => run(store.retryInitialConfig)}
+          />
+        )}
+        {!!state.deviceError && (
+          <SlButton
+            label="设备加载失败，点击重试"
+            onClick={() => run(store.retryInitialDevices)}
+          />
+        )}
         <view className="library-filters player-toolbar">
           <SlSelect
             modelValue={state.selectedPlaylistId}
@@ -310,23 +367,19 @@ function SongList() {
             }
           />
         </view>
-        {state.selectedPlaylistId && (
+        {canResume && (
           <view className="playlist-context">
             <text className="playlist-context-text" text-maxline="1">
-              {onThisPlaylist && state.player.is_playing
-                ? "正在播放此歌单"
-                : store.lastPlayedSong.value
-                  ? `上次播放：${store.lastPlayedSong.value.title}`
-                  : state.playlistProgress?.song_id
-                    ? "上次播放的位置已保存"
-                    : "暂无续播记录"}
+              {store.lastPlayedSong.value
+                ? `上次播放：${store.lastPlayedSong.value.title}`
+                : "上次播放的位置已保存"}
             </text>
             <SlButton
               className="resume-playlist"
               variant="text"
               icon="play_arrow"
               label="继续播放"
-              disabled={!canResume || state.playerBusy}
+              disabled={state.playerBusy}
               onClick={() => run(store.resumePlaylist)}
             />
           </view>
@@ -346,17 +399,9 @@ function SongList() {
                 variant="icon"
                 icon="close"
                 title="清除搜索"
-                onClick={() => {
-                  state.songSearch = "";
-                }}
+                onClick={() => store.searchSongs("")}
               />
             )}
-            <SlButton
-              variant="icon"
-              icon="my_location"
-              title="定位当前播放"
-              onClick={() => run(locate)}
-            />
           </view>
         )}
         {state.startupError ? (
@@ -364,7 +409,7 @@ function SongList() {
             <SlButton
               label="重新加载"
               icon="refresh"
-              onClick={() => run(store.initialize)}
+              onClick={() => run(store.retryInitialPlaylists)}
             />
           </SlEmptyState>
         ) : state.loading || state.songsLoading ? (
@@ -428,8 +473,11 @@ function SongList() {
                 >
                   <view
                     className="song-play-target"
-                    bindtap={() =>
-                      run(() => store.playSong(song, first + index))
+                    aria-disabled={!playbackReady || state.playerBusy}
+                    bindtap={
+                      playbackReady && !state.playerBusy
+                        ? () => run(() => store.playSong(song, first + index))
+                        : undefined
                     }
                   >
                     <text className="song-index">{first + index + 1}</text>
@@ -461,6 +509,7 @@ function SongList() {
                       icon="play_arrow"
                       title="播放歌曲"
                       className="song-action-play"
+                      disabled={!playbackReady || state.playerBusy}
                       onClick={() =>
                         run(() => store.playSong(song, first + index))
                       }
@@ -558,7 +607,19 @@ function SongList() {
   );
 }
 function Settings() {
-  useObserved(state, navigation);
+  useObservedFields(() => [
+    navigation.settingsCategory,
+    navigation.page,
+    navigation.hostVisible,
+    state.accounts.length,
+    store.managedDevices.value.length,
+    state.config.conversation_monitor_enabled,
+    state.config.scheduled_tasks_enabled,
+    state.schedules.length,
+    state.configSaving,
+    state.configSaveState,
+    state.configSaveError,
+  ]);
   const { width, height } = useContext(Viewport),
     wide = width >= 600;
   const current =
@@ -700,13 +761,14 @@ function Settings() {
                 >
                   <scroll-view className="settings-scroll" scroll-y>
                     <view className="settings-header">
-                      <text className="settings-eyebrow">MIoT 设置</text>
                       <text className="settings-title">{item.title}</text>
                       <text className="settings-description">
                         {subtitle(item.id, item.description)}
                       </text>
                     </view>
-                    <item.component />
+                    <item.component
+                      active={current === item.id && navigation.hostVisible}
+                    />
                   </scroll-view>
                 </view>
               ))}
@@ -716,72 +778,58 @@ function Settings() {
     </view>
   );
 }
-function Player() {
-  const theme = useContext(ThemeContext);
-  const { width, height } = useContext(Viewport),
-    narrow = width < 600;
+function PlayerProgress({ full }: { full: boolean }) {
+  useObservedFields(() => [
+    playerProgress.position,
+    state.player.duration,
+    state.player.current_song?.id,
+    state.player.current_song?.is_live,
+    state.playerBusy,
+  ]);
   const song = state.player.current_song;
-  const details = useMemo(
-    () => createPlayerDetails(get, () => state.player.current_song?.id),
-    [],
+  return (
+    <view className="player-progress">
+      <SlSlider
+        key={song?.id || 0}
+        modelValue={playerProgress.position || 0}
+        max={state.player.duration || 1}
+        disabled={!state.player.duration || song?.is_live || state.playerBusy}
+        onCommit={(value: number) => run(() => store.seekPlayer(value))}
+      />
+      {full && (
+        <view className="row time-row">
+          <text>{duration(playerProgress.position)}</text>
+          <text>
+            {song?.is_live ? "直播" : duration(state.player.duration)}
+          </text>
+        </view>
+      )}
+    </view>
   );
-  useObserved(details, navigation, state.player);
-  const lyrics = details.lyrics.value,
-    lyricError = details.lyricError.value,
-    lyricLoading = details.lyricLoading.value;
-  const favorite = details.isFavorite.value,
-    setFavorite = details.setFavorite;
-  const swipeStart = useRef<number | null>(null);
+}
+
+function PlayerLyrics({
+  details,
+}: {
+  details: ReturnType<typeof createPlayerDetails>;
+}) {
+  useObserved(
+    playerProgress,
+    details.lyrics,
+    details.lyricLoading,
+    details.lyricError,
+  );
+  const lyrics = details.lyrics.value;
+  const lyricError = details.lyricError.value;
+  const lyricLoading = details.lyricLoading.value;
   const [followLyrics, setFollowLyrics] = useState(true);
-  const [sleepPanelHeight, setSleepPanelHeight] = useState(320);
-  const [favoriteBusy, setFavoriteBusy] = useState(false);
-  const [sleep, setSleep] = useState<SleepTimerStatus>({
-    active: false,
-    mode: "time",
-    remaining: 0,
-    total: 0,
-  });
-  const identity = `${state.currentAccountId}:${state.currentDeviceId}:${song?.id || ""}`;
-  const identityRef = useRef(identity);
-  identityRef.current = identity;
-  useEffect(() => {
-    void details.loadSongDetails();
-    return details.dispose;
-  }, [song?.id]);
-  useEffect(() => {
-    let alive = true;
-    const refresh = () => {
-      if (state.currentDeviceId)
-        void get<SleepTimerStatus>(
-          "/voice-commands/sleep-timer" + query(target()),
-        )
-          .then((result) => {
-            if (alive) setSleep(result);
-          })
-          .catch(() => {});
-    };
-    refresh();
-    const timer = setInterval(refresh, 5000);
-    return () => {
-      alive = false;
-      clearInterval(timer);
-    };
-  }, [state.currentAccountId, state.currentDeviceId]);
   const activeLine = lyrics.reduce(
     (active, line, index) =>
-      line.time <= Number(state.player.position || 0) ? index : active,
+      line.time <= Number(playerProgress.position || 0) ? index : active,
     -1,
   );
   useEffect(() => {
-    setFollowLyrics(true);
-  }, [identity, navigation.page]);
-  useEffect(() => {
-    if (
-      followLyrics &&
-      navigation.page === "player" &&
-      activeLine >= 0 &&
-      (width >= 600 || navigation.playerPage === 1)
-    ) {
+    if (followLyrics && activeLine >= 0) {
       try {
         lynx
           .createSelectorQuery()
@@ -795,7 +843,149 @@ function Player() {
           .exec();
       } catch {}
     }
-  }, [activeLine, navigation.playerPage, navigation.page, followLyrics]);
+  }, [activeLine, followLyrics]);
+  return (
+    <view className="lyrics-panel">
+      <scroll-view
+        className="lyrics-scroll"
+        scroll-y
+        bindtouchmove={() => setFollowLyrics(false)}
+        bindwheel={() => setFollowLyrics(false)}
+        bindmousedown={() => setFollowLyrics(false)}
+      >
+        {lyricLoading && <text className="lyrics-empty">正在获取歌词…</text>}
+        {lyricError && (
+          <SlButton
+            label="歌词获取失败，点击重试"
+            onClick={() => run(details.retryLyrics)}
+          />
+        )}{" "}
+        {!lyricLoading && !lyricError && !lyrics.length && (
+          <view className="lyrics-empty">
+            <text>暂无歌词，请确认已安装并启用歌词搜索插件</text>
+            <SlButton
+              label="重新获取歌词"
+              onClick={() => run(details.retryLyrics)}
+            />
+          </view>
+        )}
+        {lyrics.map((line, index) => (
+          <view
+            id={"lyric-" + index}
+            key={index}
+            className={classes([
+              "lyric-line",
+              activeLine === index && "active",
+            ])}
+            bindtap={
+              Number.isFinite(line.time)
+                ? () =>
+                    run(async () => {
+                      await store.seekPlayer(line.time);
+                      setFollowLyrics(true);
+                    })
+                : undefined
+            }
+          >
+            <text>{line.text}</text>
+          </view>
+        ))}
+      </scroll-view>
+      {!followLyrics && lyrics.length > 0 && (
+        <SlButton
+          className="lyrics-follow"
+          label="回到当前歌词"
+          onClick={() => setFollowLyrics(true)}
+        />
+      )}
+    </view>
+  );
+}
+
+function Player({ lyricCache }: { lyricCache: Map<number, LyricLine[]> }) {
+  const theme = useContext(ThemeContext);
+  const { width, height, locateSong } = useContext(Viewport),
+    narrow = width < 600;
+  const song = state.player.current_song;
+  const details = useMemo(
+    () =>
+      createPlayerDetails(get, () => state.player.current_song?.id, lyricCache),
+    [lyricCache],
+  );
+  useObservedFields(() => [
+    state.player,
+    details.isFavorite.value,
+    navigation.page,
+    navigation.playerPage,
+    navigation.playerPopup,
+    navigation.playerPopupAnchor,
+    navigation.hostVisible,
+    state.currentAccountId,
+    state.currentDeviceId,
+    state.playerBusy,
+    state.playerSyncing,
+    state.playlists,
+  ]);
+  const favorite = details.isFavorite.value,
+    setFavorite = details.setFavorite;
+  const swipeStart = useRef<number | null>(null);
+  const [sleepPanelHeight, setSleepPanelHeight] = useState(320);
+  const [favoriteBusy, setFavoriteBusy] = useState(false);
+  const [sleepError, setSleepError] = useState(false);
+  const [sleepRetry, setSleepRetry] = useState(0);
+  const [sleep, setSleep] = useState<SleepTimerStatus>({
+    active: false,
+    mode: "time",
+    remaining: 0,
+    total: 0,
+  });
+  const identity = `${state.currentAccountId}:${state.currentDeviceId}:${song?.id || ""}`;
+  const identityRef = useRef(identity);
+  identityRef.current = identity;
+  useEffect(() => {
+    void details.loadSongDetails(false);
+    if (showLyrics) void details.ensureLyrics();
+    return details.dispose;
+  }, [song?.id]);
+  const sleepOpen =
+    navigation.playerPopup === "sleep" && navigation.hostVisible;
+  const showLyrics =
+    navigation.hostVisible &&
+    navigation.page === "player" &&
+    (!narrow || navigation.playerPage === 1);
+  useEffect(() => {
+    if (showLyrics) void details.ensureLyrics();
+  }, [details, showLyrics]);
+  const sleepRevision = useRef(0);
+  useEffect(() => {
+    if (!sleepOpen || !state.currentDeviceId) return;
+    const account = state.currentAccountId;
+    const device = state.currentDeviceId;
+    let stopped = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    setSleep({ active: false, mode: "time", remaining: 0, total: 0 });
+    setSleepError(false);
+    const refresh = async () => {
+      const revision = sleepRevision.current;
+      try {
+        const result = await get<SleepTimerStatus>(
+          "/voice-commands/sleep-timer" +
+            query({ account_id: account, device_id: device }),
+        );
+        if (stopped || revision !== sleepRevision.current) return;
+        setSleep(result);
+        setSleepError(false);
+        if (result.active) timer = setTimeout(refresh, 5000);
+      } catch {
+        if (!stopped && revision === sleepRevision.current) setSleepError(true);
+      }
+    };
+    void refresh();
+    return () => {
+      stopped = true;
+      clearTimeout(timer);
+    };
+  }, [sleepOpen, sleepRetry, state.currentAccountId, state.currentDeviceId]);
   async function toggleFavorite() {
     if (!song || favoriteBusy) return;
     const previous = favorite;
@@ -822,6 +1012,7 @@ function Player() {
       value,
     });
     if (identity === identityRef.current) {
+      sleepRevision.current++;
       setSleep(result);
       navigation.playerPopup = "";
     }
@@ -893,25 +1084,6 @@ function Player() {
       disabled={!song || favoriteBusy}
       onClick={() => run(toggleFavorite)}
     />
-  );
-  const progress = (
-    <view className="player-progress">
-      <SlSlider
-        key={song?.id || 0}
-        modelValue={state.player.position || 0}
-        max={state.player.duration || 1}
-        disabled={!state.player.duration || song?.is_live || state.playerBusy}
-        onCommit={(value: number) => run(() => store.seekPlayer(value))}
-      />
-      {full && (
-        <view className="row time-row">
-          <text>{duration(state.player.position)}</text>
-          <text>
-            {song?.is_live ? "直播" : duration(state.player.duration)}
-          </text>
-        </view>
-      )}
-    </view>
   );
   const controls = (
     <view className="player-controls row">
@@ -1004,7 +1176,13 @@ function Player() {
               title="收起播放器"
               onClick={consumeBack}
             />
-            <text className="fullscreen-topbar-title">正在播放</text>
+            <text className="fullscreen-topbar-title">
+              {state.playerBusy
+                ? "正在发送指令…"
+                : state.playerSyncing
+                  ? "正在同步状态…"
+                  : "正在播放"}
+            </text>
             <view className="fullscreen-topbar-spacer" />
           </view>
           <view className="fullscreen-inner">
@@ -1056,68 +1234,7 @@ function Player() {
                 </view>
               )}
               {(!narrow || navigation.playerPage === 1) && (
-                <view
-                  className="lyrics-panel"
-                  style={{
-                    display:
-                      !narrow || navigation.playerPage === 1 ? "flex" : "none",
-                  }}
-                >
-                  <scroll-view
-                    className="lyrics-scroll"
-                    scroll-y
-                    bindtouchmove={() => setFollowLyrics(false)}
-                    bindwheel={() => setFollowLyrics(false)}
-                    bindmousedown={() => setFollowLyrics(false)}
-                  >
-                    {lyricLoading && (
-                      <text className="lyrics-empty">正在获取歌词…</text>
-                    )}
-                    {lyricError && (
-                      <SlButton
-                        label="歌词获取失败，点击重试"
-                        onClick={() => run(details.retryLyrics)}
-                      />
-                    )}{" "}
-                    {!lyricLoading && !lyricError && !lyrics.length && (
-                      <view className="lyrics-empty">
-                        <text>暂无歌词，请确认已安装并启用歌词搜索插件</text>
-                        <SlButton
-                          label="重新获取歌词"
-                          onClick={() => run(details.retryLyrics)}
-                        />
-                      </view>
-                    )}
-                    {lyrics.map((line, index) => (
-                      <view
-                        id={"lyric-" + index}
-                        key={index}
-                        className={classes([
-                          "lyric-line",
-                          activeLine === index && "active",
-                        ])}
-                        bindtap={
-                          Number.isFinite(line.time)
-                            ? () =>
-                                run(async () => {
-                                  await store.seekPlayer(line.time);
-                                  setFollowLyrics(true);
-                                })
-                            : undefined
-                        }
-                      >
-                        <text>{line.text}</text>
-                      </view>
-                    ))}
-                  </scroll-view>
-                  {!followLyrics && lyrics.length > 0 && (
-                    <SlButton
-                      className="lyrics-follow"
-                      label="回到当前歌词"
-                      onClick={() => setFollowLyrics(true)}
-                    />
-                  )}
-                </view>
+                <PlayerLyrics key={identity} details={details} />
               )}
             </view>
             <view className="player-mobile-tabs row">
@@ -1156,7 +1273,7 @@ function Player() {
                 </text>
                 <text className="muted">{song?.artist || "未知艺术家"}</text>
               </view>
-              {progress}
+              <PlayerProgress full={full} />
               {controls}
               <view className="player-tools row">
                 <view className="desktop-tool">
@@ -1221,7 +1338,9 @@ function Player() {
         </>
       ) : (
         <>
-          <view className="mini-progress">{progress}</view>
+          <view className="mini-progress">
+            <PlayerProgress full={full} />
+          </view>
           <view className="mini-inner">
             <view className="mini-stage" bindtap={() => openPage("player")}>
               <Cover song={song} className="mini-cover" />
@@ -1234,12 +1353,17 @@ function Player() {
                 </text>
               </view>
             </view>
+            {song && (
+              <SlButton
+                variant="icon"
+                className="mini-locate"
+                icon="my_location"
+                title="定位当前播放"
+                onClick={() => run(async () => locateSong.current?.())}
+              />
+            )}
             <view className="mini-favorite">{favoriteButton}</view>
             {controls}
-            <text className="mini-time">
-              {duration(state.player.position)} /{" "}
-              {duration(state.player.duration)}
-            </text>
             <view className="player-tools row">
               <SlButton
                 variant="icon"
@@ -1379,6 +1503,12 @@ function Player() {
                     if (next > 0) setSleepPanelHeight(next);
                   }}
                 >
+                  {sleepError && (
+                    <SlButton
+                      label="定时状态读取失败，点击重试"
+                      onClick={() => setSleepRetry((attempt) => attempt + 1)}
+                    />
+                  )}
                   <SleepTimerPanel
                     status={sleep}
                     isLive={!!song?.is_live}
@@ -1392,6 +1522,7 @@ function Player() {
                           target(),
                         );
                         if (identity !== identityRef.current) return;
+                        sleepRevision.current++;
                         setSleep({
                           active: false,
                           mode: "time",
@@ -1469,7 +1600,11 @@ function Player() {
 }
 
 function DevicePicker({ height }: { height: number }) {
-  useObserved(state);
+  useObservedFields(() => [
+    state.devices,
+    state.currentAccountId,
+    state.currentDeviceId,
+  ]);
   const [search, setSearch] = useState("");
   const count = state.devices.reduce(
     (sum, account) => sum + account.devices.length,
@@ -1580,10 +1715,23 @@ function DevicePicker({ height }: { height: number }) {
 }
 
 export function App() {
-  useObserved(state, navigation);
+  useObservedFields(() => [
+    navigation.page,
+    navigation.devicePickerOpen,
+    store.currentDevice.value,
+    !!state.player.current_song,
+    state.confirm,
+    state.snackbar,
+  ]);
   const [theme, setTheme] = useState(getTheme());
   const [width, setWidth] = useState(390);
   const [height, setHeight] = useState(800);
+  const locateSong = useRef<(() => Promise<void>) | null>(null);
+  const viewport = useMemo(
+    () => ({ width, height, locateSong }),
+    [width, height],
+  );
+  const lyricCache = useMemo(() => new Map<number, LyricLine[]>(), []);
   const measure = () => {
     try {
       lynx
@@ -1608,18 +1756,26 @@ export function App() {
     const back = installHostBack();
     void store.initialize();
     const stopWatch = watch(
-      () => [state.currentAccountId, state.currentDeviceId],
-      connectChatSocket,
+      () =>
+        [
+          navigation.hostVisible &&
+            navigation.page === "settings" &&
+            navigation.settingsCategory === "ai",
+          state.currentAccountId,
+          state.currentDeviceId,
+        ] as const,
+      ([active]) => setChatVisible(active),
+      { immediate: true },
     );
     const lifecycle = onPush((event, raw) => {
       if (event === "lifecycle") {
         const phase = JSON.parse(String(raw)).state;
         if (phase === "resumed") {
           store.setAppVisible(true);
-          setChatVisible(true);
+          navigation.hostVisible = true;
         } else if (phase === "paused") {
           store.setAppVisible(false);
-          setChatVisible(false);
+          navigation.hostVisible = false;
         }
       }
     });
@@ -1651,7 +1807,7 @@ export function App() {
           width < 360 && "compact",
         ])}
       >
-        <Viewport.Provider value={{ width, height }}>
+        <Viewport.Provider value={viewport}>
           <view className="main-shell">
             <SongList />
           </view>
@@ -1664,7 +1820,9 @@ export function App() {
             (state.player.current_song || width >= 600)) ||
             navigation.page === "player") && (
             <view className="player-slot">
-              {navigation.page !== "settings" && <Player />}
+              {navigation.page !== "settings" && (
+                <Player lyricCache={lyricCache} />
+              )}
             </view>
           )}
         </Viewport.Provider>

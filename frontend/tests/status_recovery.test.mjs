@@ -7,6 +7,7 @@ import vm from "node:vm";
 
 const require = createRequire(import.meta.url);
 const ts = require("typescript");
+const vue = require("@vue/reactivity");
 const source = readFileSync(
   new URL("../src/store.ts", import.meta.url),
   "utf8",
@@ -23,6 +24,7 @@ function statusStore({
   post = async () => ({}),
   webSocket = true,
   paged = false,
+  reactivity,
 } = {}) {
   const document = new EventTarget();
   document.hidden = false;
@@ -86,14 +88,16 @@ function statusStore({
       if (name === "./socket")
         return { PluginSocket: webSocket ? Socket : undefined };
       if (name === "@vue/reactivity")
-        return {
-          reactive: (value) => value,
-          computed: (fn) => ({
-            get value() {
-              return fn();
-            },
-          }),
-        };
+        return (
+          reactivity ?? {
+            reactive: (value) => value,
+            computed: (fn) => ({
+              get value() {
+                return fn();
+              },
+            }),
+          }
+        );
       if (name === "./api")
         return {
           get: (path) => {
@@ -154,16 +158,16 @@ test("returning to a visible page replaces a silently dead OPEN socket and fetch
   assert.deepEqual(s.sockets[0].closeArgs, [1000, "client"]);
   assert.equal(s.store.state.statusConnected, false);
   assert.equal(s.requests.length, 1);
-  assert.equal(s.store.state.player.position, 42);
+  assert.equal(s.store.playerProgress.position, 42);
   s.sockets[0].status(2);
   s.sockets[0].onopen();
   s.sockets[0].onerror();
   s.sockets[0].onclose();
-  assert.equal(s.store.state.player.position, 42);
+  assert.equal(s.store.playerProgress.position, 42);
   assert.equal(s.store.state.statusConnected, false);
   s.sockets[1].open();
   s.sockets[1].status(43);
-  assert.equal(s.store.state.player.position, 43);
+  assert.equal(s.store.playerProgress.position, 43);
   assert.equal(s.timers.size, 0);
 });
 
@@ -179,7 +183,7 @@ test("hidden notifications do not restart the connection; coming online while vi
   s.online();
   await settle();
   assert.equal(s.sockets.length, 2);
-  assert.equal(s.store.state.player.position, 42);
+  assert.equal(s.store.playerProgress.position, 42);
 });
 
 test("foreground recovery cancels pending backoff and ignores old error/close events", async () => {
@@ -225,13 +229,13 @@ test("a suspended HTTP request cannot block recovery or overwrite the new snapsh
   assert.equal(s.requests.length, 2);
   pending[0]({ position: 1 });
   await oldRequest;
-  assert.equal(s.store.state.player.position, undefined);
+  assert.equal(s.store.playerProgress.position, undefined);
   // The old finally must not release the new request's busy guard.
   await s.store.refreshPlayerStatus();
   assert.equal(s.requests.length, 2);
   pending[1]({ position: 42 });
   await settle();
-  assert.equal(s.store.state.player.position, 42);
+  assert.equal(s.store.playerProgress.position, 42);
 });
 
 test("disposing removes listeners and timers and rejects late HTTP/socket updates", async () => {
@@ -254,7 +258,7 @@ test("disposing removes listeners and timers and rejects late HTTP/socket update
   assert.equal(s.sockets.length, 1);
   assert.equal(s.requests.length, 1);
   assert.equal(s.timers.size, 0);
-  assert.equal(s.store.state.player.position, undefined);
+  assert.equal(s.store.playerProgress.position, undefined);
 });
 
 test("recovery without an account or device makes no new connection or status request", () => {
@@ -274,7 +278,7 @@ test("environments without WebSocket retain HTTP polling and refresh on resume",
   s.visible();
   await settle();
   assert.equal(s.requests.length, 2);
-  assert.equal(s.store.state.player.position, 42);
+  assert.equal(s.store.playerProgress.position, 42);
   assert.equal(
     [...s.timers.values()].filter((timer) => timer.interval).length,
     1,
@@ -538,4 +542,168 @@ test("removing the playing playlist updates pagination only when that playlist i
   assert.equal(s.state.songs.length, 1);
   assert.equal(s.state.songsNextOffset, 99);
   assert.equal(s.state.songsTotal, 149);
+});
+
+test("position-only frames retain the same playback metadata snapshot", () => {
+  const s = statusStore({ reactivity: vue });
+  s.store.connectStatusStream();
+  const socket = s.sockets[0];
+  socket.open();
+  const frame = (position, song = 12) =>
+    socket.onmessage({
+      data: JSON.stringify({
+        type: "status",
+        data: {
+          position,
+          playlist_id: 4,
+          current_song: { id: song, title: "Fixture" },
+        },
+      }),
+    });
+  frame(1);
+  const metadata = s.store.state.player;
+  let metadataReads = 0;
+  let progressReads = 0;
+  const observeMetadata = vue.effect(() => {
+    metadataReads++;
+    return s.store.state.player.current_song?.id;
+  });
+  const observeProgress = vue.effect(() => {
+    progressReads++;
+    return s.store.playerProgress.position;
+  });
+  frame(2);
+  assert.equal(metadataReads, 1);
+  assert.equal(progressReads, 2);
+  assert.equal(s.store.playerProgress.position, 2);
+  assert.equal(s.store.state.player, metadata);
+  frame(3, 13);
+  assert.notEqual(s.store.state.player, metadata);
+  assert.equal(s.store.state.player.current_song.id, 13);
+  assert.equal(metadataReads, 2);
+  vue.stop(observeMetadata);
+  vue.stop(observeProgress);
+});
+
+test("startup exposes playlists before other resources and a manual clear wins", async () => {
+  let config, devices, status;
+  const s = statusStore({
+    get: (path) => {
+      if (path === "/config")
+        return new Promise((resolve) => {
+          config = resolve;
+        });
+      if (path === "/mina/devices")
+        return new Promise((resolve) => {
+          devices = resolve;
+        });
+      if (path === "/player/status")
+        return new Promise((resolve) => {
+          status = resolve;
+        });
+      if (path === "/playlists")
+        return [
+          { id: 3, name: "First" },
+          { id: 4, name: "Current" },
+        ];
+      if (path.endsWith("/songs")) return [{ id: 12 }];
+      return [];
+    },
+  });
+  const startup = s.store.initialize();
+  await settle();
+  assert.equal(s.store.state.loading, false);
+  assert.equal(s.store.state.configLoaded, false);
+  assert.equal(s.store.state.deviceConnecting, true);
+  assert.ok([...s.timers.values()].some((timer) => timer.delay === 3000));
+  await s.store.selectPlaylist("3");
+  assert.equal(s.store.state.songs[0].id, 12);
+  await s.store.selectPlaylist("");
+  devices([{ account_id: "account", devices: [{ device_id: "device" }] }]);
+  config({});
+  await startup;
+  status({ playlist_id: 4, current_song: { id: 13 } });
+  await settle();
+  assert.equal(s.store.state.selectedPlaylistId, "");
+  assert.equal(s.store.state.songs.length, 0);
+});
+
+test("startup prefers the first matching device snapshot and bounds the wait for it", async () => {
+  for (const snapshotArrives of [true, false]) {
+    let status;
+    const s = statusStore({
+      get: (path) => {
+        if (path === "/mina/devices")
+          return [
+            { account_id: "account", devices: [{ device_id: "device" }] },
+          ];
+        if (path === "/player/status")
+          return new Promise((resolve) => {
+            status = resolve;
+          });
+        if (path === "/playlists")
+          return [
+            { id: 3, name: "First" },
+            { id: 4, name: "Current" },
+          ];
+        return [];
+      },
+    });
+    await s.store.initialize();
+    assert.equal(s.store.state.selectedPlaylistId, "");
+    if (!snapshotArrives) {
+      [...s.timers.values()].find((timer) => timer.delay === 3000).fn();
+      assert.equal(s.store.state.selectedPlaylistId, "3");
+    }
+    status({ playlist_id: 4, current_song: { id: 13 } });
+    await settle();
+    assert.equal(s.store.state.selectedPlaylistId, snapshotArrives ? "4" : "3");
+  }
+});
+
+test("accepted commands unlock before the state snapshot and stale replies are ignored", async () => {
+  const statuses = [];
+  const submissions = [];
+  const s = statusStore({
+    post: (path) =>
+      new Promise((resolve) => {
+        submissions.push({ path, resolve });
+      }),
+    get: () => new Promise((resolve) => statuses.push(resolve)),
+  });
+  const first = s.store.playerCommand("/player/toggle");
+  assert.equal(s.store.state.playerBusy, true);
+  submissions[0].resolve();
+  assert.equal(await first, true);
+  assert.equal(s.store.state.playerBusy, false);
+  assert.equal(s.store.state.playerSyncing, true);
+  const second = s.store.playerCommand("/player/next");
+  submissions[1].resolve();
+  assert.equal(await second, true);
+  statuses[1]({ position: 9 });
+  await settle();
+  statuses[0]({ position: 90 });
+  await settle();
+  assert.equal(s.store.playerProgress.position, 9);
+  assert.equal(s.store.state.playerSyncing, false);
+});
+
+test("a command requests socket status first and falls back when no frame arrives", async () => {
+  const s = statusStore();
+  s.store.connectStatusStream();
+  const socket = s.sockets[0];
+  socket.open();
+  const sent = [];
+  socket.send = (message) => sent.push(JSON.parse(message));
+  await s.store.playerCommand("/player/next");
+  assert.deepEqual(sent, [{ type: "refresh" }]);
+  assert.equal(s.requests.length, 0);
+  socket.status(5);
+  assert.equal(s.store.state.playerSyncing, false);
+  assert.equal(s.timers.size, 0);
+  await s.store.playerCommand("/player/next");
+  [...s.timers.values()].find((timer) => timer.delay === 1500).fn();
+  await settle();
+  assert.equal(s.requests.length, 1);
+  assert.equal(s.store.playerProgress.position, 42);
 });

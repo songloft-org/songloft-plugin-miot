@@ -4,6 +4,7 @@ import { resolveConfirm, state } from "./store";
 export type AppPage = "main" | "settings" | "player";
 export const navigation = reactive({
   page: "main" as AppPage,
+  hostVisible: true,
   pageHistory: [] as AppPage[],
   playerPage: 0,
   settingsCategory: "",

@@ -215,6 +215,7 @@ const pageState = {
       }
     }
     async function refresh() {
+      if (input.active === false) return;
       const version = ++refreshVersion;
       if (!target.value.account_id || !target.value.device_id) {
         history.value = [];
@@ -274,6 +275,7 @@ const pageState = {
       await refreshSafely();
     }
     async function refreshSafely() {
+      if (input.active === false) return;
       const identity = targetQuery.value;
       const pending = refresh();
       const version = refreshVersion;
@@ -350,6 +352,13 @@ const pageState = {
         connectionTest.value = null;
       },
       { flush: 'sync' },
+    );
+    watch(
+      () => input.active,
+      (active) => {
+        if (active === false) refreshVersion++;
+        else void refreshSafely();
+      },
     );
     onMounted(() => {
       void action(async () => {

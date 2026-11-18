@@ -4,6 +4,7 @@ import type { LyricLine } from "./lyrics";
 export function createPlayerDetails(
   get: <T>(path: string) => Promise<T>,
   currentSongId: () => number | undefined,
+  cache = new Map<number, LyricLine[]>(),
 ) {
   const lyrics = ref<LyricLine[]>([]),
     lyricLoading = ref(false),
@@ -16,6 +17,11 @@ export function createPlayerDetails(
     isFavorite.value = value;
   }
   async function loadLyrics(id: number, current: number, refresh = false) {
+    const cached = cache.get(id);
+    if (!refresh && cached) {
+      lyrics.value = cached;
+      return;
+    }
     lyricLoading.value = true;
     lyricError.value = "";
     try {
@@ -32,6 +38,7 @@ export function createPlayerDetails(
             "",
         ),
       );
+      cache.set(id, lyrics.value);
     } catch {
       if (current === generation && currentSongId() === id)
         lyricError.value = "歌词获取失败，请重试";
@@ -39,7 +46,7 @@ export function createPlayerDetails(
       if (current === generation) lyricLoading.value = false;
     }
   }
-  async function loadSongDetails() {
+  async function loadSongDetails(includeLyrics = true) {
     const current = ++generation,
       id = currentSongId();
     const favoriteRequest = ++favoriteRevision;
@@ -49,7 +56,7 @@ export function createPlayerDetails(
     isFavorite.value = false;
     if (!id) return;
     await Promise.allSettled([
-      loadLyrics(id, current),
+      ...(includeLyrics ? [loadLyrics(id, current)] : []),
       get<{ is_favorited: boolean }>(
         `/player/favorite/status?song_id=${id}`,
       ).then((result) => {
@@ -61,6 +68,11 @@ export function createPlayerDetails(
           isFavorite.value = result.is_favorited;
       }),
     ]);
+  }
+  function ensureLyrics() {
+    const id = currentSongId();
+    if (id && !lyricLoading.value && !lyricError.value && !lyrics.value.length)
+      return loadLyrics(id, generation);
   }
   async function retryLyrics() {
     const id = currentSongId();
@@ -75,6 +87,7 @@ export function createPlayerDetails(
     lyricError,
     isFavorite,
     loadSongDetails,
+    ensureLyrics,
     retryLyrics,
     dispose,
     setFavorite,

@@ -189,13 +189,23 @@ export function NativeView({
   );
 }
 export function useObserved(...values: any[]) {
+  useObserveRender(() => values, values);
+}
+
+export function useObservedFields(read: () => unknown[]) {
+  const latest = useRef(read);
+  latest.current = read;
+  useObserveRender(() => latest.current(), []);
+}
+
+function useObserveRender(read: () => unknown[], dependencies: unknown[]) {
   const [, update] = useState(0);
   useEffect(() => {
     let alive = true,
       initial = true,
       queued = false;
     const tracker = effect(() => {
-      values.forEach((value) => traverse(value));
+      read().forEach((value) => traverse(value));
       if (!initial && !queued) {
         queued = true;
         void Promise.resolve().then(() => {
@@ -209,7 +219,7 @@ export function useObserved(...values: any[]) {
       alive = false;
       stop(tracker);
     };
-  }, values);
+  }, dependencies);
 }
 
 export function displayText(value: unknown) {

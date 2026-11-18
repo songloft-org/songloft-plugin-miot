@@ -10,6 +10,12 @@ Include rule, scope, full owner/repo#number, failure/fix commit SHAs, actual val
 
 ## Entries
 
+### PERF-001: Keep playback position outside page state subscriptions
+
+- Scope: the MIoT ReactLynx library, settings and player. A source-level experiment at `0b58eaf6f700425c5fa6f3753c487c1b3f070ccc` found that deep subscriptions walked roughly 3,000 objects for one frame with 1,000 songs loaded.
+- Done right: keep playback position in dedicated reactive state read by the progress bar and visible lyrics. Use the actual reactivity implementation to verify that position-only frames leave metadata subscriptions idle. Cover controls in the browser and native host. See the [verification record](docs/en/lynx-migration.md).
+- Seen 1× (2026-11-18). The isolated browser samples had similar scroll p95. Physical-device frame rates remain unmeasured.
+
 ### MIOT-035: Resolve the saved mode in the player when entering a playlist
 
 - Scope covers web play and continue, voice control, and scheduled playback. Baseline `87a1a6753bed0e5c9e305871d59e4f3f65470221`.

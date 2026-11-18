@@ -473,14 +473,9 @@ text {
   padding: 18px 24px 42px;
 }
 .settings-header {
-  min-height: 94px;
   flex-shrink: 0;
   padding: 8px 8px 14px;
   margin-bottom: 18px;
-}
-.settings-eyebrow {
-  font-size: 14px;
-  line-height: 20px;
 }
 .settings-title {
   font-size: 28px;
@@ -1198,9 +1193,6 @@ text {
   height: 38px;
   min-height: 38px;
 }
-.mini-time {
-  display: none;
-}
 .mini-more {
   display: none;
 }
@@ -1567,7 +1559,6 @@ text {
   border-radius: 12px;
 }
 .narrow .mini-favorite,
-.narrow .mini-time,
 .narrow .mini-inner .player-tools {
   display: none;
 }
@@ -2709,4 +2700,11 @@ text {
 
 .narrow .appbar-actions .sl-button-icon {
   width: 44px;
+}
+
+.narrow .mini-inner .mini-locate {
+  width: 36px;
+  height: 40px;
+  min-height: 40px;
+  flex-shrink: 0;
 }

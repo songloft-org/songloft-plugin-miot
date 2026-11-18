@@ -27,7 +27,7 @@ const height = Number(process.env.MIOT_TEST_HEIGHT || 740);
   const status = {
     current_song: songs[0],
     playlist_id: 1,
-    is_playing: true,
+    is_playing: false,
     position: 20,
     duration: 240,
     volume: 40,
@@ -61,6 +61,11 @@ const height = Number(process.env.MIOT_TEST_HEIGHT || 740);
     if (url.pathname.startsWith(prefix)) {
       const path = url.pathname.slice(prefix.length),
         method = request.method();
+      if (path === "/config" && method === "GET")
+        data = {
+          server_host: "http://192.168.1.10:58091",
+          server_host_status: "ok",
+        };
       if (path === "/auth/status")
         data = [{ id: "fixture", account: "fixture" }];
       if (path === "/mina/devices")
@@ -221,13 +226,13 @@ const height = Number(process.env.MIOT_TEST_HEIGHT || 740);
             .getBoundingClientRect(),
           resume = root
             .querySelector(".resume-playlist")
-            .getBoundingClientRect();
+            ?.getBoundingClientRect();
         return {
           width: select.width,
           x: select.x,
           y: select.y,
-          resumeY: resume.y,
-          resumeHeight: resume.height,
+          resumeY: resume?.y ?? null,
+          resumeHeight: resume?.height ?? null,
         };
       });
     await page.waitForFunction(
@@ -286,19 +291,31 @@ const height = Number(process.env.MIOT_TEST_HEIGHT || 740);
     await click('.page-toolbar .sl-button[accessibility-label="返回"]');
     if (width < 600)
       await click('.page-toolbar .sl-button[accessibility-label="返回"]');
-    await page.waitForFunction(() =>
-      document
-        .getElementById("plugin-view")
-        .shadowRoot.querySelector(".playlist-context"),
+    await page.waitForFunction(
+      () =>
+        document
+          .getElementById("plugin-view")
+          .shadowRoot.querySelector(".playlist-context") === null,
     );
     const afterToolbar = await toolbarGeometry();
-    for (const key of Object.keys(beforeToolbar))
+    assert.equal(
+      afterToolbar.resumeHeight,
+      null,
+      "hide the resume row without progress",
+    );
+    for (const key of ["width", "x", "y"])
       assert.ok(
         Math.abs(afterToolbar[key] - beforeToolbar[key]) <= 1,
         "toolbar changed: " + JSON.stringify({ beforeToolbar, afterToolbar }),
       );
     status.is_playing = true;
     progressAvailable = true;
+    await page.waitForFunction(
+      () =>
+        !document
+          .getElementById("plugin-view")
+          .shadowRoot.querySelector(".settings-shell"),
+    );
     await click(".library-filters .sl-select");
     await page.waitForFunction(() =>
       document

@@ -27,7 +27,7 @@ export default function AISettings(props: any) {
           </text>
         </NativeView>
         <AIModelSettings></AIModelSettings>
-        <ChatSettings></ChatSettings>
+        <ChatSettings active={props.active} />
       </NativeView>
     </>
   );

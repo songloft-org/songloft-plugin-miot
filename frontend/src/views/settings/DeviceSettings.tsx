@@ -98,8 +98,24 @@ const pageState = {
           ? "__custom__"
           : "";
       customHost.value = state.config.server_host;
-      void Promise.all([loadAccountsAndDevices(), loadGroups()]);
+      if (input.active !== false) void refreshDevices();
     });
+    function refreshDevices() {
+      return Promise.all([loadAccountsAndDevices(), loadGroups()]).catch(
+        (error) => notify(messageOf(error), "error"),
+      );
+    }
+    watch(
+      () => input.active,
+      (active) => {
+        if (active === false) {
+          stopQrPolling();
+          return;
+        }
+        void refreshDevices();
+        scheduleQrPoll(0);
+      },
+    );
     watch(groupEditor, (open) => {
       navigation.editorOpen = open;
     });
@@ -271,6 +287,22 @@ const pageState = {
         notify(messageOf(error), "error");
       }
     }
+    let qrWaiting = false;
+    let qrPollingGeneration: number | undefined;
+    function scheduleQrPoll(delay: number) {
+      if (
+        input.active === false ||
+        !qrWaiting ||
+        qrTimer ||
+        qrPollingGeneration === qrGen
+      )
+        return;
+      const gen = qrGen;
+      qrTimer = setTimeout(() => {
+        qrTimer = null;
+        void pollQrOnce(gen);
+      }, delay);
+    }
     function stopQrPolling() {
       if (qrTimer) {
         clearTimeout(qrTimer);
@@ -278,8 +310,8 @@ const pageState = {
       }
     }
     async function pollQrOnce(gen: number) {
-      if (gen !== qrGen) return; // 已被新的 startQr 或卸载取代
-      let keepGoing = true;
+      if (gen !== qrGen || input.active === false) return;
+      qrPollingGeneration = gen;
       try {
         const poll = await postEnvelope<Record<string, unknown>>(
           "/auth/qrcode/poll",
@@ -288,32 +320,32 @@ const pageState = {
         if (gen !== qrGen) return; // await 期间被取代，丢弃这一轮结果
         if (poll.state === "success") {
           stopQrPolling();
-          keepGoing = false;
+          qrWaiting = false;
           if (poll.account_id) loginAccountId.value = String(poll.account_id);
           qrStatus.value = "登录成功";
           notify("扫码登录成功", "success");
-          await loadAccountsAndDevices();
+          if (input.active !== false) await loadAccountsAndDevices();
         } else if (
           poll.state === "expired" ||
           poll.state === "timeout" ||
           poll.state === "error"
         ) {
           stopQrPolling();
-          keepGoing = false;
+          qrWaiting = false;
           qrStatus.value = String(poll.message || "二维码已过期");
         }
         // state === 'waiting'：继续轮询
       } catch {
         /* 瞬时错误：继续轮询，不打断 */
-      }
-      if (keepGoing && gen === qrGen) {
-        // 串行：上一轮完全结束后再排下一轮，避免并发长轮询把小米 lp 端点打成“已过期”
-        qrTimer = setTimeout(() => pollQrOnce(gen), 3000);
+      } finally {
+        if (qrPollingGeneration === gen) qrPollingGeneration = undefined;
+        if (gen === qrGen) scheduleQrPoll(3000);
       }
     }
     async function startQr() {
       stopQrPolling();
       const gen = ++qrGen;
+      qrWaiting = false;
       qrBusy.value = true;
       qrStatus.value = "正在获取二维码";
       qrUrl.value = "";
@@ -328,7 +360,8 @@ const pageState = {
         qrStatus.value = "请使用米家 App 扫码";
         qrBusy.value = false;
         // 首次延迟 1.5s，之后 pollQrOnce 串行自驱动（上一轮结束 → 3s 后下一轮）
-        qrTimer = setTimeout(() => pollQrOnce(gen), 1500);
+        qrWaiting = true;
+        scheduleQrPoll(1500);
       } catch (error) {
         if (gen === qrGen) {
           qrBusy.value = false;
@@ -1097,7 +1130,7 @@ export default function DeviceSettings(props: any) {
           ))}
         </NativeView>
       </SectionCard>
-      <DLNAReceiverSettings></DLNAReceiverSettings>
+      <DLNAReceiverSettings active={props.active} />
       <SlDisclosure
         title="高级设备兼容"
         icon="speaker"
