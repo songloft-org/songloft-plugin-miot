@@ -333,6 +333,12 @@ function normalizeForMatch(s: string): string {
     .replace(/[\s　《》【】「」『』〔〕〈〉（）()\[\]{}，,。.、·!！?？~～—\-_:：;；'"'"…]/g, '');
 }
 
+/** 从「Eric周兴哲」一类双语署名提取完整中文名。 */
+function bilingualArtistChineseName(artist: string): string {
+  const match = /^(?:[a-z]+\s*([\u3400-\u9fff]{2,})|([\u3400-\u9fff]{2,})\s*[a-z]+)$/i.exec((artist || '').trim());
+  return match ? normalizeForMatch(match[1] ?? match[2]) : '';
+}
+
 /** 对 query 分词并预算每个 token 的拼音，供跨字段匹配复用（每次搜索算一次） */
 function tokenizeQuery(query: string, threshold?: number): QueryTokens {
   // token 与索引匹配字段用同一归一化，保证「明天你好」能命中装饰标题「明天，你好」。
@@ -1180,11 +1186,22 @@ export class IndexingManager {
     return results;
   }
 
-  /** 自动续播按完整歌手名匹配整个歌曲索引，不依赖歌曲是否已加入歌单。 */
+  /** 自动续播按完整歌手名或对应的双语署名匹配，不依赖歌曲是否已加入歌单。 */
   async loadLibrarySongsByArtist(artistName: string, isCurrent: () => boolean = () => true): Promise<any[]> {
-    const artistKey = normalizeForMatch(artistName);
+    // 通用搜索会剥掉顿号等标点，组队时要保留署名分隔符，避免把「Eric、周兴哲」当成一个人。
+    const separators = /[,，、;；]/g;
+    const creditKey = (artist: string, normalized?: string) => {
+      const credit = (artist || '').replace(separators, '/');
+      return credit === artist && normalized !== undefined ? normalized : normalizeForMatch(credit);
+    };
+    const artistKey = creditKey(artistName);
     if (!artistKey || !isCurrent()) return [];
-    const ids = [...new Set(this.songs.filter((song) => song.artistLower === artistKey).map((song) => song.id))];
+    const bareArtist = bilingualArtistChineseName(artistName);
+    const matches = (artist: string, normalized?: string) => {
+      const key = creditKey(artist, normalized);
+      return key === artistKey || (bareArtist ? key === bareArtist : bilingualArtistChineseName(artist) === artistKey);
+    };
+    const ids = [...new Set(this.songs.filter((song) => matches(song.artist, song.artistLower)).map((song) => song.id))];
     const songs: any[] = new Array(ids.length);
     let next = 0;
     // 限制桥接并发；个别歌曲被删除或读取失败不阻断其余队列。
@@ -1194,7 +1211,7 @@ export class IndexingManager {
           const index = next++;
           try {
             const song = await songloft.songs.getById(ids[index]);
-            if (isCurrent() && song?.url && song.type !== 'radio' && normalizeForMatch(song.artist) === artistKey) {
+            if (isCurrent() && song?.url && song.type !== 'radio' && matches(song.artist)) {
               songs[index] = song;
             }
           } catch (e) {

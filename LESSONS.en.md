@@ -10,6 +10,14 @@ Include rule, scope, full owner/repo#number, failure/fix commit SHAs, actual val
 
 ## Entries
 
+### MIOT-034: Keep sampling around the metadata end when device duration is overstated
+
+- Scope: [songloft-org/songloft-plugin-miot#130 follow-up](https://github.com/songloft-org/songloft-plugin-miot/issues/130#issuecomment-6418357065), baseline `ec8c2e0f58ebc3d5dc9921b284bb02b089a8ce6a`.
+- Evidence: on 2026-10-26, a 262.920s track reported 537.340s. The server received another request for the old stream, and the device position reset from 262.717s to 4.445s. The plugin sent the next song after the 30-second grace expired. An ordered one-song queue separately recorded the reset, another pull of the same URL, and local queue completion.
+- Rule and Done right: stable reported duration, fresh adjacent samples, and rewind timing consistent with the metadata end jointly establish replay. Keep probing the metadata tail when the main verification is deferred. Preserve the verification grace for continued progress or insufficient evidence. When the queue has no next track, propagate an observed replay to device stop and allow newer operations to invalidate the pending stop.
+- Validation: all 22 focused cases pass and 20 fail as expected with isolated baseline sources. Integration cases use actual Mina command construction and shared status caching, checking the URLs of two consecutive natural transitions across three speeds, both playback APIs, and with and without the status page. Commands, source identity and limits are in the [#130 follow-up record](docs/en/issue-130.md#october-26-speaker-follow-up).
+- Seen 1× (2026-10-26). Status: local implementation validated, physical speakers and firmware pending.
+
 ### ROUTE-001: validate chat prefixes and song parsing through the complete routing chain
 
 - Scope: chat triggers, voice requests, and local song candidates; baseline `589a2beeed6b19141d8d2feabaddeb92f17e382a`.

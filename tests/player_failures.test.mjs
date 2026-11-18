@@ -193,6 +193,7 @@ for (const sample of [
   // The October 21 log froze 162ms short of the end, then replayed for 5–6s before detection.
   { date: '20261021', metadata: [224, 243, 221], streams: [224.782, 243.547, 221.022], seek: 0, queryMs: 250, maxDelayMs: 2500 },
   { date: '20261021-seek', metadata: [224, 243, 221], streams: [224.782, 243.547, 221.022], seek: 30, queryMs: 250, maxDelayMs: 2500 },
+  { date: '20261026', metadata: [297.552, 262.920, 223.368], streams: [310.242, 537.340, 223.368], seek: 30, queryMs: 130, maxDelayMs: 6500, replayAtMetadata: true },
 ]) {
   for (const api of ['music', 'url']) {
     for (const withStatusPage of [false, true]) {
@@ -201,12 +202,14 @@ for (const sample of [
           await withClock(async h => {
             const metadata = sample.metadata;
             const streamDurations = sample.streams.map(value => value / speed);
+            const audioDurations = sample.replayAtMetadata ? metadata.map(value => value / speed) : streamDurations;
             const client = new MinaHTTPClient({ user_id: 'test', device_id: 'test', services: {} });
             const service = new MinaService({ getMinaClient: () => client }, {
               getConfig: async () => ({ music_api_model_disabled: api === 'url' ? ['LX05'] : [] }),
             });
             service.getDeviceIdentity = async () => ({ hardware: 'LX05' });
             const pushed = [];
+            const observations = [];
             let streamStartedAt = Date.now();
             let seek = sample.seek;
             const { manager, tts } = player({
@@ -220,9 +223,11 @@ for (const sample of [
             client.doUbusRequest = async (_device, method, _path, message) => {
               if (method === 'player_get_play_status') {
                 const duration = streamDurations[manager.currentIndex] - seek / speed;
+                const audioDuration = audioDurations[manager.currentIndex] - seek / speed;
                 const elapsed = (Date.now() - streamStartedAt) / 1000;
                 // Like the log, freeze just short of the fractional end, then loop before the next shared sample.
-                const position = elapsed >= duration + 1 ? elapsed - duration - 1 : Math.min(elapsed, duration - 0.162);
+                const position = elapsed >= audioDuration + 1 ? elapsed - audioDuration - 1 : Math.min(elapsed, audioDuration - 0.162);
+                observations.push({ elapsed, position, duration });
                 await new Promise(resolve => setTimeout(resolve, sample.queryMs));
                 return { code: 0, data: { info: JSON.stringify({
                   status: 1, volume: 30, play_song_detail: { position: position * 1000, duration: duration * 1000 },
@@ -247,11 +252,12 @@ for (const sample of [
             assert.equal(await manager.playCurrent({ seekSeconds: seek, speed }), true);
             if (withStatusPage) await pollStatus();
             for (let index = 0; index < 2; index++) {
-              const endAt = streamStartedAt + (streamDurations[index] - seek / speed + 1) * 1000;
+              const endAt = streamStartedAt + (audioDurations[index] - seek / speed + 1) * 1000;
               await h.advance(endAt - Date.now() - 1);
               assert.equal(manager.currentIndex, index, 'do not cut the original audio before its end');
               await h.advance(sample.maxDelayMs + 1);
-              assert.equal(manager.currentIndex, index + 1, 'advance after the first fresh replay sample instead of the grace timeout');
+              assert.equal(manager.currentIndex, index + 1,
+                `advance after the first fresh replay sample instead of the grace timeout: ${JSON.stringify(observations.slice(-6))}`);
               assert.equal(pushed.length, index + 2);
               assert.ok(pushed[index + 1].includes(`/songs/${songs[index + 1].id}/play`));
               assert.ok(manager.checkTimer !== null);
@@ -2324,6 +2330,94 @@ test('singlePlay: natural completion clears failure and pauses on the current so
     assert.equal(manager.isSongUnplayable(16), false);
     assert.equal(manager.state, 'paused');
     assert.equal(manager.currentIndex, 0);
+  });
+});
+
+for (const [metadata, reported, tailPosition, replayPosition] of [
+  [297.552, 310.242, 297.3, 3.375],
+  [262.920, 537.340, 262.717, 4.445],
+]) {
+  for (const probe of ['tailProbe', 'verifyTimerDeadline']) {
+    test(`issue 130: ${probe} advances after a replay at ${metadata}s with reported duration ${reported}s`, async () => {
+      await withClock(async h => {
+        let position = tailPosition;
+        const { manager, pushes, tts } = player({
+          mode: 'order', initialSongs: [{ ...songs[0], duration: metadata }, songs[1]],
+          service: {
+            getPlayState: async () => ({ status: 1, position, duration: reported, hasPosition: true, sampledAt: Date.now() }),
+            stopPlay: async () => assert.fail('queue has a next song'),
+          },
+        });
+        await manager[probe]();
+        assert.equal(pushes.length, 0, 'the initial tail sample must not advance');
+        for (const id of h.timers.keys()) clearTimeout(id);
+        await h.advance(4999);
+        assert.equal(pushes.length, 0, 'a reported tail by itself must not advance');
+        position = replayPosition;
+        await h.advance(1);
+        await manager[probe]();
+        await flush();
+        assert.deepEqual(pushes.map(url => new URL(url).pathname), ['/api/v1/songs/17/play']);
+        assert.equal(manager.currentIndex, 1);
+        assert.equal(manager.isSongUnplayable(16), false);
+        assert.deepEqual(tts, []);
+        assert.ok(manager.checkTimer);
+        manager.cleanup();
+      });
+    });
+  }
+}
+
+for (const mode of ['order', 'singlePlay', 'single', 'loop']) {
+  test(`issue 130: reported device replay at the end respects ${mode}`, async () => {
+    await withClock(async h => {
+      let position = 286.8;
+      const commands = [];
+      const { manager, pushes } = player({
+        mode, initialSongs: [{ ...songs[0], duration: 287 }],
+        service: {
+          getPlayState: async () => ({ status: 1, position, duration: 287, hasPosition: true, sampledAt: Date.now() }),
+          stopPlay: async (_account, device, current) => { if (current()) commands.push(device); return true; },
+        },
+      });
+      await manager.tailProbe();
+      assert.deepEqual(commands, []);
+      position = 0;
+      await h.advance(1001);
+      const stops = mode === 'order' || mode === 'singlePlay';
+      assert.deepEqual(commands, stops ? ['speaker'] : []);
+      assert.equal(pushes.length, stops ? 0 : 1);
+      assert.equal(manager.state, mode === 'order' ? 'stopped' : mode === 'singlePlay' ? 'paused' : 'playing');
+      assert.equal(manager.isSongUnplayable(16), false);
+      manager.cleanup();
+    });
+  });
+}
+
+test('issue 130: a new playback invalidates a queued stop after natural completion', async () => {
+  await withClock(async () => {
+    const releaseStop = deferred();
+    const commands = [];
+    const { manager, pushes } = player({
+      mode: 'order', initialSongs: [songs[0]],
+      service: {
+        stopPlay: async (_account, device, current) => {
+          commands.push('waiting');
+          await releaseStop.promise;
+          if (current()) commands.push(device);
+          return current();
+        },
+      },
+    });
+    const completed = manager.onSongFinished(true);
+    assert.deepEqual(commands, ['waiting']);
+    assert.equal(await manager.playCurrent(), true);
+    releaseStop.resolve();
+    await completed;
+    assert.deepEqual(commands, ['waiting']);
+    assert.equal(pushes.length, 1);
+    assert.equal(manager.state, 'playing');
+    manager.cleanup();
   });
 });
 

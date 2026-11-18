@@ -190,3 +190,15 @@ test('artist queue loading stops after cancellation and limits concurrent detail
   assert.deepEqual(await loading, []);
   assert.equal(pending.length, 4, 'cancelled work must not start more bridge requests');
 });
+
+test('standalone continuation joins Eric周興哲 and 周兴哲 without fuzzy matches or artist lists', async () => {
+  const songs = [
+    'Eric周興哲', '周兴哲', '周兴哲翻唱', 'Eric、周兴哲', '周兴哲 / 周杰伦', 'Other周兴哲',
+  ].map((artist, i) => ({ id: i + 1, title: `歌曲${i}`, artist, type: 'local', url: `/songs/${i + 1}` }));
+  const manager = await createIndex(songs, new Map());
+  assert.deepEqual((await manager.loadLibrarySongsByArtist('Eric周兴哲')).map(song => song.id), [1, 2]);
+  assert.deepEqual((await manager.loadLibrarySongsByArtist('周興哲')).map(song => song.id), [1, 2, 6]);
+
+  globalThis.songloft.songs.getById = async id => id === 2 ? { ...songs[1], artist: '周兴哲 / 周杰伦' } : songs[id - 1];
+  assert.deepEqual((await manager.loadLibrarySongsByArtist('Eric周兴哲')).map(song => song.id), [1]);
+});
