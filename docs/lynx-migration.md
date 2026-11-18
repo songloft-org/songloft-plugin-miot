@@ -21,9 +21,9 @@
 
 ### WebView 回退 bundle 缓存（2026-11-18）
 
-MIoT 的构建脚本按 Web bundle 的内容生成 URL，并写入最终 ZIP 中的回退 HTML。同一份 bundle 的地址稳定，内容变化后用新地址。宿主只计算自己发布的桥接脚本与模块版本。支持该 HTML 声明的新版宿主会加载带版本的地址，旧宿主仍按原有固定地址加载。
+工具链 plugin-builder 2.22.0 起在打包时自动按 Web bundle 内容哈希生成回退 HTML 的版本声明，MIoT 不再自带 `scripts/prepare-lynx-static.mjs` 与 `frontend/lynx-fallback.html` 模板；`static/index.html` 由构建生成并忽略，`static/` 只保留入库的 icon 与 Material Icons 许可证副本。同一份 bundle 的地址稳定，内容变化后用新地址。宿主只计算自己发布的桥接脚本与模块版本。支持该 HTML 声明的新版宿主会加载带版本的地址，旧宿主仍按原有固定地址加载。
 
-基线为 MIoT `31bbc328578630e9965cc6d4ed790e441785c7ba` 和 Songloft `b6719811adbf56737ec08f45ec2bcfb636aa209a` 加本轮未提交改动。在 Linux x86_64 上，正式构建 ZIP 的 URL 与包内文件哈希一致。Docker Chrome 在子路径部署中绕过旧 shim 缓存，显示设备和歌单并收到插件 API 的 200 响应。证据见 `/tmp/songloft-miot-assets-IjWJK7/`。Electron 应用本体和原生 Lynx frame 未实测。
+基线为 MIoT `31bbc328578630e9965cc6d4ed790e441785c7ba` 和 Songloft `b6719811adbf56737ec08f45ec2bcfb636aa209a` 加当时未提交改动。在 Linux x86_64 上，正式构建 ZIP 的 URL 与包内文件哈希一致。Docker Chrome 在子路径部署中绕过旧 shim 缓存，显示设备和歌单并收到插件 API 的 200 响应。证据见 `/tmp/songloft-miot-assets-IjWJK7/`。Electron 应用本体和原生 Lynx frame 未实测。
 
 ### 迁移检查
 

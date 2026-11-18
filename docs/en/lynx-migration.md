@@ -21,7 +21,7 @@ Deploy the matching server and Lynx client together; old hosts lack PUT/DELETE/s
 
 ### WebView fallback bundle caching (2026-11-18)
 
-The MIoT build generates the Web bundle URL from its contents and writes it to the fallback HTML in the final ZIP. Identical bytes keep the same URL, and changed bytes get a new URL. The host computes versions for the bridge script and module it publishes. Hosts that support the HTML declaration load the versioned URL, while older hosts still load the original fixed URL.
+Since plugin-builder 2.22.0, the toolchain automatically generates the versioned declaration in the fallback HTML from the Web bundle content hash at packaging time. MIoT no longer ships `scripts/prepare-lynx-static.mjs` or the `frontend/lynx-fallback.html` template; `static/index.html` is generated and ignored at build time, while `static/` keeps only the committed icon and Material Icons license copies. Identical bytes keep the same URL, and changed bytes get a new URL. The host computes versions for the bridge script and module it publishes. Hosts that support the HTML declaration load the versioned URL, while older hosts still load the original fixed URL.
 
 Baselines: MIoT `31bbc328578630e9965cc6d4ed790e441785c7ba` and Songloft `b6719811adbf56737ec08f45ec2bcfb636aa209a` plus the uncommitted changes. On Linux x86_64, the URL in the production ZIP matched the packaged bundle hash. Docker Chrome bypassed the old shim cache under a deployment subpath, rendered the devices and playlists interface, and received a 200 response from the plugin API. Evidence is in `/tmp/songloft-miot-assets-IjWJK7/`. The Electron application and native Lynx frame were not exercised.
 

@@ -5,8 +5,7 @@
   "scripts": {
     "build": "rspeedy build",
     "typecheck": "tsc --noEmit",
-    "test": "node --test tests/*.test.mjs",
-    "postbuild": "node ../scripts/prepare-lynx-static.mjs"
+    "test": "node --test tests/*.test.mjs"
   },
   "dependencies": {
     "@lynx-js/lynx-ui-input": "3.135.4",

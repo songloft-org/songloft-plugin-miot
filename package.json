@@ -16,7 +16,7 @@
     "sync:tts": "node scripts/sync-tts-commands.mjs"
   },
   "devDependencies": {
-    "@songloft/plugin-builder": "2.20.0",
+    "@songloft/plugin-builder": "2.22.0",
     "@songloft/plugin-sdk": "2.18.0",
     "pinyin-pro": "^3.28.1",
     "segmentit": "^2.0.3",

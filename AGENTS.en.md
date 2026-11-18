@@ -7,7 +7,7 @@ This is the development entry point for `songloft-org/songloft-plugin-miot`, cov
 - This is a separate Git repository, located at `plugins/src/songloft-plugin-miot/` in the parent workspace. Commit to this repository's `main`.
 - Maintain plugin business and troubleshooting knowledge here. Shared host capabilities, the Go backend, and cross-repository conventions belong in the [parent AGENTS.md](https://github.com/songloft-org/songloft/blob/main/AGENTS.en.md).
 - `src/player/manager.ts` owns playback state, automatic transitions, and grouped targets; `src/handlers/playlist.ts` merges HTTP/WS status; `src/playback/voice_resume.ts` restores playback after voice interruptions; `src/mina/client.ts` handles cloud device requests, shared samples, and backoff.
-- `frontend/` is a ReactLynx + TypeScript interface built into `static/`. `plugin.json` defines the manifest; the final `dist/miot.jsplugin.zip` includes QuickJS bytecode.
+- `frontend/` is a ReactLynx + TypeScript interface. `plugin.json` defines the manifest; the final `dist/miot.jsplugin.zip` includes QuickJS bytecode. Since toolchain 2.22.0, `static/index.html` with the bundle content version is generated automatically; the icon and Material Icons license copy in `static/` are tracked static files.
 - Keep this file and `AGENTS.md` synchronized in content and structure. Use Conventional Commits, prefer Chinese descriptions, and omit `Co-Authored-By`.
 - Commit messages may use `#124` for local issues; parent issues require the full reference, such as `songloft-org/songloft#495`. Commit the subrepository before updating its pointer in the parent; the server and plugin upgrade independently.
 
@@ -32,7 +32,7 @@ npm run build
 npm run validate
 ```
 
-The Node 22 type-stripping flag is required for tests that import TS directly. Building first generates dictionaries/holiday data, then builds the frontend, packages assets, and compiles QuickJS bytecode. `static/` and `dist/` are ignored build outputs. For frontend changes, also run `npm run typecheck && npm run build && npm test` in `frontend/`. Changes involving host playback APIs, Range, or timers require the related Go regressions and `make check` in the parent.
+The Node 22 type-stripping flag is required for tests that import TS directly. Building first generates dictionaries/holiday data, then builds the frontend, packages assets, and compiles QuickJS bytecode. `static/index.html` and `dist/` are ignored build outputs. For frontend changes, also run `npm run typecheck && npm run build && npm test` in `frontend/`. Changes involving host playback APIs, Range, or timers require the related Go regressions and `make check` in the parent.
 
 ## Lessons from public host APIs
 

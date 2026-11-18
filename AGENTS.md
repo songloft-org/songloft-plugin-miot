@@ -7,7 +7,7 @@
 - 本仓库是独立 Git 仓库，在父仓库工作区位于 `plugins/src/songloft-plugin-miot/`；提交到本仓库的 `main`。
 - 插件业务与排障经验维护在本文件；公共宿主、Go 后端和跨仓库通用约定见 [父仓库 AGENTS.md](https://github.com/songloft-org/songloft/blob/main/AGENTS.md)。
 - `src/player/manager.ts` 管理播放状态、自动切歌与分组目标；`src/handlers/playlist.ts` 融合 HTTP/WS 状态；`src/playback/voice_resume.ts` 负责语音打断后的恢复；`src/mina/client.ts` 管理设备云端请求、共享采样与退避。
-- `frontend/` 为 ReactLynx + TypeScript 界面，构建到 `static/`；`plugin.json` 定义插件清单，最终产物为 `dist/miot.jsplugin.zip`，包含 QuickJS 字节码。
+- `frontend/` 为 ReactLynx + TypeScript 界面；`plugin.json` 定义插件清单，最终产物为 `dist/miot.jsplugin.zip`，包含 QuickJS 字节码。工具链 2.22.0 起自动生成带 bundle 内容版本的 `static/index.html`，`static/` 中的 icon 与 Material Icons 许可证副本为入库静态文件。
 - 本文件与 `AGENTS.en.md` 内容、结构同步。提交使用 Conventional Commits，描述尽量用中文，不添加 `Co-Authored-By`。
 - 提交信息引用本仓库 Issue 可以写 `#124`；引用父仓库 Issue 必须写完整路径，例如 `songloft-org/songloft#495`。子仓库先提交，父仓库再同步子模块指针；服务端和插件分别升级。
 
@@ -32,7 +32,7 @@ npm run build
 npm run validate
 ```
 
-Node 22 的类型擦除参数用于直接导入 TS 的测试。构建会先生成词典/节假日数据，再构建前端、打包并编译 QuickJS 字节码；`static/`、`dist/` 为忽略的构建产物。前端变更另在 `frontend/` 执行 `npm run typecheck && npm run build && npm test`。涉及宿主播放接口、Range 或定时器时，在父仓库执行相应 Go 回归测试和 `make check`。
+Node 22 的类型擦除参数用于直接导入 TS 的测试。构建会先生成词典/节假日数据，再构建前端、打包并编译 QuickJS 字节码；`static/index.html`、`dist/` 为忽略的构建产物，`static/` 中其余文件入库。前端变更另在 `frontend/` 执行 `npm run typecheck && npm run build && npm test`。涉及宿主播放接口、Range 或定时器时，在父仓库执行相应 Go 回归测试和 `make check`。
 
 ## 公共宿主 API 使用经验
 
