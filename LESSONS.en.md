@@ -10,6 +10,14 @@ Include rule, scope, full owner/repo#number, failure/fix commit SHAs, actual val
 
 ## Entries
 
+### MIOT-036: Refreshing the status cache must preserve playback progress
+
+- Scope: playback status shared by HTTP and WebSocket. Baseline `bb8e4c1675f8c575e6c6d2e812fa8c84080e90e8`.
+- Evidence: a speaker repeatedly reporting stream position zero for the same song produced status frames at 60 → 1 → 66 → 1 seconds as the cache refreshed. Cache expiry during pause also exposed a zero in the local snapshot while the player still held a saved pause position.
+- Rule and done right: read the current local position when a sample lacks usable song progress. Report the saved anchor while paused. Retain seek offsets, speed conversion, and legitimate zero positions at start and stop. Three regression assertions failed before the change, and all 673 targeted playback checks passed afterward. Physical speaker sampling was Not run.
+- Seen 1× (2026-11-18). Evidence is in `/tmp/miot-lynx-style.kpKrP3/progress-{before,after}.log`.
+- Same-day dev retest: expiry could also switch from a positive device position to the local clock. The new case returned 25 seconds while a sample was pending, where the expected position was 10 seconds. Keep using the same playback revision for one more sampling interval, and drop it immediately on seek, track changes, and other revision changes. The mini-player renders a read-only percentage fill independently of the fullscreen seek control. The existing dev watcher performed the update, and the running server's bundle and package fingerprints were checked. Evidence is in `/tmp/miot-dev-integration.3FvMBm/`.
+
 ### PERF-001: Keep playback position outside page state subscriptions
 
 - Scope: the MIoT ReactLynx library, settings and player. A source-level experiment at `0b58eaf6f700425c5fa6f3753c487c1b3f070ccc` found that deep subscriptions walked roughly 3,000 objects for one frame with 1,000 songs loaded.

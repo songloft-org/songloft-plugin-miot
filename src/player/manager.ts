@@ -976,7 +976,7 @@ export class PlaylistManager {
       playlist_id: this.playlistId,
       current_index: this.currentIndex,
       current_song: currentSong,
-      position: this.getPosition(),
+      position: this.getInteractionPosition(),
       duration: duration,
       is_playing: this.state === 'playing',
       playlist_name: isAllSongsPlaylist(this.playlistId) ? ALL_SONGS_PLAYLIST_NAME : this.tempPlaylistName || undefined,

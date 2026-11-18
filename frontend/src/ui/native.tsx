@@ -8,34 +8,35 @@ import {
 } from "@lynx-js/lynx-ui-slider";
 import { classes, DisabledContext } from "../page-state";
 import { parseAIHeaders } from "../../../src/utils/ai_headers";
-import { iconAscent, iconPaths, iconViewBox } from "./icons";
+import { iconAscent, iconPaths, iconViewBox, lynxIcons } from "./icons";
 import { navigation } from "../runtime";
 import { Overlay } from "./Overlay";
 import { measurePopover } from "./position";
 import { VerticalVolume } from "./VerticalVolume";
-import { ThemeContext, CompactSettingsContext } from "./theme";
+import { ThemeContext, CompactSettingsContext, themeColors } from "./theme";
 
 type Props = Record<string, any>;
 let selectSequence = 0;
 let buttonSequence = 0;
 export function SlIcon({ name, size = 20, color: requestedColor }: Props) {
   const theme = useContext(ThemeContext);
+  const colors = themeColors[theme];
   const color =
     requestedColor && requestedColor !== "primary" && requestedColor !== "muted"
       ? requestedColor
       : requestedColor === "muted"
-        ? theme === "dark"
-          ? "#C4C6D0"
-          : "#44474E"
-        : theme === "dark"
-          ? "#0091FF"
-          : "#0088FF";
+        ? colors.muted
+        : colors.accent;
+  const lynxIcon = lynxIcons[name];
+  const svg = lynxIcon
+    ? `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">${lynxIcon(color)}</svg>`
+    : `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${iconViewBox}"><path fill="${color}" transform="translate(0 ${iconAscent}) scale(1 -1)" d="${iconPaths[name] || iconPaths.info}"/></svg>`;
   return (
     <svg
       className="sl-icon"
       event-through
       style={{ width: `${size}px`, height: `${size}px` }}
-      content={`<svg xmlns="http://www.w3.org/2000/svg" viewBox="${iconViewBox}"><path fill="${color}" transform="translate(0 ${iconAscent}) scale(1 -1)" d="${iconPaths[name] || iconPaths.info}"/></svg>`}
+      content={svg}
     />
   );
 }
@@ -81,11 +82,7 @@ export function SlButton({
           size={props.iconSize || (kind === "icon" ? 22 : 18)}
           color={
             props.iconColor ||
-            (kind === "filled"
-              ? theme === "dark"
-                ? "#FFFFFF"
-                : "#ffffff"
-              : undefined)
+            (kind === "filled" ? themeColors[theme].onAccent : undefined)
           }
         />
       )}{" "}
@@ -491,22 +488,28 @@ export function SlSelect({
                     }}
                   />
                 )}
-                {filtered.slice(0, limit).map((option: any) => (
-                  <view
-                    key={option.value}
-                    flatten={false}
-                    className={classes([
-                      "select-option",
-                      String(option.value) === String(modelValue) && "selected",
-                    ])}
-                    catchtap={() => {
-                      onUpdateModelValue?.(String(option.value));
-                      close();
-                    }}
-                  >
-                    <text>{option.label}</text>
-                  </view>
-                ))}
+                {filtered.slice(0, limit).map((option: any) => {
+                  const isSelected = String(option.value) === String(modelValue);
+                  return (
+                    <view
+                      key={option.value}
+                      flatten={false}
+                      className={classes([
+                        "select-option",
+                        isSelected && "selected",
+                      ])}
+                      catchtap={() => {
+                        onUpdateModelValue?.(String(option.value));
+                        close();
+                      }}
+                    >
+                      <text className="select-option-label" text-maxline="1">
+                        {option.label}
+                      </text>
+                      {isSelected && <SlIcon name="check" size={18} />}
+                    </view>
+                  );
+                })}
                 {filtered.length > limit && (
                   <SlButton
                     label="显示更多"
@@ -634,12 +637,14 @@ export function SettingRow({
           {slots?.leading || <SlIcon name={icon} color="muted" />}
         </view>
       )}
-      <view className="setting-row-copy">
-        <text className="setting-row-title">{title}</text>
-        {subtitle && <text className="setting-row-subtitle">{subtitle}</text>}
-        {slots?.detail}
+      <view className="setting-row-content">
+        <view className="setting-row-copy">
+          <text className="setting-row-title">{title}</text>
+          {subtitle && <text className="setting-row-subtitle">{subtitle}</text>}
+          {slots?.detail}
+        </view>
+        <view className="setting-row-control">{children}</view>
       </view>
-      <view className="setting-row-control">{children}</view>
     </view>
   );
 }

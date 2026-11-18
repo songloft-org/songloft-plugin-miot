@@ -235,11 +235,13 @@ export async function resolvePlayerStatus(
   const key = account_id + ":" + device_id;
   const localStatus = manager.getStatus();
   const cached = deviceStatusCache.get(key);
+  const revision = manager.getPlaybackRevision();
+  const age = cached ? Math.max(0, Date.now() - cached.timestamp) : Infinity;
   const fresh =
     cached &&
-    Date.now() - cached.timestamp < DEVICE_STATUS_TTL &&
+    age < DEVICE_STATUS_TTL &&
     (cached.playbackRevision === undefined ||
-      cached.playbackRevision === manager.getPlaybackRevision());
+      cached.playbackRevision === revision);
   if (!fresh && !playerStatusInflight.has(key)) {
     // 仅云端采样在后台等待；每次 HTTP / WS tick 都立即取得当前本地状态。
     const pending = refreshPlayerStatus(
@@ -258,20 +260,36 @@ export async function resolvePlayerStatus(
       ),
     );
   }
-  if (!fresh) return { ...localStatus, volume: cached?.volume ?? -1 };
+  // A refresh can outlast the cache TTL. Keep displaying the same stream's
+  // measured clock for one extra interval so a slow probe cannot switch the
+  // slider to the local estimate and back. A transport change clears this immediately.
+  const awaitingSample =
+    cached?.playbackRevision === revision &&
+    age < 2 * DEVICE_STATUS_TTL &&
+    cached.positionFromDevice &&
+    cached.position > 0 &&
+    cached.state === "playing" &&
+    localStatus.state === "playing";
+  if (!cached || (!fresh && !awaitingSample))
+    return { ...localStatus, volume: cached?.volume ?? -1 };
 
   const duration =
     localStatus.duration > 0 ? localStatus.duration : cached.duration;
   const speed = manager.getPlaybackSpeed();
   const position = cached.positionFromDevice
     ? cached.position * speed + manager.getStreamSeekOffsetSec()
-    : cached.position;
+    : 0;
+  // A zero with no seek offset cannot calibrate the current playback clock.
+  // Use the live local position across cache refreshes, including while paused.
+  // At a real start or stop the local position is already zero.
+  const useDevicePosition = position > 0;
   const elapsed =
-    cached.state === "playing"
-      ? ((Date.now() - cached.timestamp) / 1000) * speed
-      : 0;
+    useDevicePosition && cached.state === "playing" ? (age / 1000) * speed : 0;
+  const reportedPosition = useDevicePosition
+    ? position + elapsed
+    : localStatus.position;
   const extrapolated =
-    duration > 0 ? Math.min(position + elapsed, duration) : position + elapsed;
+    duration > 0 ? Math.min(reportedPosition, duration) : reportedPosition;
   return {
     ...localStatus,
     state: resolveReportState(localStatus.state, cached.state),

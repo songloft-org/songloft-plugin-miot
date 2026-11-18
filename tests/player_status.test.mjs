@@ -348,6 +348,81 @@ test('status stream skips overlapping ticks during a slow query', async () => {
   });
 });
 
+test('zero-valued speaker samples do not bounce the status stream back to the start', async () => {
+  await withStatus(async h => {
+    h.setPosition(60);
+    h.setSample({ status: 1, play_song_detail: { position: 0, duration: 300000 } });
+    await withStream(async ws => {
+      ws.setRequest(h.resolve);
+      const connection = ws.connect();
+      await connection.pending;
+      await flush();
+      for (const position of [61, 66, 67]) {
+        h.advance((position - h.manager.getPosition()) * 1000);
+        h.setPosition(position);
+        await ws.tick();
+      }
+      assert.deepEqual(connection.sent.map(frame => frame.data.position), [60, 61, 66, 67]);
+      assert.equal((await h.resolve()).position, 67);
+      assert.deepEqual(h.resets, []);
+      connection.close();
+    });
+  });
+});
+
+test('missing device position follows the live local clock rather than extrapolating a stale fallback', async () => {
+  await withStatus(async h => {
+    h.setSample({ status: 1 });
+    assert.equal((await h.refresh()).position, 20);
+    h.advance(1000);
+    h.setPosition(20.25);
+    assert.equal((await h.resolve()).position, 20.25);
+  });
+});
+
+test('playback position stays on the same clock while a fresh speaker sample is in flight', async () => {
+  await withStatus(async h => {
+    assert.equal((await h.refresh()).position, 5);
+    const request = deferred();
+    h.setRequest(() => request.promise);
+    h.advance(5000);
+    h.setPosition(25);
+    assert.equal((await h.resolve()).position, 10);
+    h.advance(1000);
+    h.setPosition(26);
+    assert.equal((await h.resolve()).position, 11);
+
+    // A new transport revision invalidates the old position immediately.
+    h.manager.getPlaybackRevision = () => 1;
+    h.setPosition(0);
+    assert.equal((await h.resolve()).position, 0);
+    request.resolve({ data: { info: JSON.stringify({ status: 1, play_song_detail: { position: 0 } }) } });
+  });
+});
+
+test('playback falls back to local progress after a speaker sample has gone stale', async () => {
+  await withStatus(async h => {
+    assert.equal((await h.refresh()).position, 5);
+    h.setRequest(async () => { throw new Error('speaker unavailable'); });
+    h.advance(10000);
+    h.setPosition(30);
+    assert.equal((await h.resolve()).position, 30);
+  });
+});
+
+test('zero is reported for an actual start or stop and a resumed stream keeps its seek offset', async () => {
+  await withStatus(async h => {
+    h.setPosition(0);
+    h.setSample({ status: 1, play_song_detail: { position: 0 } });
+    assert.equal((await h.refresh()).position, 0);
+    h.manager.getStreamSeekOffsetSec = () => 45;
+    h.setPosition(46);
+    assert.equal((await h.resolve()).position, 45);
+    h.manager.getStatus = () => ({ state: 'stopped', position: 0, duration: 300 });
+    assert.equal((await h.resolve()).position, 0);
+  });
+});
+
 test('closing during the initial snapshot cannot install an orphan stream timer', async () => {
   await withStream(async h => {
     const request = deferred();

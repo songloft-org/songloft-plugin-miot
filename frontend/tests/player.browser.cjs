@@ -213,6 +213,47 @@ const height = Number(process.env.MIOT_TEST_HEIGHT || 740);
         .getElementById("plugin-view")
         ?.shadowRoot?.querySelector(".player-mini"),
     );
+    await page.waitForFunction(() => {
+      const root = document.getElementById("plugin-view")?.shadowRoot;
+      const track = root?.querySelector(".mini-progress");
+      const fill = track?.querySelector(".mini-progress-fill");
+      if (!fill || root.querySelector(".player-mini .sl-slider")) return false;
+      const ratio =
+        fill.getBoundingClientRect().width / track.getBoundingClientRect().width;
+      // 20 seconds into the 240-second fixture, rounded like the Lynx client.
+      return Math.abs(ratio - 0.08) < 0.01;
+    });
+    if (width >= 600) {
+      const shortcuts = await page.evaluate(() => {
+        const root = document.getElementById("plugin-view").shadowRoot;
+        return [...root.querySelectorAll(".player-mini .sl-button")]
+          .filter((button) => button.getBoundingClientRect().width > 0)
+          .map((button) => button.getAttribute("accessibility-label"));
+      });
+      for (const label of [
+        "定位当前播放",
+        "收藏",
+        "播放模式",
+        "音量",
+        "延迟停止",
+        "歌词",
+        "停止播放",
+      ]) {
+        assert.ok(
+          shortcuts.includes(label),
+          `desktop mini-player shortcut: ${label}`,
+        );
+      }
+      await click(".player-mini .sl-button", "音量");
+      await assertOverlay(".player-popup-volume");
+      await page.mouse.click(4, 4);
+      await page.waitForFunction(
+        () =>
+          !document
+            .getElementById("plugin-view")
+            .shadowRoot.querySelector(".player-popup-volume"),
+      );
+    }
     await page.waitForFunction(() =>
       document
         .getElementById("plugin-view")
@@ -266,17 +307,17 @@ const height = Number(process.env.MIOT_TEST_HEIGHT || 740);
           .shadowRoot.querySelector(".library-heading .page-title"),
       ),
       null,
-      "host already identifies the plugin; omit the repeated title",
+      "the host title and playlist picker identify the page",
     );
-    assert.equal(
-      await page.evaluate(
-        () =>
-          document
+    assert.deepEqual(
+      await page.evaluate(() =>
+        [
+          ...document
             .getElementById("plugin-view")
-            .shadowRoot.querySelectorAll(".appbar-actions .sl-button").length,
+            .shadowRoot.querySelectorAll(".appbar-actions .sl-button"),
+        ].map((button) => button.getAttribute("accessibility-label")),
       ),
-      1,
-      "only settings remains in the header actions",
+      width < 600 ? ["定位当前播放", "设置"] : ["设置"],
     );
     await click('.library-heading .sl-button[accessibility-label="设置"]');
     await click(".category", "工具箱");

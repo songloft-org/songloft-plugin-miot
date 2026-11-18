@@ -238,7 +238,7 @@ const png = Buffer.from(
         .shadowRoot.querySelector(".player-mini"),
     );
     const afterPlayer = await snapshot();
-    await click(".appbar-actions .sl-button");
+    await click('.appbar-actions [accessibility-label="设置"]');
     await page.waitForFunction(() =>
       document
         .getElementById("plugin-view")
@@ -299,7 +299,7 @@ const png = Buffer.from(
       "navigation must not remove healthy or default covers",
     );
     for (let cycle = 0; cycle < 5; cycle++) {
-      await click(".appbar-actions .sl-button");
+      await click('.appbar-actions [accessibility-label="设置"]');
       await page.waitForFunction(() =>
         document
           .getElementById("plugin-view")

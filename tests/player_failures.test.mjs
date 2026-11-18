@@ -1984,7 +1984,9 @@ test('unknown-duration resume excludes a long pause from progress and retains au
     });
     manager.playStartTimeMs = Date.now() - 60000;
     await manager.pause();
+    assert.equal(manager.getStatus().position, 60, 'status retains the pause anchor');
     await h.advance(3600000);
+    assert.equal(manager.getStatus().position, 60, 'the pause anchor does not advance');
     await manager.resumePlayback();
     assert.equal(manager.getPosition(), 60);
     await h.advance(10000);

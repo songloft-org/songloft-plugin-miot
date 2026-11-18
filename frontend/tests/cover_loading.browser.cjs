@@ -193,7 +193,7 @@ const png = Buffer.from(
     await decoded(".large-cover .cover-image");
     await click(".fullscreen-topbar .sl-button");
     await decoded(".mini-cover .cover-image");
-    await click(".appbar-actions .sl-button");
+    await click('.appbar-actions [accessibility-label="设置"]');
     await page.waitForFunction(() =>
       document
         .getElementById("plugin-view")

@@ -171,7 +171,7 @@ const height = Number(process.env.MIOT_TEST_HEIGHT || 740);
       });
     const result = { initial: await snapshot() };
     let start = Date.now();
-    await click(".mini-locate");
+    await click(".current-song-locate");
     await page.waitForFunction(() => {
       const root = document.getElementById("plugin-view").shadowRoot,
         list = root.querySelector(".songs-scroll"),
@@ -203,7 +203,7 @@ const height = Number(process.env.MIOT_TEST_HEIGHT || 740);
     );
     result.manualTop = await snapshot();
     start = Date.now();
-    await click(".mini-locate");
+    await click(".current-song-locate");
     await page.waitForFunction(
       () => {
         const root = document.getElementById("plugin-view").shadowRoot,
@@ -239,7 +239,7 @@ const height = Number(process.env.MIOT_TEST_HEIGHT || 740);
         );
       });
       const t = Date.now();
-      await click(".mini-locate");
+      await click(".current-song-locate");
       await page.waitForFunction(
         () => {
           const root = document.getElementById("plugin-view").shadowRoot,

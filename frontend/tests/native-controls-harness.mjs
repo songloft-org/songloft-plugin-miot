@@ -6,6 +6,7 @@ export function controls({
   compactSettings = false,
 } = {}) {
   const compactContext = {};
+  const themeContext = {};
   const values = [];
   let cursor = 0;
   const counts = new Map();
@@ -13,6 +14,7 @@ export function controls({
   const hooks = {
     useContext(context) {
       cursor++;
+      if (context === themeContext) return "light";
       return context === compactContext ? compactSettings : false;
     },
     useEffect(callback, deps) {
@@ -74,7 +76,7 @@ export function controls({
       };
     if (name === "../page-state")
       return { classes: (values) => values.filter(Boolean).join(" ") };
-    if (name === "./icons") return { iconPaths: {} };
+    if (name === "./icons") return { iconPaths: {}, lynxIcons: {} };
     if (name === "./Overlay") return { Overlay: "overlay" };
     if (name === "./position") return { measurePopover };
     if (name === "./VerticalVolume")
@@ -83,7 +85,13 @@ export function controls({
       return { getTheme: () => "light" };
     if (name === "../runtime") return { navigation };
     if (name === "./theme")
-      return { ThemeContext: {}, CompactSettingsContext: compactContext };
+      return {
+        ThemeContext: themeContext,
+        CompactSettingsContext: compactContext,
+        themeColors: {
+          light: { accent: "#0088ff", muted: "#666670", onAccent: "#ffffff" },
+        },
+      };
     if (name.endsWith("ai_headers")) return { parseAIHeaders: JSON.parse };
     throw new Error(name);
   }, exports);
