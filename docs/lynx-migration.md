@@ -19,6 +19,14 @@
 
 ## 自动检查
 
+### WebView 回退 bundle 缓存（2026-11-18）
+
+MIoT 的构建脚本按 Web bundle 的内容生成 URL，并写入最终 ZIP 中的回退 HTML。同一份 bundle 的地址稳定，内容变化后用新地址。宿主只计算自己发布的桥接脚本与模块版本。支持该 HTML 声明的新版宿主会加载带版本的地址，旧宿主仍按原有固定地址加载。
+
+基线为 MIoT `31bbc328578630e9965cc6d4ed790e441785c7ba` 和 Songloft `b6719811adbf56737ec08f45ec2bcfb636aa209a` 加本轮未提交改动。在 Linux x86_64 上，正式构建 ZIP 的 URL 与包内文件哈希一致。Docker Chrome 在子路径部署中绕过旧 shim 缓存，显示设备和歌单并收到插件 API 的 200 响应。证据见 `/tmp/songloft-miot-assets-IjWJK7/`。Electron 应用本体和原生 Lynx frame 未实测。
+
+### 迁移检查
+
 环境：Linux、Node 22、pnpm 11、Go、Android SDK；隔离 SQLite 数据库在 `/tmp/miot-lynx-validation/data/test.db`，未使用工作区业务数据。
 
 | 范围 | 命令 | 结果 |

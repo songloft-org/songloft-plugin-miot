@@ -19,6 +19,14 @@ Deploy the matching server and Lynx client together; old hosts lack PUT/DELETE/s
 
 ## Checks
 
+### WebView fallback bundle caching (2026-11-18)
+
+The MIoT build generates the Web bundle URL from its contents and writes it to the fallback HTML in the final ZIP. Identical bytes keep the same URL, and changed bytes get a new URL. The host computes versions for the bridge script and module it publishes. Hosts that support the HTML declaration load the versioned URL, while older hosts still load the original fixed URL.
+
+Baselines: MIoT `31bbc328578630e9965cc6d4ed790e441785c7ba` and Songloft `b6719811adbf56737ec08f45ec2bcfb636aa209a` plus the uncommitted changes. On Linux x86_64, the URL in the production ZIP matched the packaged bundle hash. Docker Chrome bypassed the old shim cache under a deployment subpath, rendered the devices and playlists interface, and received a 200 response from the plugin API. Evidence is in `/tmp/songloft-miot-assets-IjWJK7/`. The Electron application and native Lynx frame were not exercised.
+
+### Migration checks
+
 Environment: Linux, Node 22, pnpm 11, Go and Android SDK. Isolated SQLite database: `/tmp/miot-lynx-validation/data/test.db`; no workspace business data is used.
 
 | Scope | Command | Result |
