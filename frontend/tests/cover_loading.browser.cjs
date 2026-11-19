@@ -163,7 +163,8 @@ const png = Buffer.from(
             target.closest?.(".cover-frame");
           if (!cover) continue;
           const row = cover.closest(".song-row");
-          const id = Number(row?.querySelector(".song-index")?.textContent);
+          const title = row?.querySelector(".song-title")?.textContent;
+          const id = Number(title?.match(/^Cover fixture (\d+)$/)?.[1]);
           if (row && id === 4) continue;
           if (
             row ||
@@ -263,7 +264,10 @@ const png = Buffer.from(
           .getElementById("plugin-view")
           .shadowRoot.querySelectorAll(".song-row"),
       ]
-        .find((r) => r.querySelector(".song-index")?.textContent === "4")
+        .find(
+          (r) =>
+            r.querySelector(".song-title")?.textContent === "Cover fixture 4",
+        )
         ?.querySelector(".cover-placeholder");
       return { hasSvg: !!p?.querySelector("x-svg,svg"), text: p?.textContent };
     });

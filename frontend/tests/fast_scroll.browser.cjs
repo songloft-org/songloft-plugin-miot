@@ -132,12 +132,11 @@ const fixtures = {
           const sample = () => {
             if (window.miotScrollProbe !== result) return;
             const top = list.scrollTop;
-            const index = Number(
-              root
-                .elementFromPoint(x, y)
-                ?.closest(".song-row")
-                ?.querySelector(".song-index")?.textContent,
-            );
+            const title = root
+              .elementFromPoint(x, y)
+              ?.closest(".song-row")
+              ?.querySelector(".song-title")?.textContent;
+            const index = Number(title?.match(/^Song (\d+)$/)?.[1]);
             result.samples.push({ top, index });
             requestAnimationFrame(sample);
           };
