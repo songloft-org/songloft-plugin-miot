@@ -163,7 +163,7 @@ const height = Number(process.env.MIOT_TEST_HEIGHT || 740);
           top: list.scrollTop,
           scrollHeight: list.scrollHeight,
           rowText: row?.textContent,
-          first: root.querySelector(".song-index")?.textContent,
+          first: root.querySelector(".song-row .song-title")?.textContent,
           selectedVisible: !!r && r.bottom > l.top && r.top < l.bottom,
           rowTop: r?.top,
           listTop: l.top,
@@ -235,7 +235,9 @@ const height = Number(process.env.MIOT_TEST_HEIGHT || 740);
         const root = document.getElementById("plugin-view").shadowRoot;
         return (
           root.querySelector(".songs-scroll").scrollTop < 10 &&
-          root.querySelector(".song-row .song-index")?.textContent === "1"
+          root
+            .querySelector(".song-row .song-title")
+            ?.textContent.startsWith("Song 1 ")
         );
       });
       const t = Date.now();

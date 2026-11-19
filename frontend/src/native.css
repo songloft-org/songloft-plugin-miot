@@ -446,7 +446,6 @@ text {
   text-align: right;
 }
 .song-mobile-meta {
-  display: none;
   flex-direction: row;
   align-items: center;
   gap: 8px;
@@ -1606,23 +1605,12 @@ text {
 .narrow .status-panel {
   padding: 10px 12px;
 }
-.narrow .song-list-header,
-.narrow .song-index,
-.narrow .song-artist,
-.narrow .song-album,
-.narrow .song-duration,
-.narrow .song-action-play {
-  display: none;
-}
 .narrow .song-row {
   --song-inset: 8px;
   --song-gap: 8px;
 }
 .narrow .song-row-separator {
   left: calc(var(--song-inset) + var(--song-cover-size) + var(--song-gap));
-}
-.narrow .song-mobile-meta {
-  display: flex;
 }
 .narrow .song-copy {
   flex: 1;
@@ -1637,14 +1625,8 @@ text {
 .narrow .settings-menu {
   padding: 12px 16px 28px;
 }
-.narrow .category .chip {
-  display: none;
-}
 .narrow .settings-scroll {
   padding: 12px 16px 30px;
-}
-.narrow .settings-header {
-  display: none;
 }
 .narrow .sl-disclosure {
   border-radius: 18px;

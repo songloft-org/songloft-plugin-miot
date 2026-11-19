@@ -331,7 +331,8 @@ const SongListRow = memo(function SongListRow({
         aria-disabled={!playbackEnabled}
         bindtap={playbackEnabled ? play : undefined}
       >
-        <text className="song-index">{index + 1}</text>
+        {/* Native Lynx can still paint flattened text hidden by responsive CSS. */}
+        {!narrow && <text className="song-index">{index + 1}</text>}
         {!web || coverVisible ? (
           <Cover song={song} />
         ) : (
@@ -343,7 +344,7 @@ const SongListRow = memo(function SongListRow({
           <text className="song-title" text-maxline="1">
             {song.title || "未知歌曲"}
           </text>
-          {(!web || narrow) && (
+          {narrow && (
             <view className="song-mobile-meta">
               <text className="song-mobile-artist muted" text-maxline="1">
                 {song.artist || "未知艺术家"}
@@ -354,7 +355,7 @@ const SongListRow = memo(function SongListRow({
             </view>
           )}
         </view>
-        {(!web || !narrow) && (
+        {!narrow && (
           <>
             <text className="song-artist muted" text-maxline="1">
               {song.artist || "未知艺术家"}
@@ -369,7 +370,7 @@ const SongListRow = memo(function SongListRow({
         )}
       </view>
       <view className="song-actions">
-        {(!web || !narrow) && (
+        {!narrow && (
           <SlButton
             variant="icon"
             icon="play_arrow"
@@ -724,7 +725,7 @@ function SongList() {
               state.loading ? "正在加载歌单" : "正在加载歌曲"
             }
           >
-            {state.selectedPlaylistId && <SongListHeader />}
+            {!narrow && state.selectedPlaylistId && <SongListHeader />}
             {Array.from({ length: 8 }, (_, index) => (
               <view
                 key={index}
@@ -751,7 +752,7 @@ function SongList() {
           </SlEmptyState>
         ) : state.selectedPlaylistId ? (
           <>
-            <SongListHeader />
+            {!narrow && <SongListHeader />}
             <scroll-view
               id="miot-song-list"
               className={classes([
@@ -987,7 +988,7 @@ function Settings() {
                               {subtitle(item.id, item.description)}
                             </text>
                           </view>
-                          {status(item.id) && (
+                          {wide && status(item.id) && (
                             <SlStatusChip
                               label={status(item.id)}
                               tone={
@@ -1026,12 +1027,14 @@ function Settings() {
                   }}
                 >
                   <scroll-view className="settings-scroll" scroll-y>
-                    <view className="settings-header">
-                      <text className="settings-title">{item.title}</text>
-                      <text className="settings-description">
-                        {subtitle(item.id, item.description)}
-                      </text>
-                    </view>
+                    {wide && (
+                      <view className="settings-header">
+                        <text className="settings-title">{item.title}</text>
+                        <text className="settings-description">
+                          {subtitle(item.id, item.description)}
+                        </text>
+                      </view>
+                    )}
                     <item.component
                       active={current === item.id && navigation.hostVisible}
                     />

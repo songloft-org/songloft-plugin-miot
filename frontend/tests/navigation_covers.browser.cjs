@@ -179,11 +179,28 @@ const png = Buffer.from(
         auth.access_token,
     );
     await page.waitForFunction(
-      () =>
-        document
-          .getElementById("plugin-view")
-          ?.shadowRoot?.querySelectorAll(".song-row").length === 5,
+      (narrow) => {
+        const root = document.getElementById("plugin-view")?.shadowRoot;
+        return (
+          root?.querySelector("#miot-app")?.classList.contains("narrow") ===
+            narrow && root?.querySelectorAll(".song-row").length === 5
+        );
+      },
+      {},
+      width < 600,
     );
+    const columnCounts = await page.evaluate(() => {
+      const root = document.getElementById("plugin-view").shadowRoot;
+      return {
+        header: root.querySelectorAll(".song-list-header").length,
+        index: root.querySelectorAll(".song-row .song-index").length,
+        artist: root.querySelectorAll(".song-row .song-artist").length,
+        album: root.querySelectorAll(".song-row .song-album").length,
+        duration: root.querySelectorAll(".song-row .song-duration").length,
+        play: root.querySelectorAll(".song-row .song-action-play").length,
+        mobileMetadata: root.querySelectorAll(".song-mobile-meta").length,
+      };
+    });
     await decoded(
       ".song-row:nth-child(1) .cover-image, .song-row:nth-child(2) .cover-image, .song-row:nth-child(3) .cover-image",
       3,
@@ -246,6 +263,12 @@ const png = Buffer.from(
         .getElementById("plugin-view")
         .shadowRoot.querySelector(".settings-shell"),
     );
+    const settingsChips = await page.evaluate(
+      () =>
+        document
+          .getElementById("plugin-view")
+          .shadowRoot.querySelectorAll(".settings-menu .category .chip").length,
+    );
     const settings = await snapshot();
     await click(".settings-shell .page-toolbar .sl-button");
     await page.waitForFunction(
@@ -260,11 +283,32 @@ const png = Buffer.from(
     const afterSettings = await snapshot();
     console.log(
       JSON.stringify(
-        { width, before, full, afterPlayer, settings, afterSettings, errors },
+        {
+          width,
+          columnCounts,
+          settingsChips,
+          before,
+          full,
+          afterPlayer,
+          settings,
+          afterSettings,
+          errors,
+        },
         null,
         2,
       ),
     );
+    const desktopRows = width < 600 ? 0 : 5;
+    assert.deepEqual(columnCounts, {
+      header: width < 600 ? 0 : 1,
+      index: desktopRows,
+      artist: desktopRows,
+      album: desktopRows,
+      duration: desktopRows,
+      play: desktopRows,
+      mobileMetadata: width < 600 ? 5 : 0,
+    });
+    assert.equal(settingsChips, width < 600 ? 0 : 3);
     assert.ok(full.sameList && full.sameCovers && full.sameDefault);
     assert.equal(
       full.height,

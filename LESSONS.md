@@ -10,6 +10,14 @@
 
 ## 条目
 
+### UI-005：窄屏布局应省略桌面专用文字节点
+
+- 范围：[songloft-org/songloft-plugin-miot#144](https://github.com/songloft-org/songloft-plugin-miot/issues/144#issuecomment-7001389689) 的 iOS Lynx 歌单和设置列表。报告使用 `v2026.11.19.1`，源码 `b1f685d8fffaf3d91e6bd9b0c948f608cc7a6c95`。
+- 证据：设置截图的错位文字与三个分类的状态标签吻合，歌曲列表也有桌面专用文字残片。旧正式包在 Chromium 的窄屏节点检查中保留了列表表头、五行序号和三个状态标签。
+- 做法：按视口在 JSX 中创建对应布局。窄屏省略桌面表头、列和设置状态标签，保留歌曲行点播及手机副标题。浏览器滚动检查用可见的夹具歌名识别歌曲；回归同时断言窄屏节点缺席、桌面节点存在及往返设置后封面和滚动位置保留。
+- 验证：Linux amd64、Node 22.17.1、Docker Chromium 121。390/1100px 布局、36 组设置、播放器、封面、定位、快滑和实际宿主嵌套 frame 检查通过。证据见 `/tmp/songloft-miot-144.kHVeHW/`。iPhone 原生绘制为 Not run。
+- Seen 1× (2026-11-19)。
+
 ### MIOT-037 自动切歌的兜底也要遵守失败冷却
 
 - 插件基线为 `de07993b83f955ace9bc540c7d87e42c500985e5`，发布版 `v2026.11.18.8` 的播放器源码相同。见 [songloft-org/songloft-plugin-miot#145](https://github.com/songloft-org/songloft-plugin-miot/issues/145)。

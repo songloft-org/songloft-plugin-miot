@@ -10,6 +10,14 @@ Include rule, scope, full owner/repo#number, failure/fix commit SHAs, actual val
 
 ## Entries
 
+### UI-005: Omit desktop-only text nodes from narrow layouts
+
+- Scope is the song list and settings menu in the iOS Lynx client. The reporter used `v2026.11.19.1` from `b1f685d8fffaf3d91e6bd9b0c948f608cc7a6c95`. See [songloft-org/songloft-plugin-miot#144](https://github.com/songloft-org/songloft-plugin-miot/issues/144#issuecomment-7001389689).
+- The displaced text in the settings screenshot matches the status chips for three categories. The song list also shows fragments of desktop-only text. In Chromium, the released bundle retained the header, five row indexes, and three status chips at a narrow width.
+- Render each layout directly in JSX according to the viewport. Omit desktop headers, columns, and settings chips on narrow screens. Keep row playback and mobile song metadata. In scroll checks, identify songs by their visible fixture titles. Assert that narrow-only and wide-only nodes render at the right widths, and that covers and scroll position survive a visit to settings.
+- Verified on Linux amd64 with Node 22.17.1 and Docker Chromium 121. Layouts at 390 and 1100 px, the 36-case settings matrix, player, covers, locating, fast scrolling, and the nested host frame passed. Evidence is in `/tmp/songloft-miot-144.kHVeHW/`. Native iPhone rendering was Not run.
+- Seen 1× (2026-11-19).
+
 ### MIOT-037 Fallback track selection must honor the failure cooldown
 
 - The plugin baseline is `de07993b83f955ace9bc540c7d87e42c500985e5`. Release `v2026.11.18.8` has the same player source. See [songloft-org/songloft-plugin-miot#145](https://github.com/songloft-org/songloft-plugin-miot/issues/145).

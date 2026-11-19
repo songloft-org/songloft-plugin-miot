@@ -483,7 +483,8 @@ const height = Number(process.env.MIOT_TEST_HEIGHT || 740);
       ({ x, y }) => {
         const root = document.getElementById("plugin-view").shadowRoot;
         const row = root.elementFromPoint(x, y)?.closest(".song-row");
-        return Number(row?.querySelector(".song-index")?.textContent) > 20;
+        const title = row?.querySelector(".song-title")?.textContent;
+        return Number(title?.match(/^Song (\d+)/)?.[1]) > 20;
       },
       {},
       listPoint,
