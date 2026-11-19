@@ -10,6 +10,15 @@ Include rule, scope, full owner/repo#number, failure/fix commit SHAs, actual val
 
 ## Entries
 
+### MIOT-037 Fallback track selection must honor the failure cooldown
+
+- The plugin baseline is `de07993b83f955ace9bc540c7d87e42c500985e5`. Release `v2026.11.18.8` has the same player source. See [songloft-org/songloft-plugin-miot#145](https://github.com/songloft-org/songloft-plugin-miot/issues/145).
+- `dfb70cf` retried the initial candidate when every candidate was unavailable. In single-track repeat that candidate was the current track. A single URL resolution failure could lead to repeated commands for the same track and trip the three-failure circuit breaker. See `/tmp/songloft-miot-145.4rY5LF/baseline.log` for the isolated baseline regression.
+- Handle natural completion and landing failure separately. After a landing failure in single-track repeat, find an eligible track in queue order and repeat that track. Honor the five-minute cooldown during automatic selection, dispatch retries, and prefetch. Stop with a prompt when the queue has no eligible candidate. Explicit playback can retry a track, and confirmed playback clears its marker and the consecutive failure record. Count distinct tracks toward the circuit breaker and report failure to the host as `type=skip`.
+- Verification used simulated OH2 all-zero status and a stream probe returning 502. Tests asserted the playback URLs, repetition of the next track, duplicate entries, TTS, timers, and delayed stops. Logs are in `/tmp/songloft-miot-145.4rY5LF/`. The reporter's speaker, firmware, LX Music source, and long-running playback were Not run.
+- Review found that a nine-second track with no progress reporting was treated as finished before the ten-second landing check, so the same URL was sent again. The metadata deadline and the landing check share the stream's HEAD request and skip only on a definitive HTTP failure. Status updates and background polling respect the cooldown after stopping. Outdated polling and reload results cannot override newer controls. When dispatch retries run out, clear the old resume anchor and save a new one if the device later confirms playback. Evidence is in `/tmp/songloft-miot-145-review.MaxTlM/`.
+- Seen 1× (2026-11-18).
+
 ### LIST-002 Check for visible song rows in every sampled frame during fast Web scrolling
 
 - Scope is the MIoT Web song list at baseline `ae2428e78ee7c774db77604887dce8e42cf178a1`.

@@ -2203,13 +2203,13 @@ test('push acknowledgement retains a marker until actual landing is confirmed', 
   await withClock(async h => {
     const { manager } = player();
     manager.markSongUnplayable(16, 'prefetch');
-    manager.landingFailureCount = 2;
+    manager.landingFailedSongs.add(98).add(99);
     assert.equal(await manager.playCurrent(), true);
     assert.equal(manager.isSongUnplayable(16), true);
-    assert.equal(manager.landingFailureCount, 2);
+    assert.equal(manager.landingFailedSongs.size, 2);
     await h.advance(10000);
     assert.equal(manager.isSongUnplayable(16), false);
-    assert.equal(manager.landingFailureCount, 0);
+    assert.equal(manager.landingFailedSongs.size, 0);
     manager.cleanup();
   });
 });
@@ -2218,13 +2218,13 @@ test('verified false push failure clears the marker immediately', async () => {
   await withClock(async h => {
     const { manager } = player({ service: { playURL: async () => false } });
     manager.markSongUnplayable(16, 'landing');
-    manager.landingFailureCount = 2;
+    manager.landingFailedSongs.add(98).add(99);
     const pending = manager.playCurrent();
     await flush();
     await h.advance(1200);
     assert.equal(await pending, true);
     assert.equal(manager.isSongUnplayable(16), false);
-    assert.equal(manager.landingFailureCount, 0);
+    assert.equal(manager.landingFailedSongs.size, 0);
     manager.cleanup();
   });
 });
@@ -2244,16 +2244,16 @@ test('natural song completion clears its marker before loop advances', async () 
 test('metadata completion cannot reset consecutive failures without device confirmation', async () => {
   await withClock(async h => {
     const { manager } = player();
-    manager.landingFailureCount = 2;
+    manager.landingFailedSongs.add(98).add(99);
     manager.markSongUnplayable(16, 'prefetch');
     manager.playCurrent = async () => true;
     manager.startCheckTimer(5);
     await h.advance(5000);
     assert.equal(manager.isSongUnplayable(16), true);
-    assert.equal(manager.landingFailureCount, 2);
+    assert.equal(manager.landingFailedSongs.size, 2);
     await h.advance(30000);
     assert.equal(manager.isSongUnplayable(16), false);
-    assert.equal(manager.landingFailureCount, 2);
+    assert.equal(manager.landingFailedSongs.size, 2);
     manager.cleanup();
   });
 });
@@ -2270,7 +2270,7 @@ for (const change of ['same-song-restart', 'switch-song', 'pause', 'stop']) {
         }
       });
       manager.markSongUnplayable(16, 'landing');
-      manager.landingFailureCount = 2;
+      manager.landingFailedSongs.add(98).add(99);
       const pending = manager.playCurrent();
       await flush();
       await h.advance(1200);
@@ -2283,7 +2283,7 @@ for (const change of ['same-song-restart', 'switch-song', 'pause', 'stop']) {
       await flush();
       assert.equal(await pending, false);
       assert.equal(manager.isSongUnplayable(16), true);
-      assert.equal(manager.landingFailureCount, 2);
+      assert.equal(manager.landingFailedSongs.size, 2);
       if (change === 'pause') assert.equal(manager.state, 'paused');
       if (change === 'stop') assert.equal(manager.state, 'stopped');
       manager.cleanup();
@@ -2291,26 +2291,187 @@ for (const change of ['same-song-restart', 'switch-song', 'pause', 'stop']) {
   });
 }
 
-for (const mode of ['order', 'loop', 'single', 'random']) {
-  test(`${mode}: all next candidates marked still retries the original candidate once`, async () => {
+for (const mode of ['order', 'loop', 'random']) {
+  test(`issue 145: ${mode} stops with a prompt when all remaining candidates are cooling down`, async () => {
     await withClock(async h => {
-      const { manager } = player({ mode });
+      const { manager, pushes, tts } = player({ mode });
       songs.forEach(song => manager.markSongUnplayable(song.id, 'prefetch'));
-      const expected = manager.reserveNextIndex();
-      const randomPlayed = [...manager.randomPlayed];
-      const played = [];
-      manager.landingFailureCount = 1;
-      manager.playCurrent = async () => { played.push(manager.currentIndex); return true; };
       await manager.advanceToNext();
-      assert.deepEqual(played, [expected]);
-      assert.equal(manager.state, 'playing');
-      assert.equal(manager.landingFailureCount, 1);
-      assert.deepEqual([...manager.randomPlayed], randomPlayed);
-      assert.ok(h.logs.some(line => line.includes('retrying index=')));
-      assert.ok(!h.logs.some(line => line.includes('playback complete')));
+      assert.deepEqual(pushes, []);
+      assert.deepEqual(tts, ['没有可播放的歌曲，请稍后再试']);
+      assert.equal(manager.state, 'stopped');
+      assert.equal(manager.currentIndex, 0);
+      manager.cleanup();
+      assert.equal(h.timers.size, 0);
     });
   });
 }
+
+test('issue 145: single loop skips a failed stream and a cooling song, then repeats the healthy song', async () => {
+  await withClock(async h => {
+    const { manager, pushes, tts } = player({
+      mode: 'single', service: { getPlayState: async () => oh2BlindState() },
+    });
+    http.callHostAPI = async (method, path) => {
+      h.hostCalls.push([method, path]);
+      if (method === 'HEAD' && path === '/api/v1/songs/18/play') throw new Error('Host API error 502');
+      return {};
+    };
+    manager.markSongUnplayable(16, 'prefetch');
+    assert.equal(await manager.playAtIndex(2), true);
+    await h.advance(10000);
+    assert.deepEqual(pushes.map(url => new URL(url).pathname), ['/api/v1/songs/18/play', '/api/v1/songs/17/play']);
+    assert.deepEqual(h.hostCalls.filter(([method]) => method === 'POST'), [
+      ['POST', '/api/v1/songs/18/played?source=miot&type=skip'],
+    ]);
+    assert.equal(manager.isSongUnplayable(18), true);
+    assert.equal(manager.currentIndex, 1);
+    assert.equal(manager.playMode, 'single');
+    assert.equal(manager.state, 'playing');
+    assert.ok(manager.checkTimer);
+    await h.advance(10000);
+    assert.equal(manager.playbackConfirmed, true);
+    await manager.onSongFinished();
+    assert.deepEqual(pushes.map(url => new URL(url).pathname), [
+      '/api/v1/songs/18/play', '/api/v1/songs/17/play', '/api/v1/songs/17/play',
+    ]);
+    assert.deepEqual(tts, []);
+    manager.cleanup();
+    assert.equal(h.timers.size, 0);
+  });
+});
+
+test('issue 145: single loop does not retry duplicate entries or other cooling songs', async () => {
+  await withClock(async h => {
+    const { manager, pushes, tts } = player({
+      mode: 'single', initialSongs: [songs[0], { ...songs[0] }, songs[1]],
+      service: {
+        getPlayState: async () => ({ status: 0, position: 0, duration: 300, hasPosition: true, sampledAt: Date.now() }),
+      },
+    });
+    manager.markSongUnplayable(17, 'prefetch');
+    assert.equal(await manager.playAtIndex(0), true);
+    await h.advance(54000);
+    assert.deepEqual(pushes.map(url => new URL(url).pathname), ['/api/v1/songs/16/play']);
+    assert.deepEqual(tts, ['没有可播放的歌曲，请稍后再试']);
+    assert.equal(manager.state, 'stopped');
+    assert.equal(manager.currentIndex, 0);
+    assert.equal(manager.isSongUnplayable(16), true);
+    assert.equal(manager.checkTimer, null);
+    manager.cleanup();
+    assert.equal(h.timers.size, 0);
+  });
+});
+
+test('issue 145: repeated explicit retry of one song never trips the distinct-song circuit breaker', async () => {
+  await withClock(async h => {
+    const { manager, pushes, tts } = player({
+      mode: 'single', initialSongs: [songs[0]],
+      service: {
+        getPlayState: async () => ({ status: 0, position: 0, duration: 300, hasPosition: true, sampledAt: Date.now() }),
+      },
+    });
+    for (let attempt = 0; attempt < 3; attempt++) {
+      assert.equal(await manager.playAtIndex(0), true);
+      await h.advance(18000);
+      assert.equal(manager.state, 'stopped');
+    }
+    assert.equal(pushes.length, 3);
+    assert.deepEqual(tts, Array(3).fill('当前歌曲暂时无法播放，请稍后再试'));
+    assert.equal(h.logs.some(line => line.includes('circuit breaker tripped')), false);
+    manager.cleanup();
+  });
+});
+
+test('issue 145: a new selection supersedes a queued stop and its failure prompt', async () => {
+  await withClock(async h => {
+    const releaseStop = deferred();
+    const stopCommands = [];
+    const { manager, pushes, tts } = player({
+      mode: 'single', initialSongs: [songs[0], songs[1]],
+      service: {
+        getPlayState: async () => ({ status: 0, position: 0, duration: 300, hasPosition: true, sampledAt: Date.now() }),
+        stopPlay: async (_account, device, isCurrent) => {
+          stopCommands.push('queued');
+          await releaseStop.promise;
+          if (isCurrent?.() !== false) stopCommands.push(device);
+          return true;
+        },
+      },
+    });
+    manager.markSongUnplayable(17, 'prefetch');
+    assert.equal(await manager.playAtIndex(0), true);
+    await h.advance(18000);
+    assert.deepEqual(stopCommands, ['queued']);
+    assert.deepEqual(tts, []);
+    assert.equal(await manager.playAtIndex(1), true);
+    releaseStop.resolve();
+    await flush();
+    assert.deepEqual(stopCommands, ['queued']);
+    assert.deepEqual(tts, []);
+    assert.equal(manager.state, 'playing');
+    assert.equal(manager.resumePollTimer, null);
+    assert.deepEqual(pushes.map(url => new URL(url).pathname), ['/api/v1/songs/16/play', '/api/v1/songs/17/play']);
+    manager.cleanup();
+  });
+});
+
+test('issue 145: a new selection supersedes a failure prompt waiting on the device', async () => {
+  await withClock(async h => {
+    const releasePrompt = deferred();
+    const promptCommands = [];
+    const { manager, pushes } = player({
+      mode: 'single', initialSongs: [songs[0], songs[1]],
+      service: {
+        getPlayState: async () => ({ status: 0, position: 0, duration: 300, hasPosition: true, sampledAt: Date.now() }),
+        textToSpeech: async (_account, _device, text, isCurrent) => {
+          promptCommands.push('queued');
+          await releasePrompt.promise;
+          if (isCurrent?.() !== false) promptCommands.push(text);
+        },
+      },
+    });
+    manager.markSongUnplayable(17, 'prefetch');
+    assert.equal(await manager.playAtIndex(0), true);
+    await h.advance(18000);
+    assert.deepEqual(promptCommands, ['queued']);
+    assert.equal(await manager.playAtIndex(1), true);
+    releasePrompt.resolve();
+    await flush();
+    assert.deepEqual(promptCommands, ['queued']);
+    assert.deepEqual(pushes.map(url => new URL(url).pathname), ['/api/v1/songs/16/play', '/api/v1/songs/17/play']);
+    manager.cleanup();
+  });
+});
+
+test('issue 145: auto-next dispatch retry skips a newly marked song and other cooling candidates', async () => {
+  await withClock(async h => {
+    const paths = [];
+    const { manager, tts } = player({
+      initialSongs: [...songs, { ...songs[0], id: 19, url: '/api/v1/songs/19/play' }],
+      service: {
+        getPlayState: async () => ({ status: 0, position: 0, duration: 300, hasPosition: true, sampledAt: Date.now() }),
+        playURL: async (_account, _device, url) => {
+          const path = new URL(url).pathname;
+          paths.push(path);
+          return path !== '/api/v1/songs/17/play';
+        },
+      },
+    });
+    const advanced = manager.onSongFinished();
+    await flush();
+    await h.advance(6000);
+    assert.deepEqual(paths, ['/api/v1/songs/17/play']);
+    for (const id of [17, 18]) manager.markSongUnplayable(id, 'prefetch');
+    await h.advance(3000);
+    assert.deepEqual(paths, ['/api/v1/songs/17/play', '/api/v1/songs/19/play']);
+    await advanced;
+    assert.equal(manager.getCurrentSong().id, 19);
+    assert.equal(manager.state, 'playing');
+    assert.deepEqual(tts, []);
+    manager.cleanup();
+  });
+});
 
 test('order: a true end of playlist still stops without replaying a marked last song', async () => {
   await withClock(async () => {
@@ -2423,15 +2584,16 @@ test('issue 130: a new playback invalidates a queued stop after natural completi
   });
 });
 
-test('bounded fallback keeps three consecutive landing failures and TTS circuit breaker', async () => {
+test('three distinct consecutive landing failures stop playback and trigger the TTS circuit breaker', async () => {
   await withClock(async h => {
     const { manager, pushes, tts } = player({
       service: { getPlayState: async () => ({ status: 0, position: 0, duration: 300, hasPosition: true, sampledAt: Date.now() }) },
     });
-    songs.forEach(song => manager.markSongUnplayable(song.id, 'prefetch'));
     await manager.playCurrent();
     await h.advance(54000);
-    assert.equal(pushes.length, 3);
+    assert.deepEqual(pushes.map(url => new URL(url).pathname), [
+      '/api/v1/songs/16/play', '/api/v1/songs/17/play', '/api/v1/songs/18/play',
+    ]);
     assert.equal(manager.state, 'stopped');
     assert.deepEqual(tts, ['当前多首歌曲无法播放，请稍后再试']);
     assert.equal(manager.unplayableSongs.get(18).reason, 'landing');
@@ -2460,6 +2622,186 @@ test('unavailable landing samples never skip or blacklist the playing song', asy
 });
 
 const oh2BlindState = () => ({ status: 0, position: 0, duration: 0, hasPosition: true, sampledAt: Date.now() });
+
+test('review 145: short blind stream shares the landing probe and skips an HTTP failure', async () => {
+  await withClock(async h => {
+    const { manager, pushes, tts } = player({
+      mode: 'single', initialSongs: [{ ...songs[0], duration: 9 }, songs[1]],
+      service: { getPlayState: async () => ({ ...oh2BlindState(), hasPosition: false }) },
+    });
+    const probes = [];
+    http.callHostAPI = async (method, path) => {
+      h.hostCalls.push([method, path]);
+      if (method === 'HEAD') {
+        probes.push(path);
+        await new Promise(resolve => setTimeout(resolve, 2000));
+        throw new Error('Host API error 502');
+      }
+      return {};
+    };
+    assert.equal(await manager.playAtIndex(0), true);
+    await h.advance(10999);
+    assert.equal(pushes.length, 1);
+    assert.deepEqual(probes, ['/api/v1/songs/16/play']);
+    await h.advance(1);
+    assert.deepEqual(pushes.map(url => new URL(url).pathname), ['/api/v1/songs/16/play', '/api/v1/songs/17/play']);
+    assert.equal(manager.isSongUnplayable(16), true);
+    assert.deepEqual(h.hostCalls.filter(([method]) => method === 'POST'), [
+      ['POST', '/api/v1/songs/16/played?source=miot&type=skip'],
+    ]);
+    assert.deepEqual(tts, []);
+    manager.cleanup();
+  });
+});
+
+test('review 145: a healthy short stream can finish after a stale HEAD failure for the same song', async () => {
+  await withClock(async h => {
+    const oldProbe = deferred();
+    let probes = 0;
+    const { manager, pushes } = player({
+      mode: 'single', initialSongs: [{ ...songs[0], duration: 9 }],
+      service: { getPlayState: async () => ({ ...oh2BlindState(), hasPosition: false }) },
+    });
+    http.callHostAPI = async method => {
+      if (method === 'HEAD' && ++probes === 1) return oldProbe.promise;
+      return {};
+    };
+    assert.equal(await manager.playAtIndex(0), true);
+    await h.advance(9000);
+    assert.equal(probes, 1);
+    assert.equal(pushes.length, 1);
+    assert.equal(await manager.playAtIndex(0), true);
+    oldProbe.reject(new Error('Host API error 502'));
+    await flush();
+    assert.equal(manager.isSongUnplayable(16), false);
+    await h.advance(8999);
+    assert.equal(pushes.length, 2);
+    await h.advance(1);
+    assert.equal(pushes.length, 3);
+    assert.equal(probes, 2);
+    assert.equal(manager.state, 'playing');
+    manager.cleanup();
+  });
+});
+
+for (const entry of ['poll', 'status page']) {
+  test(`review 145: ${entry} cannot resume a failed track during cooldown`, async () => {
+    await withClock(async h => {
+      let devicePlaying = false;
+      const { manager, pushes } = player({
+        mode: 'single', initialSongs: [songs[0]],
+        service: {
+          getPlayState: async () => ({
+            status: devicePlaying ? 1 : 0, position: devicePlaying ? 10 : 0, duration: 300, hasPosition: true,
+            sampledAt: Date.now(),
+          }),
+          getPlayerStatus: async () => ({
+            data: { info: JSON.stringify({ status: 1, play_song_detail: { position: 10000, duration: 300000 } }) },
+            sampledAt: Date.now(),
+          }),
+        },
+      });
+      assert.equal(await manager.playAtIndex(0), true);
+      await h.advance(18000);
+      assert.equal(manager.state, 'stopped');
+      devicePlaying = true;
+      if (entry === 'status page') {
+        updateDeviceStatusCache('account', 'speaker', { timestamp: 0 });
+        await resolvePlayerStatus({ getOrCreate: async () => manager }, manager.minaService, 'account', 'speaker');
+        await flush();
+      } else {
+        await h.advance(30000);
+      }
+      assert.equal(manager.state, 'stopped');
+      assert.equal(manager.checkTimer, null);
+      assert.equal(manager.isSongUnplayable(16), true);
+      assert.equal(await manager.playAtIndex(0), true);
+      await h.advance(10000);
+      assert.equal(manager.isSongUnplayable(16), false);
+      assert.equal(pushes.length, 2);
+      manager.cleanup();
+    });
+  });
+}
+
+test('review 145: delayed external resume sample cannot count toward a newer stop', async () => {
+  await withClock(async h => {
+    const oldSample = deferred();
+    let reads = 0;
+    const speaking = () => ({ status: 1, position: 12, duration: 300, hasPosition: true, sampledAt: Date.now() });
+    const { manager } = player({
+      service: { getPlayState: () => ++reads === 1 ? oldSample.promise : Promise.resolve(speaking()) },
+    });
+    await manager.stop(false);
+    await h.advance(15000);
+    assert.equal(reads, 1);
+    await manager.stop(false);
+    oldSample.resolve(speaking());
+    await flush();
+    await h.advance(15000);
+    assert.equal(reads, 2);
+    assert.equal(manager.state, 'stopped');
+    await h.advance(15000);
+    assert.equal(reads, 3);
+    assert.equal(manager.state, 'playing');
+    assert.ok(manager.checkTimer);
+    manager.cleanup();
+  });
+});
+
+test('review 145: exhausted automatic dispatch clears the saved anchor and still accepts a late device start', async () => {
+  await withClock(async h => {
+    let devicePlaying = false;
+    const { manager } = player({
+      mode: 'order', initialSongs: [songs[0], songs[1]],
+      service: {
+        getPlayState: async () => ({
+          status: devicePlaying ? 1 : 0, position: devicePlaying ? 12 : 0, duration: 300, hasPosition: true,
+          sampledAt: Date.now(),
+        }),
+        playURL: async (_account, _device, url) => new URL(url).pathname === '/api/v1/songs/16/play',
+      },
+    });
+    const saved = {};
+    manager.configManager.updateDevice = async (_account, _device, patch) => Object.assign(saved, patch);
+    assert.equal(await manager.playAtIndex(0), true);
+    assert.equal(saved.resume_song_id, 16);
+    const advancing = manager.onSongFinished();
+    await flush();
+    await h.advance(29000);
+    await advancing;
+    assert.equal(manager.state, 'stopped');
+    assert.equal(manager.landingFailedSongs.size, 1);
+    assert.equal(saved.resume_state, '');
+    assert.equal(saved.resume_song_id, 0);
+    assert.equal(saved.current_song_index, 1);
+    devicePlaying = true;
+    await h.advance(30000);
+    assert.equal(manager.state, 'playing');
+    assert.equal(manager.getCurrentSong().id, 17);
+    assert.equal(manager.landingFailedSongs.size, 0);
+    assert.equal(saved.resume_state, 'playing');
+    assert.equal(saved.resume_song_id, 17);
+    manager.cleanup();
+  });
+});
+
+test('review 145: stale reload verification cannot repush a newly selected song', async () => {
+  await withClock(async () => {
+    const sample = deferred();
+    const { manager, pushes } = player({ service: { getPlayState: () => sample.promise } });
+    const reloading = manager.resumeAfterReload({
+      state: 'playing', positionSec: 150, atMs: Date.now(), songId: 16, seekOffsetSec: 0,
+    });
+    assert.equal(await manager.playAtIndex(0), true);
+    sample.resolve({ status: 0, position: 0, duration: 0 });
+    await reloading;
+    assert.equal(pushes.length, 1);
+    assert.equal(new URL(pushes[0]).searchParams.has('seek'), false);
+    assert.equal(manager.state, 'playing');
+    manager.cleanup();
+  });
+});
 
 test('issue 129: blind idle landing with a playable stream keeps the song playing', async () => {
   await withClock(async h => {
@@ -2721,15 +3063,23 @@ test('new prefetch failure after clearing still creates a fresh temporary marker
   });
 });
 
-test('current prefetch success clears a previous marker without resetting landing failures', async () => {
-  await withClock(async () => {
+test('issue 145: prefetch skips songs during cooldown and can run again when it expires', async () => {
+  await withClock(async h => {
     const { manager } = player({ config: { force_mp3: true } });
     manager.markSongUnplayable(17, 'prefetch');
-    manager.landingFailureCount = 2;
+    manager.landingFailedSongs.add(98).add(99);
     manager.prefetchNextSong();
     await flush();
+    assert.deepEqual(h.hostCalls, []);
+    assert.equal(manager.isSongUnplayable(17), true);
+    await h.advance(UNPLAYABLE_SONG_TTL_MS);
+    manager.prefetchNextSong();
+    await flush();
+    assert.deepEqual(h.hostCalls.map(([method, path]) => [method, path]), [
+      ['GET', '/api/v1/songs/17/play?prefetch=1&format=mp3'],
+    ]);
     assert.equal(manager.isSongUnplayable(17), false);
-    assert.equal(manager.landingFailureCount, 2);
+    assert.equal(manager.landingFailedSongs.size, 2);
   });
 });
 
@@ -2743,7 +3093,7 @@ test('clear route visits each independent or shared manager once and returns the
     first.markSongUnplayable(17, 'prefetch');
     group.markSongUnplayable(17, 'landing');
     group.markSongUnplayable(18, 'early-stop');
-    group.landingFailureCount = 2;
+    group.landingFailedSongs.add(98).add(99);
     const map = new PlaylistManagerMap({}, {});
     map.managers.set('account:speaker', first);
     map.managers.set('grp_test', group);
@@ -2755,7 +3105,7 @@ test('clear route visits each independent or shared manager once and returns the
     assert.equal(first.state, 'playing');
     assert.equal(group.state, 'playing');
     assert.equal(group.currentIndex, 0);
-    assert.equal(group.landingFailureCount, 2);
+    assert.equal(group.landingFailedSongs.size, 2);
     assert.equal(group.targets.length, 2);
     assert.equal(map.managers.size, 2);
     assert.deepEqual(await clear({}), { cleared: 0 });

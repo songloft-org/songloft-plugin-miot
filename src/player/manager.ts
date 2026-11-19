@@ -241,6 +241,7 @@ const LANDING_EARLY_STOP_SEC = 15;
 const LANDING_CIRCUIT_BREAK_TTS_TEXT = '当前多首歌曲无法播放，请稍后再试';
 /** 电台/单曲播放起播失败 TTS 文案（无「下一首」可跳，直接停播） */
 const LANDING_TERMINAL_FAILURE_TTS_TEXT = '当前歌曲暂时无法播放，请稍后再试';
+const NO_PLAYABLE_SONG_TTS_TEXT = '没有可播放的歌曲，请稍后再试';
 
 /** 判断 playlistId 是否为临时歌单 */
 export function isTempPlaylistId(id: number): boolean {
@@ -414,7 +415,8 @@ export class PlaylistManager {
   private streamPositionObserved: boolean = false;
   private blindIdleNoticeLogged: boolean = false; // 当前流已记录过「全零 idle，忽略外停探测」
   private landingVerifyTimer: any = null; // 定时器ID（起播确认探测，见 LANDING_VERIFY_* 常量）
-  private landingFailureCount: number = 0; // 连续起播失败次数（#466 熔断），任何一次确认成功即清零
+  private landingStreamProbe: Promise<boolean | null> | null = null;
+  private readonly landingFailedSongs = new Set<number | string>(); // 连续起播失败的不同歌曲，确认成功即清空
   private unplayableSongs = new Map<number, { reason: SongFailureReason; expiresAt: number }>();
   // 每首歌只接受最新预取的结果；起播、成功确认和手动清除会作废旧请求。
   private prefetchRequests = new Map<number, object>();
@@ -802,6 +804,8 @@ export class PlaylistManager {
 
   private async stopInternal(pushToDevice: boolean, isCurrent?: () => boolean): Promise<void> {
     this.stopCheckTimer();
+    const generation = this.checkTimerGeneration;
+    const stopIsCurrent = () => generation === this.checkTimerGeneration && this.state === 'stopped' && isCurrent?.() !== false;
     this.clearVoiceSuspend();
     this.confirmedTailStream = null;
     this.state = 'stopped';
@@ -811,15 +815,16 @@ export class PlaylistManager {
     this.transitionOffset = 0;
 
     if (pushToDevice) {
-      await this.forEachTarget('stop', t => this.minaService.stopPlay(t.account_id, t.device_id, isCurrent));
+      await this.forEachTarget('stop', t => this.minaService.stopPlay(t.account_id, t.device_id, stopIsCurrent));
     }
+    if (!stopIsCurrent()) return;
 
     songloft.log.info(`[PlaylistManager] Playback stopped pushToDevice=${pushToDevice}`);
 
     // 清掉重载续播锚点：停止之后重载不该再自动出声（#96）
     await this.persistState();
 
-    this.startResumePoll();
+    if (stopIsCurrent()) this.startResumePoll();
   }
 
   /**
@@ -1437,7 +1442,7 @@ export class PlaylistManager {
   private confirmSongPlayback(songId: number): void {
     if (this.getCurrentSong()?.id === songId) this.playbackConfirmed = true;
     this.clearSongFailure(songId);
-    this.landingFailureCount = 0;
+    this.landingFailedSongs.clear();
   }
 
   /** 清除临时失败标记并作废仍在等待的预取；不改变播放、队列或熔断计数。 */
@@ -2049,16 +2054,8 @@ export class PlaylistManager {
   /** 起播失败：标记临时不可播、上报后端并静默跳下一首（#466/#114）。 */
   private failLandingVerify(songIdAtLanding: number, status: number): void {
     songloft.log.warn(`[PlaylistManager] Landing verify failed: status=${status}, treating as unplayable and advancing`);
-    // 记为「不可播放」：避免随机模式下 reserveNextIndex 再次抽中同一首、或用户切回时反复卡住
     this.markSongUnplayable(songIdAtLanding, 'landing');
-    // 上报后端：#466。当前用 played 端点 event=landing_failed；后端后续可据此做临时降权
-    // （例如全歌单播放时把这首放到末尾）。端点存在容错：后端未实现该 event 时忽略即可。
-    if (songIdAtLanding > 0) {
-      callHostAPI('POST', `/api/v1/songs/${songIdAtLanding}/played?source=miot&event=landing_failed`, undefined, { timeoutMs: 3000 }).catch(e => {
-        songloft.log.warn('[PlaylistManager] landing_failed notify failed: ' + String(e));
-      });
-    }
-    this.handleLandingFailure({ tts: true }).catch(e => {
+    this.handleLandingFailure().catch(e => {
       songloft.log.error('[PlaylistManager] handleLandingFailure error: ' + String(e));
     });
   }
@@ -2082,20 +2079,22 @@ export class PlaylistManager {
    * 「设备不上报状态」。只信任明确的 HTTP 错误；超时、外链等无法下结论的情况返回 null，
    * 交给调用方保留播放。
    */
-  private async probeCurrentStreamPlayable(): Promise<boolean | null> {
+  private probeCurrentStreamPlayable(): Promise<boolean | null> {
+    if (this.landingStreamProbe) return this.landingStreamProbe;
     const song = this.getCurrentSong();
-    if (!song || !song.url || song.type === 'radio') return null;
+    if (!song || !song.url || song.type === 'radio') return Promise.resolve(null);
     // 外链由设备直连，宿主的网络路径不代表设备侧可达性，不能据此判失败。
-    if (song.url.startsWith('http://') || song.url.startsWith('https://')) return null;
-    try {
-      await callHostAPI('HEAD', song.url, undefined, { timeoutMs: LANDING_STREAM_PROBE_TIMEOUT_MS });
-      return true;
-    } catch (e) {
+    if (song.url.startsWith('http://') || song.url.startsWith('https://')) return Promise.resolve(null);
+    const probe = callHostAPI('HEAD', song.url, undefined, { timeoutMs: LANDING_STREAM_PROBE_TIMEOUT_MS }).then(() => true, e => {
       const match = /Host API error (\d{3})/.exec(String(e));
       if (!match) return null;
       const status = Number(match[1]);
       return status === 404 || status === 410 || status >= 500 ? false : null;
-    }
+    }).finally(() => {
+      if (this.landingStreamProbe === probe) this.landingStreamProbe = null;
+    });
+    this.landingStreamProbe = probe;
+    return probe;
   }
 
   /**
@@ -2118,47 +2117,47 @@ export class PlaylistManager {
     }
   }
 
-  /**
-   * 起播失败/外部停止极早时的统一处理（#466）：
-   * - 累加连续失败计数；达到熔断阈值 → TTS 提示后 stop（走 startResumePoll 兜底自愈）
-   * - 未达阈值 → TTS「切换下一首」+ advanceToNext；无下一首 → TTS「稍后再试」后 stop
-   *
-   * 单首跳歌不发 TTS：TTS（MiIO action）与下一首的 play-url（mediaplayer ubus）是不同通道，
-   * TTS 会抢断刚下发的下一首 URL，TTS 播完后设备停在空闲态、不会自动恢复下一首的流，
-   * 于是下一首的起播确认读到 status!=1 又判其不可播——形成「一首失败连累下一首也跳」的
-   * 级联（#114）。改为静默跳歌，让下一首不被打断、正常起播；仅连续多首失败熔断时才发 TTS
-   * 提示用户是音源问题（见下方 CIRCUIT_BREAK 分支）。
-   * 电台/单曲播放无下一首，TTS 不会打断谁，仍发停播提示。
-   * 分组只对主设备发 TTS（forEachTarget 只处理播放/暂停/停止，textToSpeech 本身按主设备发）。
-   */
-  private async handleLandingFailure(opts: { tts: boolean }): Promise<void> {
+  private songFailureKey(song: Song): number | string {
+    return song.id > 0 ? song.id : song.url;
+  }
+
+  /** 起播确认失败和起播早期外停共用此路径。仅在停播时提示，避免 TTS 抢断下一首（#114）。 */
+  private async handleLandingFailure(): Promise<void> {
     if (this.state !== 'playing') return;
-
-    this.landingFailureCount++;
-    // 熔断：连续多首无法起播 → 停播 + 长文案 TTS，让用户明确知道是音源问题而不是设备问题
-    if (this.landingFailureCount >= LANDING_FAILURE_CIRCUIT_BREAK) {
-      songloft.log.error(`[PlaylistManager] Landing failure circuit breaker tripped (count=${this.landingFailureCount}), stopping playback`);
-      this.landingFailureCount = 0;
-      if (opts.tts) {
-        void this.minaService.textToSpeech(this.accountId, this.deviceId, LANDING_CIRCUIT_BREAK_TTS_TEXT).catch(() => { });
-      }
-      await this.stop();
-      return;
-    }
-
-    // 电台/单曲播放无「下一首」语义：走终点式停播
     const song = this.getCurrentSong();
-    if (song?.type === 'radio' || this.playMode === 'singlePlay') {
-      if (opts.tts) {
-        void this.minaService.textToSpeech(this.accountId, this.deviceId, LANDING_TERMINAL_FAILURE_TTS_TEXT).catch(() => { });
-      }
-      await this.stop();
+    if (!song) return;
+
+    if (song.id > 0) {
+      callHostAPI('POST', `/api/v1/songs/${song.id}/played?source=miot&type=skip`, undefined, { timeoutMs: 3000 }).catch(e => {
+        songloft.log.warn('[PlaylistManager] songSkipped notify failed: ' + String(e));
+      });
+    }
+    this.landingFailedSongs.add(this.songFailureKey(song));
+    if (this.landingFailedSongs.size >= LANDING_FAILURE_CIRCUIT_BREAK) {
+      songloft.log.error(`[PlaylistManager] Landing failure circuit breaker tripped (count=${this.landingFailedSongs.size}), stopping playback`);
+      this.landingFailedSongs.clear();
+      await this.stopAfterLandingFailure(LANDING_CIRCUIT_BREAK_TTS_TEXT);
       return;
     }
 
-    // 常规跳歌：静默切下一首（不发 TTS，避免打断下一首起播造成级联，#114）。
-    // 单首「这首歌暂时无法播放」提示具误导性（用户因此报 #114），跳歌本身用户可感知，无需提示。
-    await this.advanceToNext();
+    if (song.type === 'radio' || this.playMode === 'singlePlay' || this.songs.length === 1) {
+      await this.stopAfterLandingFailure(LANDING_TERMINAL_FAILURE_TTS_TEXT);
+      return;
+    }
+
+    await this.advanceToNext({ afterLandingFailure: true });
+  }
+
+  private async stopAfterLandingFailure(message: string): Promise<void> {
+    this.clearPendingNextIndex();
+    const stopped = this.stop();
+    const generation = this.checkTimerGeneration;
+    await stopped;
+    // 等停止指令完成再播报。等待期间如果用户已切歌，旧提示不能打断新歌。
+    const isCurrent = () => this.state === 'stopped' && generation === this.checkTimerGeneration;
+    if (isCurrent()) {
+      void this.minaService.textToSpeech(this.accountId, this.deviceId, message, isCurrent).catch(() => { });
+    }
   }
 
   /**
@@ -2249,7 +2248,7 @@ export class PlaylistManager {
     if (nextIdx < 0 || nextIdx === this.currentIndex) return;
 
     const nextSong = this.songs[nextIdx];
-    if (!nextSong || !nextSong.url) return;
+    if (!nextSong || !nextSong.url || this.isSongUnplayable(nextSong.id)) return;
     // 绝对外链（未经后端代理的远程直链）不走后端 ?prefetch=1 端点，跳过。
     if (nextSong.url.startsWith('http://') || nextSong.url.startsWith('https://')) return;
 
@@ -2264,6 +2263,7 @@ export class PlaylistManager {
       try {
         // 与 playCurrent 共用同一个选项来源，保证预热的转码产物和真实播放 URL 命中同一缓存键。
         const opts = await playbackOptionsFromConfig(this.configManager);
+        if (nextSong.id > 0 && this.prefetchRequests.get(nextSong.id) !== request) return;
         const forceMp3 = !!opts.forceMp3;
         const volumeNormalize = !!opts.normalize;
         // 本地歌曲已在服务端磁盘上：不开启转码选项时播放就是直接 ServeFile，无冷启动，预热无意义。
@@ -2348,31 +2348,52 @@ export class PlaylistManager {
         return -1;
 
       case 'random':
-        // 随机播放：避免重复直到全部播完
-        this.randomPlayed.add(this.currentIndex);
-
-        // 如果所有歌曲都播放过了，重置
-        if (this.randomPlayed.size >= len) {
-          this.randomPlayed = new Set();
-        }
-
-        // 找到未播放的歌曲
-        const unplayed: number[] = [];
-        for (let i = 0; i < len; i++) {
-          if (!this.randomPlayed.has(i)) {
-            unplayed.push(i);
-          }
-        }
-
-        if (unplayed.length === 0) {
-          return Math.floor(Math.random() * len);
-        }
-
-        return unplayed[Math.floor(Math.random() * unplayed.length)];
+        return this.getRandomNextIndex();
 
       default:
         return -1;
     }
+  }
+
+  private getRandomNextIndex(isPlayable: (index: number) => boolean = () => true): number {
+    this.randomPlayed.add(this.currentIndex);
+    const playable: number[] = [];
+    const unplayed: number[] = [];
+    for (let index = 0; index < this.songs.length; index++) {
+      if (!isPlayable(index)) continue;
+      playable.push(index);
+      if (!this.randomPlayed.has(index)) unplayed.push(index);
+    }
+    if (unplayed.length > 0) return unplayed[Math.floor(Math.random() * unplayed.length)];
+    if (playable.length === 0) return -1;
+    this.randomPlayed.clear();
+    return playable[Math.floor(Math.random() * playable.length)];
+  }
+
+  /** 优先使用已为预热保留的索引。单曲循环起播失败时沿队列找下一首，成功后仍用原模式。 */
+  private getNextPlayableIndex(afterFailure: boolean): number {
+    const len = this.songs.length;
+    if (!len) return -1;
+    const failedSong = afterFailure ? this.getCurrentSong() : undefined;
+    const failedKey = failedSong && this.songFailureKey(failedSong);
+    const isPlayable = (index: number) => {
+      const song = this.songs[index];
+      return this.songFailureKey(song) !== failedKey && !this.isSongUnplayable(song.id);
+    };
+
+    const first = afterFailure && this.playMode === 'single'
+      ? (this.currentIndex + 1) % len
+      : this.reserveNextIndex();
+    if (first < 0 || isPlayable(first)) return first;
+    if (this.playMode === 'random') return this.getRandomNextIndex(isPlayable);
+    if (this.playMode === 'single' && !afterFailure) return -1;
+
+    const count = this.playMode === 'order' ? len - first : len;
+    for (let offset = 1; offset < count; offset++) {
+      const index = (first + offset) % len;
+      if (isPlayable(index)) return index;
+    }
+    return -1;
   }
 
   /**
@@ -2780,6 +2801,16 @@ export class PlaylistManager {
         useMetadataFallback = fresh && isDeviceStatusKnown(st.status) && streamMatch !== 'foreign' &&
           ((st.hasPosition === false && !this.devicePositionObserved) ||
             (longBlindStream && !(Number.isFinite(st.duration) && st.duration > 0) && onlyZeroPosition));
+        // 短曲可能在首次起播检查前到点。盲区内先排除明确的取流失败，再按元数据切歌。
+        if (useMetadataFallback && !this.playbackConfirmed && this.isBlindIdleState(st) &&
+          song.type !== 'radio' && this.playMode !== 'singlePlay') {
+          const playable = await this.probeCurrentStreamPlayable();
+          if (this.state !== 'playing' || this.getCurrentSong() !== song || this.checkTimerGeneration !== generationAtCheck) return;
+          if (playable === false) {
+            this.failLandingVerify(song.id, st.status);
+            return;
+          }
+        }
         const uncertainDuration = streamMatch === 'foreign' ||
           (streamMatch === 'unknown' && this.deadlineTailEvidence !== null);
         if (!uncertainDuration) this.deadlineTailEvidence = null;
@@ -3220,7 +3251,7 @@ export class PlaylistManager {
                   streamAge <= 60000) {
                   songloft.log.warn(`[PlaylistManager] External stop early (status=${status}, position=${position}s), treating as landing failure`);
                   this.markSongUnplayable(song!.id, 'early-stop');
-                  await this.handleLandingFailure({ tts: true });
+                  await this.handleLandingFailure();
                   return;
                 }
                 const nearEnd = !!song && song.duration > 0 &&
@@ -3461,6 +3492,7 @@ export class PlaylistManager {
       clearTimeout(this.landingVerifyTimer);
       this.landingVerifyTimer = null;
     }
+    this.landingStreamProbe = null;
   }
 
   // ===== 外部恢复探测（stopped 态检测设备恢复播放） =====
@@ -3469,14 +3501,16 @@ export class PlaylistManager {
    * 外部恢复：设备端被物理按键或其他途径恢复播放，插件从 stopped 态重新接管自动切歌。
    * 由 checkExternalResume（无 Web 前端）和 syncManagerFromDeviceState（有 Web 前端）共同调用。
    */
-  handleExternalResume(devicePositionSec: number): void {
+  handleExternalResume(devicePositionSec: number, confirmedStream = false): void {
     if (this.externalPlayback) return;
     if (this.state !== 'stopped' || this.songs.length === 0) return;
     const song = this.getCurrentSong();
-    if (!song) return;
+    if (!song || this.isSongUnplayable(song.id)) return;
 
+    this.stopResumePoll();
     this.state = 'playing';
     this.hardStopped = false;
+    if (confirmedStream) this.confirmSongPlayback(song.id);
     if (Number.isFinite(devicePositionSec) && devicePositionSec >= 0) {
       this.devicePositionObserved = true;
       if (devicePositionSec > 0) {
@@ -3500,6 +3534,7 @@ export class PlaylistManager {
       this.scheduleDurationProbe();
       songloft.log.info(`[PlaylistManager] External resume detected, duration unknown, starting device duration probe`);
     }
+    if (confirmedStream) void this.persistState();
   }
 
   private startResumePoll(): void {
@@ -3521,38 +3556,53 @@ export class PlaylistManager {
   }
 
   private scheduleResumePoll(): void {
-    this.resumePollTimer = setTimeout(() => {
+    const generation = this.checkTimerGeneration;
+    const timer = setTimeout(() => {
+      if (timer !== this.resumePollTimer || generation !== this.checkTimerGeneration) return;
       this.resumePollTimer = null;
       this.checkExternalResume().catch(e => {
         songloft.log.warn('[PlaylistManager] checkExternalResume error: ' + String(e));
       });
     }, EXTERNAL_RESUME_POLL_INTERVAL_MS);
+    this.resumePollTimer = timer;
   }
 
   private async checkExternalResume(): Promise<void> {
-    if (this.state !== 'stopped' || this.songs.length === 0) return;
+    const song = this.getCurrentSong();
+    if (this.state !== 'stopped' || !song || this.externalPlayback) return;
 
     if (Date.now() - this.resumePollStartedAt > EXTERNAL_RESUME_POLL_MAX_MS) {
       songloft.log.info('[PlaylistManager] Resume poll timed out, giving up');
       return;
     }
+    if (this.isSongUnplayable(song.id)) {
+      this.resumePollHits = 0;
+      this.scheduleResumePoll();
+      return;
+    }
+
+    const generation = this.checkTimerGeneration;
+    const pollStartedAt = this.resumePollStartedAt;
+    const isCurrent = () => !this.externalPlayback && this.state === 'stopped' &&
+      this.checkTimerGeneration === generation && this.resumePollStartedAt === pollStartedAt && this.getCurrentSong() === song;
 
     try {
       const deviceState = await this.minaService.getPlayState(this.accountId, this.deviceId);
       const { status, position } = deviceState;
-      if (this.state !== 'stopped') return;
+      if (!isCurrent()) return;
 
-      if (status === 1) {
+      if (status === 1 && !this.isSongUnplayable(song.id)) {
         // status=1 不足以接管：小爱在放它自己的内容时同样是 1，误判会在一个曲长后强推下一首
         // 把它打断（#408 那类「停了之后又自动播放」）。物理按键恢复的正常场景放的是我们的流，
         // 'ours'/'unknown' 都放过，只挡明确认定被接管的 'foreign'。
-        if (this.matchDeviceStream(deviceState) === 'foreign') {
+        const stream = this.matchDeviceStream(deviceState);
+        if (stream === 'foreign') {
           songloft.log.info(`[PlaylistManager] Resume poll: device playing foreign media (deviceDuration=${deviceState.duration}s), not taking over`);
           this.resumePollHits = 0;
         } else {
           this.resumePollHits++;
           if (this.resumePollHits >= EXTERNAL_RESUME_CONFIRM_COUNT) {
-            this.handleExternalResume(position);
+            this.handleExternalResume(position, stream === 'ours');
             return;
           }
         }
@@ -3563,7 +3613,7 @@ export class PlaylistManager {
       songloft.log.warn('[PlaylistManager] checkExternalResume query failed: ' + String(e));
     }
 
-    if (this.state === 'stopped') {
+    if (isCurrent()) {
       this.scheduleResumePoll();
     }
   }
@@ -3581,15 +3631,15 @@ export class PlaylistManager {
     const song = this.getCurrentSong();
     // 结束也可能仅来自元数据定时器：清除旧标记，但连续失败只由设备确认成功来重置。
     if (song) this.clearSongFailure(song.id);
-    await this.advanceToNext(deviceReplaying);
+    await this.advanceToNext({ deviceReplaying });
   }
 
   /**
    * 切到下一首并播放（自动续播核心）。playCurrent 会把新歌下发给全部目标设备。
    */
-  private async advanceToNext(deviceReplaying = false): Promise<void> {
+  private async advanceToNext({ deviceReplaying = false, afterLandingFailure = false } = {}): Promise<void> {
     if (this.externalPlayback) return;
-    return this.trackPlayback(() => this.advanceToNextInternal(deviceReplaying));
+    return this.trackPlayback(() => this.advanceToNextInternal(deviceReplaying, afterLandingFailure));
   }
 
   /** 队列已经结束，只有设备确实重拉本曲时才主动停止固件播放。 */
@@ -3602,8 +3652,8 @@ export class PlaylistManager {
     if (isCurrent()) await this.persistState();
   }
 
-  private async advanceToNextInternal(deviceReplaying: boolean): Promise<void> {
-    songloft.log.info(`[PlaylistManager] Song finished, advancing from index=${this.currentIndex}`);
+  private async advanceToNextInternal(deviceReplaying: boolean, afterLandingFailure: boolean): Promise<void> {
+    songloft.log.info(`[PlaylistManager] ${afterLandingFailure ? 'Landing failed' : 'Song finished'}, advancing from index=${this.currentIndex}`);
 
     if (this.onAdvanceHook && this.onAdvanceHook()) {
       songloft.log.info('[PlaylistManager] onAdvanceHook returned true, stopping playback');
@@ -3613,7 +3663,7 @@ export class PlaylistManager {
 
     // 通知后端当前歌曲播放完成（触发 JS 插件播放事件广播）
     const finishedSong = this.songs[this.currentIndex];
-    if (finishedSong && finishedSong.id > 0) {
+    if (!afterLandingFailure && finishedSong && finishedSong.id > 0) {
       callHostAPI('POST', `/api/v1/songs/${finishedSong.id}/played?source=miot`, undefined, { timeoutMs: 3000 }).catch(e => {
         songloft.log.warn('[PlaylistManager] songPlayed notify failed: ' + String(e));
       });
@@ -3634,34 +3684,13 @@ export class PlaylistManager {
       return;
     }
 
-    // 必须是 prefetchNextSong 预热过的那首（reserveNextIndex 已把两者锁到同一首），
-    // 否则随机模式下播的永远是没预热的歌，开了音量均衡就要冷启动整首 loudnorm。
-    // 跳过仍在冷却期的歌曲，最多扫描 songs.length 次。候选全部被标记时重试原定下一首，
-    // 让暂时抖动有恢复机会；真正持续起播失败仍由连续失败熔断保护（#494）。
-    let nextIdx = this.reserveNextIndex();
-    const firstCandidate = nextIdx;
-    const randomPlayedBeforeSkips = this.playMode === 'random' &&
-      this.isSongUnplayable(this.songs[nextIdx]?.id ?? 0) ? new Set(this.randomPlayed) : null;
-    let unplayableSkips = 0;
-    while (nextIdx >= 0 && this.isSongUnplayable(this.songs[nextIdx]?.id ?? 0)) {
-      if (unplayableSkips >= this.songs.length || (this.playMode === 'single' && unplayableSkips > 0)) {
-        nextIdx = -1;
-        break;
-      }
-      const skipped = this.songs[nextIdx];
-      songloft.log.info(`[PlaylistManager] Skipping known-unplayable song index=${nextIdx} id=${skipped?.id} title=${skipped?.title}`);
-      this.currentIndex = nextIdx;
-      this.clearPendingNextIndex();
-      nextIdx = this.reserveNextIndex();
-      unplayableSkips++;
-    }
-    if (nextIdx < 0 && unplayableSkips > 0) {
-      songloft.log.warn(`[PlaylistManager] All next candidates temporarily unplayable, retrying index=${firstCandidate} after ${unplayableSkips} skips`);
-      nextIdx = firstCandidate;
-      if (randomPlayedBeforeSkips) this.randomPlayed = randomPlayedBeforeSkips;
-      this.clearPendingNextIndex();
-    }
+    const nextIdx = this.getNextPlayableIndex(afterLandingFailure);
     if (nextIdx < 0) {
+      if (afterLandingFailure || this.pendingNextIndex >= 0) {
+        songloft.log.warn('[PlaylistManager] No playable next song, stopping playback');
+        await this.stopAfterLandingFailure(NO_PLAYABLE_SONG_TTS_TEXT);
+        return;
+      }
       songloft.log.info('[PlaylistManager] No next song, playback complete');
       this.state = 'stopped';
       this.playStartTimeMs = 0;
@@ -3670,58 +3699,72 @@ export class PlaylistManager {
     }
 
     this.currentIndex = nextIdx;
-    const ok = await this.playCurrent();
-    if (ok) {
+    const retrySong = this.songs[nextIdx];
+    let pending = this.playCurrent();
+    let generation = this.checkTimerGeneration;
+    if (await pending) {
       await this.persistState();
       return;
     }
+    if (generation !== this.checkTimerGeneration || this.getCurrentSong() !== retrySong) return;
 
     // 常见于设备超时 code=3012。云端秒级抖动通常持续 10~60s，单次 3s 重试命中率过低
     // （songloft-org/songloft-player#45）：改指数退避多轮，给云端恢复的机会，仍失败才跳下一首。
-    const retryIndex = this.currentIndex;
     const AUTO_NEXT_RETRY_DELAYS_MS = [3000, 8000];
-    let retryOk = false;
-    for (let attempt = 0; attempt < AUTO_NEXT_RETRY_DELAYS_MS.length; attempt++) {
-      const delayMs = AUTO_NEXT_RETRY_DELAYS_MS[attempt];
+    for (const [attempt, delayMs] of AUTO_NEXT_RETRY_DELAYS_MS.entries()) {
       songloft.log.warn(`[PlaylistManager] Auto-next play failed, retrying in ${delayMs}ms (attempt ${attempt + 1}/${AUTO_NEXT_RETRY_DELAYS_MS.length})`);
       await new Promise(r => setTimeout(r, delayMs));
-      if (this.state !== 'playing' || this.currentIndex !== retryIndex) return;
+      if (this.state !== 'playing' || generation !== this.checkTimerGeneration || this.getCurrentSong() !== retrySong) return;
+      if (this.isSongUnplayable(retrySong.id)) break;
 
-      if (await this.playCurrent({ skipAnnouncement: true })) {
-        retryOk = true;
-        break;
-      }
-    }
-    if (retryOk) {
-      await this.persistState();
-      return;
-    }
-
-    // 重试仍失败，尝试跳到下一首（上一句 playCurrent 已把 pending 清掉，这里会重新定一首）
-    const skipIdx = this.reserveNextIndex();
-    if (skipIdx >= 0 && skipIdx !== this.currentIndex) {
-      songloft.log.warn('[PlaylistManager] Retry failed, skipping to next song');
-      this.currentIndex = skipIdx;
-      const skipOk = await this.playCurrent();
-      if (skipOk) {
+      pending = this.playCurrent({ skipAnnouncement: true });
+      generation = this.checkTimerGeneration;
+      if (await pending) {
         await this.persistState();
         return;
       }
+      if (generation !== this.checkTimerGeneration || this.getCurrentSong() !== retrySong) return;
+    }
+
+    // 重试仍失败，尝试跳到下一首（上一句 playCurrent 已把 pending 清掉，这里会重新定一首）
+    const skipIdx = this.getNextPlayableIndex(true);
+    if (skipIdx >= 0) {
+      songloft.log.warn('[PlaylistManager] Retry failed, skipping to next song');
+      this.currentIndex = skipIdx;
+      const skipSong = this.songs[skipIdx];
+      pending = this.playCurrent();
+      generation = this.checkTimerGeneration;
+      if (await pending) {
+        await this.persistState();
+        return;
+      }
+      if (generation !== this.checkTimerGeneration || this.getCurrentSong() !== skipSong) return;
     }
 
     songloft.log.error('[PlaylistManager] Auto-next failed after retry, stopping');
     // 熔断计数：多首连续硬失败达阈值时给用户 TTS 提示（#466）
-    this.landingFailureCount++;
-    if (this.landingFailureCount >= LANDING_FAILURE_CIRCUIT_BREAK) {
-      this.landingFailureCount = 0;
-      void this.minaService.textToSpeech(this.accountId, this.deviceId, LANDING_CIRCUIT_BREAK_TTS_TEXT).catch(() => { });
+    const failedSong = this.getCurrentSong();
+    if (failedSong) this.landingFailedSongs.add(this.songFailureKey(failedSong));
+    let message: string | undefined;
+    if (this.landingFailedSongs.size >= LANDING_FAILURE_CIRCUIT_BREAK) {
+      this.landingFailedSongs.clear();
+      message = LANDING_CIRCUIT_BREAK_TTS_TEXT;
     }
+    await this.settleFailedDispatch(message);
+  }
+
+  /** 下发耗尽仍可能是云端假失败。清空旧锚点，保留设备后来确认起播时的接管能力（#98）。 */
+  private async settleFailedDispatch(message?: string): Promise<void> {
+    const generation = this.checkTimerGeneration;
+    const isCurrent = () => !this.externalPlayback && this.state === 'stopped' && generation === this.checkTimerGeneration;
     this.state = 'stopped';
     this.playStartTimeMs = 0;
-    // 张开外部恢复兜底网：下发失败可能仍是假失败（#98），而 playCurrent 的核实也有漏判的可能
-    // （设备既不上报流长、位置又超出起播窗口）。轮询发现设备其实在放我们的流就重新接管切歌，
-    // 否则这里就是播放的终点。stop() 一直有这一步，这条失败路径此前漏了。
+    await this.persistState();
+    if (!isCurrent()) return;
     this.startResumePoll();
+    if (message) {
+      void this.minaService.textToSpeech(this.accountId, this.deviceId, message, isCurrent).catch(() => { });
+    }
   }
 
   /**
@@ -3875,6 +3918,7 @@ export class PlaylistManager {
     seekOffsetSec: number;
   }): Promise<void> {
     const epoch = this.playbackEpoch;
+    const generation = this.checkTimerGeneration;
     const song = this.getCurrentSong();
     if (!song || song.id !== anchor.songId) {
       return;
@@ -3916,7 +3960,8 @@ export class PlaylistManager {
     }
 
     const deviceState = await this.minaService.getPlayState(this.accountId, this.deviceId);
-    if (this.externalPlayback || epoch !== this.playbackEpoch) return;
+    if (this.externalPlayback || epoch !== this.playbackEpoch || generation !== this.checkTimerGeneration ||
+      this.getCurrentSong() !== song) return;
     this.recordDevicePosition(deviceState);
     if (deviceState.status < 0) {
       songloft.log.warn(`[PlaylistManager] Resume after reload: device status unavailable, rebuilding timer at ${estimated.toFixed(1)}s`);
@@ -3942,14 +3987,12 @@ export class PlaylistManager {
     }
 
     songloft.log.info(`[PlaylistManager] Resume after reload: device not playing our stream (status=${deviceState.status} deviceDuration=${deviceState.duration}s), re-pushing seek=${estimated.toFixed(1)}s song=${song.title}`);
-    const ok = await this.playCurrent({ seekSeconds: estimated, skipAnnouncement: true });
-    if (!ok) {
+    const pending = this.playCurrent({ seekSeconds: estimated, skipAnnouncement: true });
+    const generationAtPush = this.checkTimerGeneration;
+    const ok = await pending;
+    if (!ok && generationAtPush === this.checkTimerGeneration && this.getCurrentSong() === song) {
       songloft.log.warn('[PlaylistManager] Resume after reload failed, staying stopped');
-      this.state = 'stopped';
-      this.playStartTimeMs = 0;
-      // 与 advanceToNext 的失败收尾同源：重推失败可能是 3012 假失败且核实漏判（#98），
-      // 留一张外部恢复兜底网，别让重载后的一次下发失败变成永久停摆。
-      this.startResumePoll();
+      await this.settleFailedDispatch();
     }
   }
 }

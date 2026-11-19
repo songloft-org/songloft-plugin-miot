@@ -1353,14 +1353,14 @@ for (const probe of ['checkExternalStop', 'verifyPlaybackLanded']) {
           ? p.manager.verifyPlaybackLanded(0, 1, 0)
           : p.manager.checkExternalStop();
         p.manager.startCheckTimer(60);
-        p.manager.landingFailureCount = 1;
+        p.manager.landingFailedSongs.add(98);
         const timers = [...h.timers.keys()];
         slow.resolve({ status, position: 285, duration: 300 });
         await pending;
         assert.deepEqual([...h.timers.keys()], timers);
         assert.equal(p.manager.stopPollMisses, 0);
         assert.equal(p.manager.stopPollMaxPosition, 0);
-        assert.equal(p.manager.landingFailureCount, 1);
+        assert.equal(p.manager.landingFailedSongs.size, 1);
         p.manager.stopCheckTimer();
       });
     });
