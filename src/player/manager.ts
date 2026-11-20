@@ -4,7 +4,7 @@
 
 /// <reference types="@songloft/plugin-sdk" />
 
-import { ConfigManager, playlistProgressScope } from '../config/manager';
+import { ConfigManager, playlistProgressScope, progressGroupScope } from '../config/manager';
 import { MinaService } from '../service/service';
 import { URLBuilder, playbackOptionsOf, playbackOptionsFromConfig } from './url_builder';
 import { hasLostDeviceMedia, isDeviceIdle, isDeviceStatusKnown } from '../playback/device_state';
@@ -248,6 +248,19 @@ export function isTempPlaylistId(id: number): boolean {
   return id < 0;
 }
 
+async function progressScopeFor(
+  configManager: { findProgressGroup?: (accountId: string, deviceId: string) => Promise<{ id: string } | null> },
+  accountId: string,
+  deviceId: string,
+): Promise<string> {
+  try {
+    const group = await configManager.findProgressGroup?.(accountId, deviceId);
+    return group ? progressGroupScope(group.id) : playlistProgressScope(accountId, deviceId);
+  } catch {
+    return playlistProgressScope(accountId, deviceId);
+  }
+}
+
 /**
  * 解析「这台设备上次在该歌单播到哪」，供语音「播放歌单X」、定时任务
  * `start_position=resume`、网页「继续播放」三条路共用同一份口径。
@@ -263,15 +276,17 @@ export async function resolvePlaylistResumeStart(
   configManager: ConfigManager,
   primary: DeviceTargetRef,
   playlistId: number,
-): Promise<{ songId: number; songIndex: number } | null> {
+): Promise<{ songId: number; songIndex: number; positionSec: number } | null> {
   if (!playlistId || playlistId <= 0) return null;
   try {
-    const progress = await configManager.getPlaylistProgress(
-      playlistProgressScope(primary.account_id, primary.device_id),
-      playlistId,
-    );
+    const scope = await progressScopeFor(configManager, primary.account_id, primary.device_id);
+    const progress = await configManager.getPlaylistProgress(scope, playlistId);
     if (progress) {
-      return { songId: progress.song_id, songIndex: Math.max(0, progress.song_index || 0) };
+      return {
+        songId: progress.song_id,
+        songIndex: Math.max(0, progress.song_index || 0),
+        positionSec: Math.max(0, progress.position_sec || 0),
+      };
     }
     const devices = await configManager.getDevices(primary.account_id);
     const devCfg = devices.find(d => d.device_id === primary.device_id);
@@ -279,7 +294,7 @@ export async function resolvePlaylistResumeStart(
       const songId = devCfg.resume_song_id || 0;
       const songIndex = Math.max(0, devCfg.current_song_index || 0);
       if (songId > 0 || songIndex > 0) {
-        return { songId, songIndex };
+        return { songId, songIndex, positionSec: Math.max(0, devCfg.resume_position_sec || 0) };
       }
     }
   } catch (e) {
@@ -563,13 +578,13 @@ export class PlaylistManager {
   }
 
   /** 播放歌单；randomStart 只选择起点。 */
-  async play(playlistId: number, startIndex?: number, mode?: PlayMode, opts?: { randomStart?: boolean; isCurrent?: () => boolean }): Promise<boolean> {
+  async play(playlistId: number, startIndex?: number, mode?: PlayMode, opts?: { randomStart?: boolean; seekSeconds?: number; isCurrent?: () => boolean }): Promise<boolean> {
     return this.startPlaylist(playlistId, { startIndex, mode, ...opts });
   }
 
   /** 优先用歌曲 ID 定位，找不到时退回指定下标或第一首。 */
-  async playPlaylistFromSong(playlistId: number, songId: number, mode?: PlayMode, fallbackIndex?: number, isCurrent?: () => boolean): Promise<boolean> {
-    return this.startPlaylist(playlistId, { songId, startIndex: fallbackIndex, mode, isCurrent });
+  async playPlaylistFromSong(playlistId: number, songId: number, mode?: PlayMode, fallbackIndex?: number, isCurrent?: () => boolean, seekSeconds?: number): Promise<boolean> {
+    return this.startPlaylist(playlistId, { songId, startIndex: fallbackIndex, mode, isCurrent, seekSeconds });
   }
 
   private async startPlaylist(playlistId: number, options: {
@@ -577,6 +592,7 @@ export class PlaylistManager {
     songId?: number;
     mode?: PlayMode;
     randomStart?: boolean;
+    seekSeconds?: number;
     isCurrent?: () => boolean;
   }): Promise<boolean> {
     if (options.isCurrent?.() === false) return false;
@@ -612,7 +628,7 @@ export class PlaylistManager {
     this.randomPlayed = new Set();
     this.clearPendingNextIndex();
 
-    const ok = await this.playCurrent({ isCurrent: options.isCurrent });
+    const ok = await this.playCurrent({ seekSeconds: options.seekSeconds, isCurrent: options.isCurrent });
     if (!ok || !this.isPlaying() || this.songs !== songs) return false;
 
     await this.persistState(true);
@@ -622,9 +638,8 @@ export class PlaylistManager {
 
   private async resolvePlaylistPlayMode(playlistId: number, audiobook: boolean): Promise<PlayMode> {
     try {
-      const progress = await this.configManager.getPlaylistProgress(
-        playlistProgressScope(this.accountId, this.deviceId), playlistId,
-      );
+      const scope = await progressScopeFor(this.configManager, this.accountId, this.deviceId);
+      const progress = await this.configManager.getPlaylistProgress(scope, playlistId);
       const remembered = parsePlayMode(progress?.play_mode);
       if (remembered) return remembered;
     } catch (e) {
@@ -803,6 +818,11 @@ export class PlaylistManager {
   }
 
   private async stopInternal(pushToDevice: boolean, isCurrent?: () => boolean): Promise<void> {
+    const stoppedPositionSec = this.state === 'playing'
+      ? Math.max(0, this.getPosition())
+      : this.state === 'paused'
+        ? Math.max(0, this.pausedPositionSec)
+        : undefined;
     this.stopCheckTimer();
     const generation = this.checkTimerGeneration;
     const stopIsCurrent = () => generation === this.checkTimerGeneration && this.state === 'stopped' && isCurrent?.() !== false;
@@ -822,7 +842,7 @@ export class PlaylistManager {
     songloft.log.info(`[PlaylistManager] Playback stopped pushToDevice=${pushToDevice}`);
 
     // 清掉重载续播锚点：停止之后重载不该再自动出声（#96）
-    await this.persistState();
+    await this.persistState(false, stoppedPositionSec);
 
     if (stopIsCurrent()) this.startResumePoll();
   }
@@ -1567,6 +1587,19 @@ export class PlaylistManager {
     return this.playCurrent({ seekSeconds, skipAnnouncement: true, isCurrent });
   }
 
+  async getSavedPositionForCurrentSong(): Promise<number> {
+    const song = this.getCurrentSong();
+    if (!song || this.playlistId <= 0) return 0;
+    try {
+      const scope = await progressScopeFor(this.configManager, this.accountId, this.deviceId);
+      const progress = await this.configManager.getPlaylistProgress(scope, this.playlistId);
+      return progress?.song_id === song.id ? Math.max(0, progress.position_sec || 0) : 0;
+    } catch (e) {
+      songloft.log.warn('[PlaylistManager] Failed to read saved playback position: ' + String(e));
+      return 0;
+    }
+  }
+
   /** 当前推给设备的流从歌曲第几秒开始（设备上报的 position 需加此值才是曲内绝对位置） */
   getStreamSeekOffsetSec(): number {
     return this.streamSeekOffsetSec;
@@ -1733,8 +1766,9 @@ export class PlaylistManager {
         songloft.log.warn(`[PlaylistManager] playlist ${playlistId} not found (stale ID), signaling caller to refresh index`);
         // 歌单真的不在了：顺手删掉它的进度记录，否则表里会攒下一堆永远命中不到的孤儿条目
         // （扫描 auto-create 会让歌单换 ID），把有用的进度挤出上限。
+        const scope = await progressScopeFor(this.configManager, this.accountId, this.deviceId);
         await this.configManager
-          .removePlaylistProgress(playlistProgressScope(this.accountId, this.deviceId), playlistId)
+          .removePlaylistProgress(scope, playlistId)
           .catch(e => songloft.log.warn('[PlaylistManager] Failed to drop stale playlist progress: ' + String(e)));
       }
     } catch (e) {
@@ -3802,7 +3836,7 @@ export class PlaylistManager {
   /**
    * 持久化播放状态到设备配置
    */
-  private async persistState(rememberPlaylistMode = false): Promise<void> {
+  private async persistState(rememberPlaylistMode = false, progressPositionSec?: number): Promise<void> {
     const anchor = this.buildResumeAnchor();
     if (isTempPlaylistId(this.playlistId)) {
       try {
@@ -3826,7 +3860,11 @@ export class PlaylistManager {
       }
       return;
     }
-    const saveProgress = this.persistPlaylistProgress(rememberPlaylistMode ? this.playMode : undefined);
+    const saveProgress = this.persistPlaylistProgress(
+      rememberPlaylistMode ? this.playMode : undefined,
+      false,
+      progressPositionSec,
+    );
     try {
       await this.configManager.updateDevice(this.accountId, this.deviceId, {
         playlist_id: this.playlistId,
@@ -3853,20 +3891,22 @@ export class PlaylistManager {
    *
    * 挂在 persistState 里而不是各调用点：persistState 是 play / pause / stop / next /
    * previous / 自动切歌的唯一收口，跟着它走就不会有哪条路漏记。
-   * 停止态也照记（要的就是「停在哪首」），只是曲内位置归零。
+   * 停止态也照记（要的就是「停在哪首」）。主动停止由调用方传入停止前的位置，
+   * 避免清理运行时状态后把曲内进度覆盖为 0。
    */
-  private async persistPlaylistProgress(mode?: PlayMode, modeOnly = false): Promise<void> {
+  private async persistPlaylistProgress(mode?: PlayMode, modeOnly = false, positionOverride?: number): Promise<void> {
     const song = this.getCurrentSong();
     if (!song || song.id <= 0 || this.playlistId <= 0) return;
-    let positionSec = 0;
-    if (this.state === 'playing') {
+    let positionSec = positionOverride === undefined ? 0 : Math.max(0, Math.floor(positionOverride));
+    if (positionOverride === undefined && this.state === 'playing') {
       positionSec = Math.max(0, Math.floor(this.getPosition()));
-    } else if (this.state === 'paused') {
+    } else if (positionOverride === undefined && this.state === 'paused') {
       positionSec = Math.max(0, Math.floor(this.pausedPositionSec));
     }
     try {
+      const scope = await progressScopeFor(this.configManager, this.accountId, this.deviceId);
       await this.configManager.savePlaylistProgress(
-        playlistProgressScope(this.accountId, this.deviceId),
+        scope,
         {
           playlist_id: this.playlistId,
           song_id: song.id,

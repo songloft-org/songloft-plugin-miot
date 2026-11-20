@@ -23,16 +23,19 @@ import {
   deviceName,
   confirmAction,
   deleteGroup,
+  deleteProgressGroup,
   loadAccountsAndDevices,
   loadGroups,
+  loadProgressGroups,
   messageOf,
   saveConfig,
   saveGroup,
+  saveProgressGroup,
   state,
   toggleManaged,
   notify,
 } from "../../store";
-import type { DeviceGroup, DeviceMember, SelectOption } from "../../types";
+import type { DeviceGroup, DeviceMember, ProgressGroup, SelectOption } from "../../types";
 interface MusicApiModelRow {
   hardware: string;
   deviceName: string;
@@ -62,6 +65,10 @@ const pageState = {
     const editGroupId = ref("");
     const groupName = ref("");
     const selectedMembers = ref<string[]>([]);
+    const progressGroupEditor = ref(false);
+    const editProgressGroupId = ref("");
+    const progressGroupName = ref("");
+    const selectedProgressMembers = ref<string[]>([]);
     let qrTimer: ReturnType<typeof setTimeout> | null = null;
     // 每次 startQr 自增的代次；旧 pollQrOnce 发现 gen 不匹配即退出，
     // 避免用户连点"获取二维码"时旧轮询链劫持新一轮（旧链 resolved 后用旧 account_id 重排）。
@@ -101,7 +108,7 @@ const pageState = {
       if (input.active !== false) void refreshDevices();
     });
     function refreshDevices() {
-      return Promise.all([loadAccountsAndDevices(), loadGroups()]).catch(
+      return Promise.all([loadAccountsAndDevices(), loadGroups(), loadProgressGroups()]).catch(
         (error) => notify(messageOf(error), "error"),
       );
     }
@@ -455,6 +462,45 @@ const pageState = {
         }
       }
     }
+    function openProgressGroup(group?: ProgressGroup) {
+      progressGroupEditor.value = true;
+      editProgressGroupId.value = group?.id || "";
+      progressGroupName.value = group?.name || "";
+      selectedProgressMembers.value = (group?.members || []).map(
+        (member) => `${member.account_id}:${member.device_id}`,
+      );
+    }
+    function closeProgressGroup() {
+      progressGroupEditor.value = false;
+    }
+    async function saveCurrentProgressGroup() {
+      if (!progressGroupName.value.trim() || selectedProgressMembers.value.length < 2) {
+        notify("请输入共享组名称并至少选择两台设备", "warning");
+        return;
+      }
+      const members: DeviceMember[] = selectedProgressMembers.value.map((value) => {
+        const separator = value.indexOf(":");
+        return { account_id: value.slice(0, separator), device_id: value.slice(separator + 1) };
+      });
+      try {
+        await saveProgressGroup({
+          id: editProgressGroupId.value || undefined,
+          name: progressGroupName.value.trim(),
+          members,
+        });
+        closeProgressGroup();
+      } catch (error) {
+        notify(messageOf(error), "error");
+      }
+    }
+    async function removeProgressGroup(id: string) {
+      if (!(await confirmAction("删除播放进度共享组", "成员会恢复为各自独立进度。", "删除", true)).confirmed) return;
+      try {
+        await deleteProgressGroup(id);
+      } catch (error) {
+        notify(messageOf(error), "error");
+      }
+    }
     // 用户账号下所有设备去重后的型号（hardware 优先）。设置项以设备实际存在的型号为主，
     // 未在设备列表中出现的默认清单项以徽章形式提示。
     const musicApiModelRows = computed<MusicApiModelRow[]>(() => {
@@ -525,6 +571,10 @@ const pageState = {
       editGroupId,
       groupName,
       selectedMembers,
+      progressGroupEditor,
+      editProgressGroupId,
+      progressGroupName,
+      selectedProgressMembers,
       get qrTimer() {
         return qrTimer;
       },
@@ -559,6 +609,10 @@ const pageState = {
       closeGroup,
       saveCurrentGroup,
       removeGroup,
+      openProgressGroup,
+      closeProgressGroup,
+      saveCurrentProgressGroup,
+      removeProgressGroup,
       musicApiModelRows,
       defaultsMissingFromDevices,
       isMusicApiEnabled,
@@ -1124,6 +1178,118 @@ export default function DeviceSettings(props: any) {
                 title="删除分组"
                 onClick={($event: any) => {
                   vm.removeGroup(group.id);
+                }}
+              ></SlButton>
+            </NativeView>
+          ))}
+        </NativeView>
+      </SectionCard>
+      <SectionCard
+        title="播放进度共享"
+        icon="queue_music"
+        description="把指定设备放入同一组后，播放歌单会从最近一次进度继续。未加入共享组的设备保持独立。"
+      >
+        <NativeView className="form-body">
+          <SlButton
+            variant="filled"
+            block
+            label="新建共享组"
+            icon="add"
+            onClick={($event: any) => {
+              vm.openProgressGroup();
+            }}
+          ></SlButton>
+          {vm.progressGroupEditor ? (
+            <NativeView className="sub-panel">
+              <NativeView className="field">
+                <NativeView className="field-label">
+                  <text>共享组名称</text>
+                </NativeView>
+                <SlInput
+                  modelValue={vm.progressGroupName}
+                  onUpdateModelValue={($event: any) => {
+                    vm.progressGroupName = $event;
+                  }}
+                  placeholder="例如 故事播放"
+                  aria-label="共享组名称"
+                ></SlInput>
+              </NativeView>
+              <NativeView className="field-label">
+                <text>选择至少两台设备</text>
+              </NativeView>
+              {renderItems(vm.managed, (item) => {
+                const key = `${item.accountId}:${vm.deviceId(item.device)}`;
+                return (
+                  <NativeView key={key} className="device-check-row">
+                    <SlCheckbox
+                      modelValue={vm.selectedProgressMembers.includes(key)}
+                      onUpdateModelValue={(value) =>
+                        value
+                          ? vm.selectedProgressMembers.push(key)
+                          : (vm.selectedProgressMembers = vm.selectedProgressMembers.filter(
+                              (member) => member !== key,
+                            ))
+                      }
+                    ></SlCheckbox>
+                    <NativeView className="device-check-copy">
+                      <NativeView>
+                        <text>{displayText(vm.deviceName(item.device))}</text>
+                      </NativeView>
+                      <NativeView>
+                        <text>{displayText(item.accountId)}</text>
+                      </NativeView>
+                    </NativeView>
+                  </NativeView>
+                );
+              })}
+              <NativeView className="field-actions">
+                <SlButton
+                  variant="text"
+                  label="取消"
+                  onClick={($event: any) => {
+                    vm.closeProgressGroup();
+                  }}
+                ></SlButton>
+                <SlButton
+                  variant="filled"
+                  label="保存"
+                  icon="save"
+                  onClick={($event: any) => {
+                    void vm.saveCurrentProgressGroup();
+                  }}
+                ></SlButton>
+              </NativeView>
+            </NativeView>
+          ) : null}
+          {!vm.state.progressGroups.length && !vm.progressGroupEditor ? (
+            <NativeView className="empty-state">
+              <text>暂无共享组，设备会各自保存进度</text>
+            </NativeView>
+          ) : null}
+          {renderItems(vm.state.progressGroups, (group) => (
+            <NativeView key={group.id} className="list-item">
+              <NativeView className="list-item-copy">
+                <NativeView className="list-item-title">
+                  <text>{displayText(group.name)}</text>
+                </NativeView>
+                <NativeView className="list-item-subtitle">
+                  <text>{displayText(group.members.length)} 台设备共享进度</text>
+                </NativeView>
+              </NativeView>
+              <SlButton
+                variant="icon"
+                icon="edit"
+                title="编辑共享组"
+                onClick={($event: any) => {
+                  vm.openProgressGroup(group);
+                }}
+              ></SlButton>
+              <SlButton
+                variant="icon"
+                icon="delete"
+                title="删除共享组"
+                onClick={($event: any) => {
+                  void vm.removeProgressGroup(group.id);
                 }}
               ></SlButton>
             </NativeView>

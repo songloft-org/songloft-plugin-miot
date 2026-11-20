@@ -590,7 +590,7 @@ export function registerPlaylistHandlers(
             playlist_id: playlistId,
             song_id: resume.songId,
             song_index: resume.songIndex,
-            position_sec: 0,
+            position_sec: resume.positionSec,
             updated_at: 0,
           },
         });
@@ -709,12 +709,12 @@ export function registerPlaylistHandlers(
                 resume.songId,
                 mode,
                 resume.songIndex,
+                undefined,
+                resume.positionSec,
               )
-            : await manager.play(
-                playlistId,
-                resume ? resume.songIndex : 0,
-                mode,
-              );
+            : await manager.play(playlistId, resume ? resume.songIndex : 0, mode, {
+                seekSeconds: resume?.positionSec,
+              });
       } else if (startPosition === "random") {
         ok = await manager.play(playlistId, 0, mode, { randomStart: true });
       } else {

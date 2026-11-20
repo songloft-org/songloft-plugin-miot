@@ -125,6 +125,14 @@ export interface DeviceGroup {
   updated_at?: string;
 }
 
+export interface ProgressGroup {
+  id: string;
+  name: string;
+  members: DeviceMember[];
+  created_at?: string;
+  updated_at?: string;
+}
+
 export interface Playlist {
   id: number;
   name: string;
@@ -146,7 +154,7 @@ export interface Song {
   is_live?: boolean;
 }
 
-/** 某台设备在某个歌单上次播到哪一首（后端 GET /playlists/:id/progress） */
+/** 当前播放范围在某个歌单上次播到哪一首（后端 GET /playlists/:id/progress） */
 export interface PlaylistProgress {
   playlist_id: number;
   song_id: number;

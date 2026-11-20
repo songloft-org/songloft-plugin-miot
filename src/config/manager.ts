@@ -12,6 +12,7 @@ import type {
   AccountConfig,
   DeviceConfig,
   DeviceGroup,
+  ProgressGroup,
   DeviceTargetRef,
   WebhookConfig,
   VoiceCommand,
@@ -37,6 +38,7 @@ const STORAGE_KEY_SCHEDULE_LOGS = 'schedule_logs';
 const STORAGE_KEY_AI_CONFIG = 'ai_config';
 const STORAGE_KEY_SEARCH_PROVIDERS = 'search_provider_registry';
 const STORAGE_KEY_DEVICE_GROUPS = 'device_groups';
+const STORAGE_KEY_PROGRESS_GROUPS = 'playlist_progress_groups';
 const STORAGE_KEY_PLAYLIST_PROGRESS = 'playlist_progress';
 
 /** 搜索源候选注册默认搜索子路径 */
@@ -46,7 +48,7 @@ const DEFAULT_SEARCH_PATH = '/api/search/topone';
 const MAX_SCHEDULE_LOGS = 200;
 
 /**
- * 每台设备最多记多少个歌单的播放进度。
+ * 每个播放范围最多记多少个歌单的播放进度。
  * 进度是每次切歌都要写的热数据，整表以一个 JSON 落在 storage 里，必须有界：
  * 超出后按 updated_at 淘汰最久没播的歌单（用户几乎不会在 30 个歌单之间来回切）。
  */
@@ -61,6 +63,10 @@ const MAX_PLAYLIST_PROGRESS_PER_DEVICE = 30;
  */
 export function playlistProgressScope(accountId: string, deviceId: string): string {
   return accountId + ':' + deviceId;
+}
+
+export function progressGroupScope(groupId: string): string {
+  return 'progress:' + groupId;
 }
 
 /** 默认插件配置 */
@@ -437,6 +443,167 @@ export class ConfigManager {
       for (const key of keys) delete store[key];
       return keys.length > 0;
     });
+    const groups = await this.getProgressGroups();
+    const removedGroupIds: string[] = [];
+    let groupsChanged = false;
+    const remainingGroups = groups.flatMap(group => {
+      const members = group.members.filter(member => member.account_id !== accountId);
+      if (members.length !== group.members.length) groupsChanged = true;
+      if (members.length < 2) {
+        removedGroupIds.push(group.id);
+        return [];
+      }
+      return [{ ...group, members, updated_at: new Date().toISOString() }];
+    });
+    if (groupsChanged) {
+      await this.saveProgressGroups(remainingGroups);
+      await this.updatePlaylistProgressStore(store => {
+        let changed = false;
+        for (const groupId of removedGroupIds) {
+          const scope = progressGroupScope(groupId);
+          if (scope in store) {
+            delete store[scope];
+            changed = true;
+          }
+        }
+        return changed;
+      });
+    }
+  }
+
+  private async copyProgressScope(sourceScope: string, targetScope: string): Promise<void> {
+    if (!sourceScope || !targetScope || sourceScope === targetScope) return;
+    await this.updatePlaylistProgressStore(store => {
+      const source = Array.isArray(store[sourceScope]) ? store[sourceScope] : [];
+      if (!source.length) return false;
+      const target = Array.isArray(store[targetScope]) ? store[targetScope] : [];
+      const byPlaylist = new Map<number, PlaylistProgress>();
+      for (const item of [...target, ...source]) {
+        if (!item || item.playlist_id <= 0 || item.song_id <= 0) continue;
+        const previous = byPlaylist.get(item.playlist_id);
+        if (!previous || (item.updated_at || 0) >= (previous.updated_at || 0)) {
+          byPlaylist.set(item.playlist_id, item);
+        }
+      }
+      store[targetScope] = [...byPlaylist.values()]
+        .sort((a, b) => (b.updated_at || 0) - (a.updated_at || 0))
+        .slice(0, MAX_PLAYLIST_PROGRESS_PER_DEVICE);
+      return true;
+    });
+  }
+
+  private async mergeProgressScopes(targetScope: string, sourceScopes: string[]): Promise<void> {
+    const uniqueSources = [...new Set(sourceScopes.filter(scope => scope && scope !== targetScope))];
+    if (!uniqueSources.length) return;
+    await this.updatePlaylistProgressStore(store => {
+      const byPlaylist = new Map<number, PlaylistProgress>();
+      for (const scope of [targetScope, ...uniqueSources]) {
+        const list = Array.isArray(store[scope]) ? store[scope] : [];
+        for (const item of list) {
+          if (!item || item.playlist_id <= 0 || item.song_id <= 0) continue;
+          const previous = byPlaylist.get(item.playlist_id);
+          if (!previous || (item.updated_at || 0) >= (previous.updated_at || 0)) {
+            byPlaylist.set(item.playlist_id, item);
+          }
+        }
+      }
+      if (!byPlaylist.size) return false;
+      store[targetScope] = [...byPlaylist.values()]
+        .sort((a, b) => (b.updated_at || 0) - (a.updated_at || 0))
+        .slice(0, MAX_PLAYLIST_PROGRESS_PER_DEVICE);
+      return true;
+    });
+  }
+
+  private async seedProgressGroupMembers(group: ProgressGroup, members: DeviceTargetRef[]): Promise<void> {
+    const source = progressGroupScope(group.id);
+    for (const member of members) {
+      await this.copyProgressScope(source, playlistProgressScope(member.account_id, member.device_id));
+    }
+  }
+
+  private async mergeProgressGroupMembers(group: ProgressGroup): Promise<void> {
+    const sourceScopes = group.members.map(member => playlistProgressScope(member.account_id, member.device_id));
+    await this.mergeProgressScopes(progressGroupScope(group.id), sourceScopes);
+  }
+
+  async getProgressGroups(): Promise<ProgressGroup[]> {
+    return this.load<ProgressGroup[]>(STORAGE_KEY_PROGRESS_GROUPS, []);
+  }
+
+  async saveProgressGroups(groups: ProgressGroup[]): Promise<void> {
+    await this.save(STORAGE_KEY_PROGRESS_GROUPS, groups);
+  }
+
+  private stripMembersFromProgressGroups(
+    groups: ProgressGroup[],
+    members: DeviceTargetRef[],
+    exceptGroupId?: string,
+  ): ProgressGroup[] {
+    const claimed = new Set(members.map(m => `${m.account_id}:${m.device_id}`));
+    for (const group of groups) {
+      if (exceptGroupId && group.id === exceptGroupId) continue;
+      group.members = group.members.filter(member => !claimed.has(`${member.account_id}:${member.device_id}`));
+    }
+    return groups;
+  }
+
+  async addProgressGroup(group: ProgressGroup): Promise<void> {
+    const groups = await this.getProgressGroups();
+    if (groups.some(item => item.id === group.id)) throw new Error(`Progress group already exists: ${group.id}`);
+    const existingGroups = groups.filter(existing => group.members.some(member =>
+      existing.members.some(item => item.account_id === member.account_id && item.device_id === member.device_id)));
+    for (const existing of existingGroups) {
+      await this.seedProgressGroupMembers(existing, group.members.filter(member =>
+        existing.members.some(item => item.account_id === member.account_id && item.device_id === member.device_id)));
+    }
+    this.stripMembersFromProgressGroups(groups, group.members);
+    groups.push(group);
+    await this.saveProgressGroups(groups);
+    await this.mergeProgressGroupMembers(group);
+  }
+
+  async updateProgressGroup(groupId: string, updates: Partial<ProgressGroup>): Promise<void> {
+    const groups = await this.getProgressGroups();
+    const index = groups.findIndex(group => group.id === groupId);
+    if (index < 0) throw new Error(`Progress group not found: ${groupId}`);
+    const previous = groups[index];
+    const next = { ...previous, ...updates, id: groupId, updated_at: new Date().toISOString() };
+    if (updates.members) {
+      const removed = previous.members.filter(member => !next.members.some(item =>
+        item.account_id === member.account_id && item.device_id === member.device_id));
+      await this.seedProgressGroupMembers(previous, removed);
+      const existingGroups = groups.filter(group => group.id !== groupId && next.members.some(member =>
+        group.members.some(item => item.account_id === member.account_id && item.device_id === member.device_id)));
+      for (const existing of existingGroups) {
+        await this.seedProgressGroupMembers(existing, next.members.filter(member =>
+          existing.members.some(item => item.account_id === member.account_id && item.device_id === member.device_id)));
+      }
+      this.stripMembersFromProgressGroups(groups, next.members, groupId);
+    }
+    groups[index] = next;
+    await this.saveProgressGroups(groups);
+    await this.mergeProgressGroupMembers(next);
+  }
+
+  async removeProgressGroup(groupId: string): Promise<void> {
+    const groups = await this.getProgressGroups();
+    const group = groups.find(item => item.id === groupId);
+    if (!group) throw new Error(`Progress group not found: ${groupId}`);
+    await this.seedProgressGroupMembers(group, group.members);
+    await this.saveProgressGroups(groups.filter(item => item.id !== groupId));
+    await this.updatePlaylistProgressStore(store => {
+      const scope = progressGroupScope(groupId);
+      if (!(scope in store)) return false;
+      delete store[scope];
+      return true;
+    });
+  }
+
+  async findProgressGroup(accountId: string, deviceId: string): Promise<ProgressGroup | null> {
+    const groups = await this.getProgressGroups();
+    return groups.find(group => group.members.some(member =>
+      member.account_id === accountId && member.device_id === deviceId)) || null;
   }
 
   // ===== Webhook管理 =====

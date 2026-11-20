@@ -12,8 +12,8 @@ const load = loader({
     callHostAPI: async () => ({}),
   },
 });
-const { ConfigManager } = load('../src/config/manager.ts');
-const { PlaylistManagerMap } = load('../src/player/manager.ts');
+const { ConfigManager, progressGroupScope } = load('../src/config/manager.ts');
+const { PlaylistManagerMap, resolvePlaylistResumeStart } = load('../src/player/manager.ts');
 const { registerPlaylistHandlers } = load('../src/handlers/playlist.ts');
 const { MusicCommandService } = load('../src/music/service.ts');
 const { TaskExecutor } = load('../src/schedule/executor.ts');
@@ -261,4 +261,51 @@ test('overlapping position and mode saves merge and survive a new config instanc
     assert.deepEqual(await reloaded.getPlaylistProgress(scope, book.id), {
       ...original, position_sec: 15, updated_at: 2, play_mode: 'loop',
     });
+  }));
+
+test('stopping preserves position and resume pushes the saved seek', () =>
+  fixture(async ({ config, map, pushes, request }) => {
+    const manager = await map.getOrCreate(account, speaker);
+    assert.equal(await manager.play(book.id, 0), true);
+    manager.playStartTimeMs = Date.now() - 75_000;
+    await manager.stop(false);
+    assert.equal((await config.getPlaylistProgress(scope, book.id)).position_sec, 75);
+
+    const before = pushes.length;
+    const resumed = await request('POST /player/play', {
+      playlist_id: book.id,
+      start_position: 'resume',
+    });
+    assert.equal(resumed.success, true);
+    assert.equal(pushes.length, before + 1);
+    assert.equal(new URL(pushes.at(-1).url).searchParams.get('seek'), '75');
+  }));
+
+test('progress groups merge the latest position and restore it after removal', () =>
+  fixture(async ({ config }) => {
+    await config.savePlaylistProgress('account:speaker', {
+      playlist_id: book.id, song_id: 32, song_index: 0, position_sec: 30, updated_at: 10,
+    });
+    await config.savePlaylistProgress('account:peer', {
+      playlist_id: book.id, song_id: 21, song_index: 1, position_sec: 90, updated_at: 20,
+    });
+    await config.addProgressGroup({
+      id: 'progress-story',
+      name: '故事播放',
+      members: [
+        { account_id: account, device_id: speaker },
+        { account_id: account, device_id: peer },
+      ],
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    });
+
+    const merged = await config.getPlaylistProgress(progressGroupScope('progress-story'), book.id);
+    assert.equal(merged.position_sec, 90);
+    const resumed = await resolvePlaylistResumeStart(config, { account_id: account, device_id: speaker }, book.id);
+    assert.deepEqual(resumed, { songId: 21, songIndex: 1, positionSec: 90 });
+
+    await config.removeProgressGroup('progress-story');
+    assert.equal((await config.getPlaylistProgress('account:speaker', book.id)).position_sec, 90);
+    assert.equal((await config.getPlaylistProgress('account:peer', book.id)).position_sec, 90);
   }));

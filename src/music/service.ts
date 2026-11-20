@@ -1138,7 +1138,7 @@ export class MusicCommandService {
     // 播放歌单
     pm.setAnnounceOnSongChange(true);
     const ok = resume && resume.songId > 0
-      ? await pm.playPlaylistFromSong(matchedPlaylist.id, resume.songId, undefined, startIndex)
+      ? await pm.playPlaylistFromSong(matchedPlaylist.id, resume.songId, undefined, startIndex, undefined, resume.positionSec)
       : await pm.play(matchedPlaylist.id, startIndex);
     if (ok) {
       songloft.log.info(`[MusicCommandService] Play playlist success: ${matchedPlaylist.name} index=${startIndex}`);
@@ -1967,7 +1967,10 @@ export class MusicCommandService {
 
     if (status.state === 'stopped' || status.state === 'paused') {
       pm.setAnnounceOnSongChange(false);
-      const ok = await pm.replayCurrent();
+      const position = status.state === 'stopped'
+        ? await pm.getSavedPositionForCurrentSong()
+        : 0;
+      const ok = await pm.replayCurrent(position);
       if (ok) {
         songloft.log.info('[MusicCommandService] Playback restarted from current song');
         return;

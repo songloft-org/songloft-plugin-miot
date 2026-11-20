@@ -324,7 +324,7 @@ export class TaskExecutor {
 
     // 计算给定歌单 ID 下的起始位置（歌单 ID 失效重试时会用新 ID 再算一次）
     // songId：有明确目标歌曲时返回其 ID，供 playPlaylistFromSong 按 ID 精确定位（#420）。
-    const resolveStart = async (pid: number): Promise<{ startIndex: number; randomStart: boolean; songId?: number }> => {
+    const resolveStart = async (pid: number): Promise<{ startIndex: number; randomStart: boolean; songId?: number; positionSec?: number }> => {
       if (withSong) {
         // play_playlist_from：按 song_name 或 song_id 定位起始歌曲
         if (params.song_name) {
@@ -359,6 +359,7 @@ export class TaskExecutor {
               startIndex: resume.songIndex,
               randomStart: false,
               songId: resume.songId > 0 ? resume.songId : undefined,
+              positionSec: resume.positionSec,
             };
           }
           songloft.log.info(`[TaskExecutor] 无可续播进度（首次播放该歌单），从第一首开始 playlistId=${pid}`);
@@ -400,8 +401,8 @@ export class TaskExecutor {
     const start = await resolveStart(playlist.id);
     // 有明确目标歌曲时按 songId 定位：缓存 index 可能因歌单增删歌曲而错位（#420）
     const ok = start.songId
-      ? await pm.playPlaylistFromSong(playlist.id, start.songId, playMode, start.startIndex)
-      : await pm.play(playlist.id, start.startIndex, playMode, { randomStart: start.randomStart });
+          ? await pm.playPlaylistFromSong(playlist.id, start.songId, playMode, start.startIndex, undefined, start.positionSec)
+          : await pm.play(playlist.id, start.startIndex, playMode, { randomStart: start.randomStart, seekSeconds: start.positionSec });
     if (!ok) {
       // 歌单 ID 已失效（扫描后 auto-create 歌单 ID 变化）：刷新索引后重试一次
       if (pm.isLastPlayNotFound()) {
@@ -414,8 +415,8 @@ export class TaskExecutor {
         }
         const retryStart = await resolveStart(newPlaylist.id);
         const retryOk = retryStart.songId
-          ? await pm.playPlaylistFromSong(newPlaylist.id, retryStart.songId, playMode, retryStart.startIndex)
-          : await pm.play(newPlaylist.id, retryStart.startIndex, playMode, { randomStart: retryStart.randomStart });
+          ? await pm.playPlaylistFromSong(newPlaylist.id, retryStart.songId, playMode, retryStart.startIndex, undefined, retryStart.positionSec)
+          : await pm.play(newPlaylist.id, retryStart.startIndex, playMode, { randomStart: retryStart.randomStart, seekSeconds: retryStart.positionSec });
         if (!retryOk) {
           throw new Error(`播放歌单失败(重试后): ${newPlaylist.name}`);
         }

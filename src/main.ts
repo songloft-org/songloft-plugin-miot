@@ -41,6 +41,7 @@ import { registerIndexingHandlers } from './handlers/indexing';
 import { registerMemoryHandlers } from './handlers/memory';
 import { registerLyricHandlers } from './handlers/lyric';
 import { registerGroupHandlers } from './handlers/group';
+import { registerProgressGroupHandlers } from './handlers/progress_group';
 import { registerSearchProviderComm } from './handlers/search_registry';
 import { setHostBaseUrl } from './utils/http';
 import { setDebugLog } from './utils/debug';
@@ -268,6 +269,7 @@ async function onInit(): Promise<void> {
   registerMemoryHandlers(router, memoryService, configManager);
   registerLyricHandlers(router);
   registerGroupHandlers(router, configManager, playlistManagerMap);
+  registerProgressGroupHandlers(router, configManager);
 
   // 注册「搜索源候选」的插件间通信入口（其他插件经 comm 自注册）
   registerSearchProviderComm(configManager);

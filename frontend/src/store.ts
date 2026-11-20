@@ -9,6 +9,7 @@ import type {
   ConversationMessage,
   Device,
   DeviceGroup,
+  ProgressGroup,
   IndexStatus,
   MemoryEntity,
   MemoryStats,
@@ -112,6 +113,7 @@ export const state = reactive({
   accounts: [] as Account[],
   devices: [] as AccountDevices[],
   groups: [] as DeviceGroup[],
+  progressGroups: [] as ProgressGroup[],
   currentAccountId: "",
   currentDeviceId: "",
   playlists: [] as Playlist[],
@@ -1165,6 +1167,25 @@ export async function loadGroups(): Promise<void> {
   state.groups = (await get<DeviceGroup[]>("/groups")) || [];
 }
 
+export async function loadProgressGroups(): Promise<void> {
+  state.progressGroups = (await get<ProgressGroup[]>('/progress-groups')) || [];
+}
+
+export async function saveProgressGroup(
+  group: Pick<ProgressGroup, 'name' | 'members'> & { id?: string },
+): Promise<void> {
+  if (group.id) await post('/progress-groups/update', group);
+  else await post('/progress-groups', group);
+  await loadProgressGroups();
+  notify('播放进度共享组已保存', 'success');
+}
+
+export async function deleteProgressGroup(id: string): Promise<void> {
+  await del(`/progress-groups${query({ id })}`);
+  await loadProgressGroups();
+  notify('播放进度共享组已删除', 'success');
+}
+
 export async function saveGroup(
   group: Pick<DeviceGroup, "name" | "members"> & { id?: string },
 ) {
@@ -1328,6 +1349,7 @@ export async function refreshAll(): Promise<void> {
       loadAccountsAndDevices(),
       loadPlaylists(),
       loadGroups(),
+      loadProgressGroups(),
     ]);
     savedConfig = configFingerprint();
     connectStatusStream();
@@ -1428,6 +1450,7 @@ export async function initialize(): Promise<void> {
     retryInitialConfig(),
     retryInitialPlaylists(),
     loadGroups().catch((error) => notify(messageOf(error), "error")),
+    loadProgressGroups().catch((error) => notify(messageOf(error), "error")),
   ]);
 }
 
