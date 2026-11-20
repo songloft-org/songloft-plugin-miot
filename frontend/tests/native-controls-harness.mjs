@@ -82,6 +82,12 @@ export function controls({
     if (name === "./position") return { measurePopover };
     if (name === "./VerticalVolume")
       return { VerticalVolume: "vertical-volume" };
+    if (name === "./horizontal-drag")
+      return {
+        createHorizontalDrag: () => ({ cancel() {} }),
+        horizontalSliderBounds: () => ({ left: 0, width: 1 }),
+        horizontalSliderValue: () => 0,
+      };
     if (name === "@songloft/lynx-plugin-sdk")
       return { getTheme: () => "light" };
     if (name === "../runtime") return { navigation };

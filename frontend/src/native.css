@@ -902,10 +902,13 @@ text {
   width: 100%;
   min-width: 80px;
   height: 32px;
+  flex-shrink: 0;
+  align-self: stretch;
   align-items: center;
   justify-content: center;
 }
 .slider-track {
+  position: relative;
   width: 100%;
   height: 4px;
   border-radius: 2px;

@@ -550,8 +550,15 @@ export class MinaHTTPClient {
    */
   async setVolume(deviceId: string, volume: number): Promise<boolean> {
     const v = Math.max(0, Math.min(100, Math.floor(volume)));
-    const message = { volume: v };
-    return (await this.ubusRequest(deviceId, 'player_set_volume', 'mediaplayer', message)) !== null;
+    const message = { volume: v, media: 'app_ios' };
+    const result = await this.ubusRequest(
+      deviceId,
+      'player_set_volume',
+      'mediaplayer',
+      message,
+      'set-volume',
+    );
+    return this.isDeviceResultOK(result, 'player_set_volume');
   }
 
   /**

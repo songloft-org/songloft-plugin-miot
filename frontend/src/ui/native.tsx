@@ -1,4 +1,4 @@
-import { useContext, useEffect, useRef, useState } from "@lynx-js/react";
+import { useContext, useEffect, useMemo, useRef, useState } from "@lynx-js/react";
 import { Input, TextArea } from "@lynx-js/lynx-ui-input";
 import {
   SliderIndicator,
@@ -14,6 +14,11 @@ import { Overlay } from "./Overlay";
 import { PopupMaterial } from "./PopupMaterial";
 import { measurePopover } from "./position";
 import { VerticalVolume } from "./VerticalVolume";
+import {
+  createHorizontalDrag,
+  horizontalSliderBounds,
+  horizontalSliderValue,
+} from "./horizontal-drag";
 import { ThemeContext, CompactSettingsContext, themeColors } from "./theme";
 
 type Props = Record<string, any>;
@@ -306,6 +311,24 @@ export function SlSlider({
 }: Props) {
   const inheritedDisabled = useContext(DisabledContext);
   disabled = disabled || inheritedDisabled;
+  const native =
+    typeof SystemInfo !== "undefined" &&
+    String((SystemInfo as any).platform).toLowerCase() !== "web";
+  if (native) {
+    return (
+      <HorizontalSlider
+        modelValue={modelValue}
+        min={min}
+        max={max}
+        disabled={disabled}
+        onUpdateModelValue={onUpdateModelValue}
+        onChange={onChange}
+        onCommit={onCommit}
+        onDragStart={onDragStart}
+        aria-label={props["aria-label"]}
+      />
+    );
+  }
   const [draft, setDraft] = useState<number | null>(null);
   const normalize = (ratio: number) =>
     Math.round(Number(min) + ratio * (Number(max) - Number(min)));
@@ -320,6 +343,9 @@ export function SlSlider({
       step={1 / Math.max(1, Number(max) - Number(min))}
       onDragging={(ratio: number) => {
         if (draft === null) onDragStart?.();
+        setDraft(normalize(ratio));
+      }}
+      onValueChange={(ratio: number) => {
         setDraft(normalize(ratio));
       }}
       onValueCommit={(ratio: number) => {
@@ -337,6 +363,159 @@ export function SlSlider({
         </SliderTrack>
       </view>
     </SliderRoot>
+  );
+}
+
+let horizontalSliderSequence = 0;
+
+function HorizontalSlider({
+  modelValue = 0,
+  min = 0,
+  max = 100,
+  disabled,
+  onUpdateModelValue,
+  onChange,
+  onCommit,
+  onDragStart,
+  ...props
+}: Props) {
+  const inheritedDisabled = useContext(DisabledContext);
+  disabled = disabled || inheritedDisabled;
+  const id = useRef(`horizontal-slider-${++horizontalSliderSequence}`);
+  const callbacks = useRef({
+    onUpdateModelValue,
+    onChange,
+    onCommit,
+    onDragStart,
+  });
+  callbacks.current = {
+    onUpdateModelValue,
+    onChange,
+    onCommit,
+    onDragStart,
+  };
+  const [draft, setDraft] = useState<number | null>(null);
+  const dragStarted = useRef(false);
+  const web =
+    typeof SystemInfo !== "undefined" &&
+    String((SystemInfo as any).platform).toLowerCase() === "web";
+  const minValue = Number(min);
+  const maxValue = Number(max);
+  const pointerX = (event: any) =>
+    Number(
+      web
+        ? (event.clientX ??
+            event.touches?.[0]?.clientX ??
+            event.changedTouches?.[0]?.clientX ??
+            event.detail?.x)
+        : (event.detail?.x ?? event.touches?.[0]?.clientX),
+    );
+  const measure = (selector: string) =>
+    new Promise<{ left: number; width: number }>((resolve, reject) =>
+      lynx
+        .createSelectorQuery()
+        .select(selector)
+        .invoke({
+          method: "boundingClientRect",
+          success: resolve as any,
+          fail: reject,
+        })
+        .exec(),
+    );
+  const drag = useMemo(
+    () =>
+      createHorizontalDrag(
+        () =>
+          Promise.all([
+            measure("#" + id.current),
+            measure("#miot-app"),
+          ]).then(([track, root]) =>
+            horizontalSliderBounds(track, root, web),
+          ),
+        (x, bounds) => {
+          const value = horizontalSliderValue(
+            x,
+            bounds.left,
+            bounds.width,
+            minValue,
+            maxValue,
+          );
+          return value === null ? null : Math.round(value);
+        },
+        (value) => {
+          setDraft(value);
+          if (!dragStarted.current) {
+            dragStarted.current = true;
+            callbacks.current.onDragStart?.();
+          }
+        },
+        (value) => {
+          dragStarted.current = false;
+          setDraft(null);
+          callbacks.current.onUpdateModelValue?.(value);
+          callbacks.current.onChange?.(value);
+          callbacks.current.onCommit?.(value);
+        },
+      ),
+    [maxValue, minValue, web],
+  );
+  useEffect(() => () => drag.cancel(), [drag]);
+  useEffect(() => {
+    if (disabled) {
+      drag.cancel();
+      dragStarted.current = false;
+      setDraft(null);
+    }
+  }, [disabled, drag]);
+  const shown = Number(draft ?? modelValue);
+  const ratio =
+    (shown - minValue) / Math.max(1, maxValue - minValue);
+  const percent = `${Math.max(0, Math.min(1, ratio)) * 100}%`;
+  return (
+    <view
+      id={id.current}
+      flatten={false}
+      className="sl-slider"
+      accessibility-role="adjustable"
+      accessibility-label={props["aria-label"]}
+      consume-slide-event={[[-180, 180]]}
+      catchtouchstart={disabled ? undefined : (event) => drag.start(pointerX(event))}
+      catchtouchmove={disabled ? undefined : (event) => drag.move(pointerX(event))}
+      catchtouchend={disabled ? undefined : (event) => drag.end(pointerX(event))}
+      catchtouchcancel={() => {
+        drag.cancel();
+        dragStarted.current = false;
+        setDraft(null);
+      }}
+      catchmousedown={disabled ? undefined : (event) => drag.start(pointerX(event))}
+      catchmousemove={disabled ? undefined : (event) => drag.move(pointerX(event))}
+      catchmouseup={disabled ? undefined : (event) => drag.end(pointerX(event))}
+      global-bindmouseup={disabled ? undefined : () => drag.end()}
+    >
+      <view className="slider-rail">
+        <view className="slider-track">
+          <view
+            className="slider-indicator"
+            style={{
+              position: "absolute",
+              left: "0px",
+              top: "0px",
+              height: "100%",
+              width: percent,
+            }}
+          />
+          <view
+            className="slider-thumb"
+            style={{
+              position: "absolute",
+              left: percent,
+              top: "50%",
+              transform: "translate(-50%, -50%)",
+            }}
+          />
+        </view>
+      </view>
+    </view>
   );
 }
 export function SlSelect({

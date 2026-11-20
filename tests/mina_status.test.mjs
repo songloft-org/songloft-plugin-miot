@@ -51,7 +51,11 @@ async function withClient(run) {
   http.fetchWithRedirects = async (url, options) => {
     const params = new URLSearchParams(options.body);
     const request = { url, options, device: params.get('deviceId'), method: params.get('method') };
-    requests.push(request);
+    const rawMessage = params.get('message');
+    requests.push({
+      ...request,
+      message: rawMessage ? JSON.parse(rawMessage) : undefined,
+    });
     return fetcher(request);
   };
   const client = new MinaHTTPClient({
@@ -95,6 +99,20 @@ test('active volume readback immediately observes a completed volume control', a
     h.setFetch(async () => response(200, { code: 0, data: { info: JSON.stringify({ status: 1, volume: 60 }) } }));
     assert.equal(await h.client.getVolume('speaker'), 60);
     assert.equal(h.requests.at(-1).method, 'player_get_play_status');
+  });
+});
+
+test('volume control carries the media context and rejects device-level errors', async () => {
+  await withClient(async h => {
+    h.setFetch(request => {
+      if (request.method === 'player_set_volume') {
+        return response(200, { code: 0, data: { code: 7, message: 'unsupported' } });
+      }
+      return response();
+    });
+
+    assert.equal(await h.client.setVolume('speaker', 60), false);
+    assert.deepEqual(h.requests.at(-1).message, { volume: 60, media: 'app_ios' });
   });
 });
 
