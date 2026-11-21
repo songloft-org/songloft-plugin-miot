@@ -28,6 +28,19 @@ interface PreparedPlayback {
 /** 两轮停止之间的间隔，只需覆盖固件转入媒体播放所需的落定时间。 */
 const INTERRUPT_SETTLE_DELAY_MS = 600;
 
+function encodePlaybackQueryForSpeaker(url: string, serverHost?: string): string {
+  const base = serverHost?.trim().replace(/\/$/, '');
+  if (!base || !url.startsWith(base + '/')) return url;
+
+  const playbackPath = url.slice(base.length);
+  // The host restores space-delimited options from a leading access_token.
+  // Only adapt Songloft playback paths with options that round-trip without escaping.
+  const playbackQuery = /^\/api\/v1\/songs\/\d+\/play(?:\.(?:flv|m3u8|mp3))?\?access_token=[\w.-]+(?:&(?:format|quality|normalize|radio_transcode|seek|speed|media|track|hls)=[\w.-]+)+$/;
+  if (!playbackQuery.test(playbackPath)) return url;
+
+  return base + playbackPath.replace(/&/g, '%20');
+}
+
 /** 设备信息（合并了API数据和本地配置） */
 export interface DeviceInfo {
   deviceID: string;
@@ -213,7 +226,11 @@ export class MinaService {
         this.configManager.getConfig(),
       ]);
       if (!isCurrent()) return null;
-      const play = await client.preparePlayByUrl(deviceId, url, hardware, config.music_api_model_disabled || [],
+      const playbackURL = encodePlaybackQueryForSpeaker(url, config.server_host);
+      if (playbackURL !== url) {
+        songloft.log.info('[MinaService] Encoded Songloft playback query separators for device=' + deviceId);
+      }
+      const play = await client.preparePlayByUrl(deviceId, playbackURL, hardware, config.music_api_model_disabled || [],
         !!config.indicator_light_enabled, config.default_cover_id,
         typeof song === 'string'
           ? { enabled: !!config.touchscreen_lyrics_enabled, songName: song || '' }

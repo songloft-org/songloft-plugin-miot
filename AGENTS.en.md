@@ -43,6 +43,7 @@ The Node 22 type-stripping flag is required for tests that import TS directly. B
 ## Plugin conventions for server playback APIs
 
 - To transcode a station to MP3, probe `/play.mp3` on the local host API. When it is supported, send the speaker URL with `access_token` as the sole query parameter so the firmware can receive the complete URL. Older hosts use `radio_transcode=mp3`.
+- In song playback URLs sent to speakers for the configured host, put `access_token` first and delimit round-trippable playback options with `%20`. Both MiNA APIs share this step. External and signed links keep their original queries.
 - Volume normalization: the `volume_normalize` setting makes `URLBuilder.buildSongURL` append `normalize=1&format=mp3`. Prewarming the next track must use the same transcode parameters.
 - For no-import direct links whose format is unsupported by the speaker, such as webm/opus, use the parent's `/api/v1/proxy/transcode` endpoint (`songloft-org/songloft#394`). Place the token first in the query string to avoid firmware mishandling `&`.
 - A countdown started when pushing the URL includes cold download/transcode time as listening time. Plugin #61 observed first-byte waits of `dur_ms=22392/24348/22381`: the first 20-odd seconds were blank and the tail was cut early. The server uses live streams and prewarming; the plugin still needs measured device progress for calibration. Download completion is not playback completion.

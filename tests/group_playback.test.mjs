@@ -106,6 +106,38 @@ for (const hardware of ['LX06', 'OH2P', 'L15A']) {
   });
 }
 
+test('both speaker APIs receive encoded Songloft playback options for the same group', async () => {
+  await fixture(async h => {
+    const prefix = 'https://host.test/music/api/v1/songs/7/play?access_token=fixture-token';
+    const input = prefix + '&format=mp3&seek=12&speed=1.25';
+    const expected = prefix + '%20format=mp3%20seek=12%20speed=1.25';
+
+    assert.deepEqual(await h.service.playURLs(targets, input), [true, true]);
+    const plays = h.requests.filter(isPlay);
+    assert.equal(plays.length, 2);
+    const direct = plays.find(r => r.method === 'player_play_url');
+    const music = plays.find(r => r.method === 'player_play_music');
+    assert.equal(direct.message.url, expected);
+    assert.equal(JSON.parse(music.message.music).payload.audio_items[0].stream.url, expected);
+  }, { server_host: 'https://host.test/music/', music_api_model_disabled: ['LX06'] });
+});
+
+test('the speaker URL adapter leaves other URLs and already encoded options intact', async () => {
+  await fixture(async h => {
+    const path = '/api/v1/songs/7/play.mp3?access_token=fixture-token';
+    for (const input of [
+      'http://host.test' + path,
+      'http://host.test' + path + '%20seek=12',
+      'http://host.test' + path + '&seek=12&sig=signed',
+      'http://host.test' + path + '&media=some%20value',
+      'http://host.test.example' + path + '&seek=12',
+    ]) {
+      assert.equal(await h.service.playURL('account', 'LX06', input), true);
+      assert.equal(h.requests.at(-1).message.url, input);
+    }
+  }, { server_host: 'http://host.test', music_api_model_disabled: ['LX06'] });
+});
+
 test('LX06 + OH2P playlist starts together after twenty minutes idle despite a slow pre-stop endpoint', async () => {
   await fixture(async h => {
     const manager = new PlaylistManager('account', 'LX06', h.service, h.configs);
