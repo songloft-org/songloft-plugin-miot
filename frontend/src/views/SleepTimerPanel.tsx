@@ -6,21 +6,17 @@ import {
   styleObject,
   renderItems,
 } from '../page-state';
-import { computed, ref } from '../page-state';
+import { ref } from '../page-state';
 import { sleepTimerLabel } from '../sleepTimer';
 import type { SleepTimerStatus } from '../types';
 import SlButton from '../ui/SlButton.tsx';
 import SlIcon from '../ui/SlIcon.tsx';
 import SlInput from '../ui/SlInput.tsx';
-// 延迟停止面板本体：按时长 / 按歌曲两组档位 + 自定义输入。
-//
-// 宿主外壳有两处，所以正文单独成组件，档位列表不再各写一份：
-// - PlayerSleepTimerPopup：工具栏按钮旁带锚点的浮层（`.player-sleep-popup`）
-// - PlayerBarMorePopup：「更多」菜单里的二级面板（菜单项拿不到锚点，就地展开）
+// 延迟停止的状态、档位和自定义输入。
 const pageState = {
   name: 'SleepTimerPanel',
   props: {
-    status: { type: null, required: true },
+    status: { type: null, required: false },
     busy: { type: Boolean, required: false },
     isLive: { type: Boolean, required: false },
   },
@@ -31,7 +27,6 @@ const pageState = {
     const customMode = ref<'time' | 'songs' | ''>('');
     const customValue = ref('');
     const customError = ref('');
-    const statusLabel = computed(() => sleepTimerLabel(props.status));
     function choose(mode: 'time' | 'songs', value: number): void {
       customError.value = '';
       emit('set', mode, value);
@@ -57,7 +52,6 @@ const pageState = {
       customMode,
       customValue,
       customError,
-      statusLabel,
       choose,
       showCustom,
       submitCustom,
@@ -68,16 +62,41 @@ const pageState = {
     return bindings;
   },
 };
-export default function SleepTimerPanel(props: any) {
+export default function SleepTimerPanel(props: {
+  status: SleepTimerStatus | undefined;
+  readFailed: boolean;
+  busy?: boolean;
+  isLive: boolean;
+  onRetry: () => void;
+  onSet: (mode: 'time' | 'songs', value: number) => void;
+  onCancel: () => void;
+}) {
   const vm = usePageState(pageState, props);
+  const { status, readFailed, onRetry } = props;
+  const statusLabel = readFailed
+    ? '定时状态读取失败'
+    : !status
+      ? '正在读取定时状态…'
+      : sleepTimerLabel(status) || '未设置延迟停止';
   return (
     <>
-      {vm.status.active ? (
-        <NativeView className="sleep-timer-status">
-          <SlIcon name="alarm_on" size={18} playerIcon></SlIcon>
-          <NativeView>
-            <text>{displayText(vm.statusLabel)}</text>
+      <NativeView className="sleep-timer-status">
+        {!readFailed && (
+          <SlIcon
+            name={status?.active ? 'alarm_on' : 'schedule'}
+            size={18}
+            playerIcon
+          />
+        )}
+        <text className="sleep-timer-status-label" text-maxline="1">
+          {statusLabel}
+        </text>
+        {readFailed && (
+          <NativeView bindtap={onRetry} button>
+            <text>重试</text>
           </NativeView>
+        )}
+        {status?.active && (
           <NativeView
             disabled={vm.busy}
             bindtap={($event: any) => {
@@ -87,8 +106,8 @@ export default function SleepTimerPanel(props: any) {
           >
             <text>取消定时</text>
           </NativeView>
-        </NativeView>
-      ) : null}
+        )}
+      </NativeView>
       <NativeView className="sleep-timer-section">
         <NativeView className="sleep-timer-heading">
           <SlIcon name="schedule" size={16} playerIcon></SlIcon>
@@ -184,9 +203,9 @@ export default function SleepTimerPanel(props: any) {
             <NativeView
               className={classes({
                 selected:
-                  vm.status.active &&
-                  vm.status.mode === 'songs' &&
-                  vm.status.remaining === 1,
+                  status?.active &&
+                  status.mode === 'songs' &&
+                  status.remaining === 1,
               })}
               disabled={vm.busy}
               bindtap={($event: any) => {
@@ -199,9 +218,9 @@ export default function SleepTimerPanel(props: any) {
             <NativeView
               className={classes({
                 selected:
-                  vm.status.active &&
-                  vm.status.mode === 'songs' &&
-                  vm.status.remaining === 3,
+                  status?.active &&
+                  status.mode === 'songs' &&
+                  status.remaining === 3,
               })}
               disabled={vm.busy}
               bindtap={($event: any) => {
@@ -214,9 +233,9 @@ export default function SleepTimerPanel(props: any) {
             <NativeView
               className={classes({
                 selected:
-                  vm.status.active &&
-                  vm.status.mode === 'songs' &&
-                  vm.status.remaining === 5,
+                  status?.active &&
+                  status.mode === 'songs' &&
+                  status.remaining === 5,
               })}
               disabled={vm.busy}
               bindtap={($event: any) => {

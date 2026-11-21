@@ -1189,6 +1189,132 @@ function PlayerLyrics({
   );
 }
 
+function SleepTimerPopup({
+  accountId,
+  deviceId,
+  hostVisible,
+  isLive,
+  captureTarget,
+  close,
+}: {
+  accountId: string;
+  deviceId: string;
+  hostVisible: boolean;
+  isLive: boolean;
+  captureTarget: string;
+  close: () => void;
+}) {
+  const { width, height } = useContext(Viewport);
+  const [contentHeight, setContentHeight] = useState(0);
+  const [status, setStatus] = useState<SleepTimerStatus>();
+  const [readFailed, setReadFailed] = useState(false);
+  const [retry, setRetry] = useState(0);
+  const maxScrollHeight = Math.max(1, height - 112);
+  const scrollHeight = Math.min(
+    contentHeight || maxScrollHeight,
+    maxScrollHeight,
+  );
+  const mounted = useRef(false);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
+  useEffect(() => {
+    if (!hostVisible || !deviceId) return;
+    const path =
+      "/voice-commands/sleep-timer" +
+      query({ account_id: accountId, device_id: deviceId });
+    let stopped = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const refresh = async () => {
+      try {
+        const result = await get<SleepTimerStatus>(path);
+        if (stopped) return;
+        setStatus(result);
+        setReadFailed(false);
+        if (result.active) timer = setTimeout(refresh, 5000);
+      } catch {
+        if (!stopped) setReadFailed(true);
+      }
+    };
+    void refresh();
+    return () => {
+      stopped = true;
+      clearTimeout(timer);
+    };
+  }, [hostVisible, accountId, deviceId, retry]);
+  async function changeTimer(
+    path: string,
+    options?: { mode: "time" | "songs"; value: number },
+  ) {
+    await post(path, { account_id: accountId, device_id: deviceId, ...options });
+    if (
+      mounted.current &&
+      navigation.playerPopup === "sleep" &&
+      accountId === state.currentAccountId &&
+      deviceId === state.currentDeviceId
+    ) {
+      close();
+    }
+  }
+  return (
+    <Modal
+      className={classes([
+        "player-popup player-popup-sleep",
+        // Measure the scroll content before showing the centered card.
+        !contentHeight && "sleep-popup-measuring",
+      ])}
+      captureTarget={captureTarget}
+      cardStyle={{
+        width: `${Math.min(360, width - 32)}px`,
+        maxHeight: `${Math.max(1, height - 32)}px`,
+      }}
+      close={close}
+      showClose={false}
+    >
+      <view className="sleep-popup-header">
+        <text className="section-title">延迟停止</text>
+        <SlButton
+          variant="icon"
+          icon="close"
+          title="关闭延迟停止"
+          onClick={close}
+        />
+      </view>
+      <scroll-view
+        className="sleep-popup-scroll"
+        scroll-y
+        style={{ height: `${scrollHeight}px` }}
+      >
+        <view
+          className="sleep-panel-content"
+          bindlayoutchange={(event) => {
+            const next = event.detail?.height;
+            if (next > 0) setContentHeight(next);
+          }}
+        >
+          <SleepTimerPanel
+            status={status}
+            readFailed={readFailed}
+            isLive={isLive}
+            onRetry={() => setRetry((attempt) => attempt + 1)}
+            onSet={(mode: "time" | "songs", value: number) =>
+              run(() =>
+                changeTimer("/voice-commands/sleep-timer", { mode, value }),
+              )
+            }
+            onCancel={() =>
+              run(() => changeTimer("/voice-commands/sleep-timer/cancel"))
+            }
+          />
+        </view>
+      </scroll-view>
+    </Modal>
+  );
+}
+
 function Player({ lyricCache }: { lyricCache: Map<number, LyricLine[]> }) {
   const theme = useContext(ThemeContext);
   const { width, height, locateSong } = useContext(Viewport),
@@ -1216,16 +1342,7 @@ function Player({ lyricCache }: { lyricCache: Map<number, LyricLine[]> }) {
   const favorite = details.isFavorite.value,
     setFavorite = details.setFavorite;
   const swipeStart = useRef<number | null>(null);
-  const [sleepPanelHeight, setSleepPanelHeight] = useState(320);
   const [favoriteBusy, setFavoriteBusy] = useState(false);
-  const [sleepError, setSleepError] = useState(false);
-  const [sleepRetry, setSleepRetry] = useState(0);
-  const [sleep, setSleep] = useState<SleepTimerStatus>({
-    active: false,
-    mode: "time",
-    remaining: 0,
-    total: 0,
-  });
   const identity = `${state.currentAccountId}:${state.currentDeviceId}:${song?.id || ""}`;
   const identityRef = useRef(identity);
   identityRef.current = identity;
@@ -1234,8 +1351,6 @@ function Player({ lyricCache }: { lyricCache: Map<number, LyricLine[]> }) {
     if (showLyrics) void details.ensureLyrics();
     return details.dispose;
   }, [song?.id]);
-  const sleepOpen =
-    navigation.playerPopup === "sleep" && navigation.hostVisible;
   const showLyrics =
     navigation.hostVisible &&
     navigation.page === "player" &&
@@ -1243,36 +1358,6 @@ function Player({ lyricCache }: { lyricCache: Map<number, LyricLine[]> }) {
   useEffect(() => {
     if (showLyrics) void details.ensureLyrics();
   }, [details, showLyrics]);
-  const sleepRevision = useRef(0);
-  useEffect(() => {
-    if (!sleepOpen || !state.currentDeviceId) return;
-    const account = state.currentAccountId;
-    const device = state.currentDeviceId;
-    let stopped = false;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    setSleep({ active: false, mode: "time", remaining: 0, total: 0 });
-    setSleepError(false);
-    const refresh = async () => {
-      const revision = sleepRevision.current;
-      try {
-        const result = await get<SleepTimerStatus>(
-          "/voice-commands/sleep-timer" +
-            query({ account_id: account, device_id: device }),
-        );
-        if (stopped || revision !== sleepRevision.current) return;
-        setSleep(result);
-        setSleepError(false);
-        if (result.active) timer = setTimeout(refresh, 5000);
-      } catch {
-        if (!stopped && revision === sleepRevision.current) setSleepError(true);
-      }
-    };
-    void refresh();
-    return () => {
-      stopped = true;
-      clearTimeout(timer);
-    };
-  }, [sleepOpen, sleepRetry, state.currentAccountId, state.currentDeviceId]);
   async function toggleFavorite() {
     if (!song || favoriteBusy) return;
     const previous = favorite;
@@ -1290,18 +1375,6 @@ function Player({ lyricCache }: { lyricCache: Map<number, LyricLine[]> }) {
       throw error;
     } finally {
       setFavoriteBusy(false);
-    }
-  }
-  async function setTimer(mode: "time" | "songs", value: number) {
-    const result = await post<SleepTimerStatus>("/voice-commands/sleep-timer", {
-      ...target(),
-      mode,
-      value,
-    });
-    if (identity === identityRef.current) {
-      sleepRevision.current++;
-      setSleep(result);
-      navigation.playerPopup = "";
     }
   }
   const preferredCoverSize = narrow
@@ -1737,71 +1810,15 @@ function Player({ lyricCache }: { lyricCache: Map<number, LyricLine[]> }) {
         </Modal>
       )}
       {popup === "sleep" && (
-        <Modal
-          className="player-popup player-popup-sleep"
+        <SleepTimerPopup
+          key={JSON.stringify([state.currentAccountId, state.currentDeviceId])}
+          accountId={state.currentAccountId}
+          deviceId={state.currentDeviceId}
+          hostVisible={navigation.hostVisible}
+          isLive={!!song?.is_live}
           captureTarget={captureTarget}
-          cardStyle={{
-            width: `${Math.min(360, width - 32)}px`,
-            maxHeight: `${Math.max(1, height - 32)}px`,
-          }}
           close={closePopup}
-          showClose={false}
-        >
-          <view className="sleep-popup-header">
-            <text className="section-title">延迟停止</text>
-            <SlButton
-              variant="icon"
-              icon="close"
-              title="关闭延迟停止"
-              onClick={() => {
-                navigation.playerPopup = "";
-              }}
-            />
-          </view>
-          <scroll-view
-            className="sleep-popup-scroll"
-            scroll-y
-            style={{
-              height: `${Math.max(1, Math.min(sleepPanelHeight, height - 112))}px`,
-            }}
-          >
-            <view
-              className="sleep-panel-content"
-              bindlayoutchange={(event) => {
-                const next = event.detail?.height;
-                if (next > 0) setSleepPanelHeight(next);
-              }}
-            >
-              {sleepError && (
-                <SlButton
-                  label="定时状态读取失败，点击重试"
-                  onClick={() => setSleepRetry((attempt) => attempt + 1)}
-                />
-              )}
-              <SleepTimerPanel
-                status={sleep}
-                isLive={!!song?.is_live}
-                onSet={(mode: "time" | "songs", value: number) =>
-                  run(() => setTimer(mode, value))
-                }
-                onCancel={() =>
-                  run(async () => {
-                    await post("/voice-commands/sleep-timer/cancel", target());
-                    if (identity !== identityRef.current) return;
-                    sleepRevision.current++;
-                    setSleep({
-                      active: false,
-                      mode: "time",
-                      remaining: 0,
-                      total: 0,
-                    });
-                    navigation.playerPopup = "";
-                  })
-                }
-              />
-            </view>
-          </scroll-view>
-        </Modal>
+        />
       )}
     </view>
   );

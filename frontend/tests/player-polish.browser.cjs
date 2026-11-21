@@ -40,6 +40,9 @@ const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
     failMore = true,
     moreRequests = 0,
     releaseInitial;
+  let holdTimerRead = false;
+  let releaseTimerRead;
+  let failTimerRead = false;
   await page.setViewport({ width, height, hasTouch: width < 600 });
   page.on("pageerror", (error) => errors.push(error.message));
   await page.evaluateOnNewDocument(() => {
@@ -82,7 +85,27 @@ const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
               `[${String(Math.floor((i * 5) / 60)).padStart(2, "0")}:${String((i * 5) % 60).padStart(2, "0")}.00]Lyric line ${i}`,
           ).join("\n"),
         };
-      if (path === "/voice-commands/sleep-timer") data = timer;
+      if (path === "/voice-commands/sleep-timer") {
+        data = timer;
+        if (method === "GET" && failTimerRead) {
+          failTimerRead = false;
+          void request.respond({
+            status: 503,
+            contentType: "application/json",
+            body: JSON.stringify({ success: false, error: "fixture unavailable" }),
+          });
+          return;
+        }
+        if (method === "GET" && holdTimerRead) {
+          releaseTimerRead = () =>
+            request.respond({
+              status: 200,
+              contentType: "application/json",
+              body: JSON.stringify({ success: true, data }),
+            });
+          return;
+        }
+      }
       if (path === "/playlists/1/songs") {
         const offset = Number(url.searchParams.get("offset") || 0),
           limit = Number(url.searchParams.get("limit") || 100);
@@ -439,15 +462,49 @@ const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
       commands.find((c) => c.path === "/voice-commands/sleep-timer").body.value,
       27,
     );
+    holdTimerRead = true;
+    await inspect(() => {
+      const frames = (window.sleepPopupFrames = []);
+      function sample() {
+        const popup = document
+          .getElementById("plugin-view")
+          ?.shadowRoot?.querySelector(".player-popup-sleep");
+        const card = popup?.querySelector(".modal-card");
+        const rect = card?.getBoundingClientRect();
+        if (rect?.height && Number(getComputedStyle(popup).opacity) > 0) {
+          frames.push([rect.x, rect.y, rect.width, rect.height]);
+        }
+        if (window.sleepPopupFrames === frames) requestAnimationFrame(sample);
+      }
+      requestAnimationFrame(sample);
+    });
     await openSleep();
+    assert.ok(releaseTimerRead, "timer status request is still pending");
+    const pending = await sleepBounds("pending active timer");
+    holdTimerRead = false;
+    await releaseTimerRead();
+    await wait(() =>
+      document
+        .getElementById("plugin-view")
+        .shadowRoot.querySelector(".sleep-timer-status")
+        ?.textContent.includes("取消定时"),
+    );
+    await pause(180);
     const active = await sleepBounds("active");
-    assert.ok(
-      await inspect(
-        () =>
-          !!document
-            .getElementById("plugin-view")
-            .shadowRoot.querySelector(".sleep-timer-status"),
-      ),
+    assert.equal(pending.h, initial.h, "reopening starts at the usual height");
+    const frames = await inspect(() => {
+      const frames = window.sleepPopupFrames;
+      delete window.sleepPopupFrames;
+      return frames;
+    });
+    assert.ok(frames.length > 2, "sampled visible popup frames");
+    const visibleBounds = [
+      ...new Set(frames.map((frame) => JSON.stringify(frame))),
+    ];
+    assert.deepEqual(
+      visibleBounds,
+      [JSON.stringify([active.x, active.y, active.w, active.h])],
+      `the visible popup never moves or resizes while opening with an active timer: ${visibleBounds.join(" → ")}`,
     );
     await page.screenshot({ path: `/tmp/miot-sleep-${width}x${height}.png` });
     await click(".sleep-timer-status .native-button", "取消定时");
@@ -463,6 +520,19 @@ const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
           .getElementById("plugin-view")
           .shadowRoot.querySelector(".player-popup-sleep"),
     );
+    failTimerRead = true;
+    await openSleep();
+    const failed = await sleepBounds("failed status read");
+    await click(".sleep-timer-status .native-button", "重试");
+    await wait(() =>
+      document
+        .getElementById("plugin-view")
+        .shadowRoot.querySelector(".sleep-timer-status")
+        ?.textContent.includes("未设置延迟停止"),
+    );
+    assert.equal(failed.h, initial.h, "status error fits the normal popup");
+    assert.equal((await sleepBounds("retried timer status")).h, initial.h);
+    await click(".sleep-popup-header .sl-button", "关闭延迟停止");
     // Manually browsing lyrics suspends following until explicitly resumed.
     if (width < 600) await click(".page-dot", "显示歌词");
     await wait(

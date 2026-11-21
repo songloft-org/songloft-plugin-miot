@@ -10,6 +10,13 @@ Include rule, scope, full owner/repo#number, failure/fix commit SHAs, actual val
 
 ## Entries
 
+### UI-006: Keep dialog geometry stable during asynchronous status updates
+
+- Scope covers the MIoT player's sleep timer dialog. The reproduction baseline is `72e26dd539fcfe340814cb7e72ccde363c544f81`.
+- With the timer status response held in Docker Chromium 121 at 390×740, the old dialog measured 345, 331, and 271 px high in successive visible states. The saved height from the previous opening and the added status row caused the jump. Measuring only after the response misses it.
+- Measure the scroll content on each opening so the first visible frame uses the measured height. Loading, inactive, active, and retry states share a fixed-height row. The [player browser regression](frontend/tests/player-polish.browser.cjs) compares card bounds frame by frame and checks setting and canceling timers, retry, and the live stream layout.
+- Seen 1× (2026-11-21). Web fallback passed at 320×520, 390×740, 740×360, and 1100×740. Native Lynx and physical speakers were Not run.
+
 ### MIOT: Put station MP3 transcoding in the path
 
 - Scope is [songloft-org/songloft#579](https://github.com/songloft-org/songloft/issues/579#issuecomment-7041571686), plugin baseline `41d34b9d0230cd8b359b2f15c6fcf1e67b5eae90`.

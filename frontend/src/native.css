@@ -1849,11 +1849,16 @@ text {
 }
 
 .sleep-timer-status {
-  min-height: 48px;
+  height: 48px;
+  flex-shrink: 0;
   flex-direction: row;
   align-items: center;
   gap: 8px;
-  padding: 8px 16px;
+}
+.sleep-timer-status-label {
+  flex: 1;
+  min-width: 0;
+  text-overflow: ellipsis;
 }
 .sleep-timer-section {
   padding: 12px 16px;
@@ -2497,6 +2502,9 @@ text {
   gap: 0;
   border-radius: 20px;
 }
+.sleep-popup-measuring {
+  opacity: 0;
+}
 .sleep-popup-header {
   flex-direction: row;
   align-items: center;
@@ -2524,10 +2532,6 @@ text {
 }
 .sleep-timer-section {
   padding: 12px 0;
-}
-.sleep-timer-status {
-  padding: 8px 0;
-  flex-wrap: wrap;
 }
 .sleep-timer-options > .native-button {
   height: 44px;
