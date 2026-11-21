@@ -10,6 +10,14 @@
 
 ## 条目
 
+### MIOT：用路径表达电台 MP3 转码
+
+- 范围：[songloft-org/songloft#579](https://github.com/songloft-org/songloft/issues/579#issuecomment-7041571686)，插件基线 `41d34b9d0230cd8b359b2f15c6fcf1e67b5eae90`。
+- 报告中的 L17A 下发地址在加入第二个查询参数后出现无声。日志会一起脱敏 token 后的参数，MiNA 下发成功的回执也无法确证设备收到的完整 URL。
+- 先用宿主本机的 HEAD 探测 MP3 路径，支持时把转码放进路径，只把访问 token 放进查询串。旧宿主使用已有查询参数。回归用普通、FLV、HLS 地址验证实际下发 URL，并校验旧宿主以及歌曲的格式、均衡、seek、倍速。L17A 实际发声待复测。
+- 同次实机补查：在后端 Docker dev `6c7a9a23d8cce6779be7dedde2e3e3892e796325` 上用 `npm run dev -- --once` 安装 MIoT 诊断包。OH2 走 `player_play_music` 时，插件表单解码后仍包含 `a=1&b=2`，但 MP3 服务收到 `a=1%20b=2`，HTTP 和日常 HTTPS 地址均可播放。HTTPS 用等长 318 字符对照和实际进度确认结果。OH2 走 `player_play_url` 时单参数和双参数均未发出取流请求，无法从该设备验证直链接口的参数行为。宿主中间件回归确认 token 在首位时能还原空格后的转码和续播参数。原 MIoT 安装包已按摘要恢复。
+- Seen 1× (2026-11-21)。
+
 ### UI-005：窄屏布局应省略桌面专用文字节点
 
 - 范围：[songloft-org/songloft-plugin-miot#144](https://github.com/songloft-org/songloft-plugin-miot/issues/144#issuecomment-7001389689) 的 iOS Lynx 歌单和设置列表。报告使用 `v2026.11.19.1`，源码 `b1f685d8fffaf3d91e6bd9b0c948f608cc7a6c95`。

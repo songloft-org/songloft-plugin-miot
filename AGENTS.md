@@ -42,6 +42,7 @@ Node 22 的类型擦除参数用于直接导入 TS 的测试。构建会先生�
 
 ## 服务端播放接口的插件侧约定
 
+- 电台转为 MP3 时，先通过宿主本机接口探测 `/play.mp3`。支持时只给音箱下发一个 `access_token` 查询参数，避免固件丢失后续参数；旧宿主使用 `radio_transcode=mp3`。
 - 音量均衡：设置页 `volume_normalize` → `URLBuilder.buildSongURL` 追加 `normalize=1&format=mp3`；预热下一首必须携带相同转码参数。
 - 不入库直链遇到音箱不支持的 webm/opus 等格式，使用父仓库 `/api/v1/proxy/transcode` 转码代理（`songloft-org/songloft#394`）；token 放在首个查询参数，避免设备固件错误处理 `&`。
 - 推 URL 后立即开始倒计时，会把冷启动下载/转码时间算成已听内容。插件 #61 曾出现 `dur_ms=22392/24348/22381` 的首字节等待：前 20 多秒空白，尾部也提前切掉。服务端使用实时流和预热，插件仍必须按真实设备进度校准，不能把缓存完成当成播放完成。

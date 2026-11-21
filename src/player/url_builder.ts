@@ -1,7 +1,7 @@
 // MIoT 智能音箱插件 - URL构造器
 // 翻译自 Go 源码: plugins/songloft-plugin-xiaomi/player/url_builder.go
 
-import { getHostBaseUrl } from '../utils/http';
+import { getHostAPIBaseUrl, getHostBaseUrl, httpFetch } from '../utils/http';
 
 function isLoopbackUrl(url: string): boolean {
   const protoIdx = url.indexOf('://');
@@ -71,9 +71,8 @@ export class URLBuilder {
    *
    * @param song 歌曲对象（需要 id 和 url 字段；type 用于电台转码判定）
    * @param options.forceMp3 是否追加 format=mp3 强制服务端转码（本地/网络歌曲）
-   * @param options.radioForceMp3 电台转码：仅对 type=radio 的歌曲追加 radio_transcode=mp3，
-   *   让服务端把电台流实时转码为 MP3（部分音箱无法解码 AAC/HE-AAC 或不支持 HLS）。
-   *   与 forceMp3 刻意分离，互不影响。
+   * @param options.radioForceMp3 通过 play.mp3 让服务端把电台流实时转码为 MP3，
+   *   兼容无法保留多个查询参数的音箱。旧宿主继续使用 radio_transcode=mp3。
    * @param options.seekSeconds 从第 N 秒起播：追加 seek=N，服务端产出以该位置为开头的 MP3 流。
    *   音箱只会从头拉 URL，续播位置只能这样表达（songloft-org/songloft-plugin-miot#60）。
    *   电台（直播）无位置概念，自动忽略。
@@ -108,17 +107,40 @@ export class URLBuilder {
     // 后面，这个还原前提就会被破坏。故 format / radio_transcode 等一律追加在 access_token 之后。
     const serverHost = options?.baseUrl ?? getHostBaseUrl();
     const accessToken = await songloft.plugin.getToken();
-    const separator = songUrl.includes('?') ? '&' : '?';
-    let url = serverHost + songUrl + separator + 'access_token=' + accessToken;
-    if (options?.forceMp3) {
+    const radioForceMp3 = options?.radioForceMp3 && song.type === 'radio';
+    let playPath = songUrl;
+    const radioPath = radioForceMp3 && songUrl.match(/^(\/api\/v1\/songs\/\d+\/play)(?:\.flv|\.m3u8)?$/);
+    let probeStatus = 'not_attempted';
+    if (radioPath) {
+      const mp3Path = radioPath[1] + '.mp3';
+      try {
+        // Probe the local host so a public speaker URL or old backend cannot break discovery.
+        const probe = await httpFetch((await getHostAPIBaseUrl()) + mp3Path, {
+          method: 'HEAD',
+          headers: { Authorization: 'Bearer ' + accessToken, 'X-Fetch-Timeout-Ms': '1500' },
+        });
+        probeStatus = String(probe.status);
+        if (probe.ok && probe.headers.get('content-type')?.startsWith('audio/mpeg')) {
+          playPath = mp3Path;
+        }
+      } catch {
+        // Keep the legacy query if the host does not expose the MP3 path.
+        probeStatus = 'failed';
+      }
+    }
+    const separator = playPath.includes('?') ? '&' : '?';
+    let url = serverHost + playPath + separator + 'access_token=' + accessToken;
+    if (radioForceMp3) {
+      const transport = playPath === songUrl ? 'query' : 'path';
+      songloft.log.info('[URLBuilder] radio MP3 songId=' + (song.id ?? '') + ' transport=' + transport + ' probeStatus=' + probeStatus);
+      if (transport === 'query') {
+        url += '&radio_transcode=mp3';
+      }
+    } else if (options?.forceMp3) {
       url += '&format=mp3';
     }
-    // 电台转码只对电台生效：服务端 serveRadio 只认 radio_transcode，其他类型忽略此参数。
-    if (options?.radioForceMp3 && song.type === 'radio') {
-      url += '&radio_transcode=mp3';
-    }
     // 音量均衡：服务端 loudnorm 滤镜统一音量，需要转码（未指定 format 时服务端默认 mp3）。
-    if (options?.normalize) {
+    if (!radioForceMp3 && options?.normalize) {
       url += '&normalize=1';
       if (!options?.forceMp3) {
         url += '&format=mp3';

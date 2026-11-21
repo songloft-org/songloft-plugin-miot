@@ -10,6 +10,14 @@ Include rule, scope, full owner/repo#number, failure/fix commit SHAs, actual val
 
 ## Entries
 
+### MIOT: Put station MP3 transcoding in the path
+
+- Scope is [songloft-org/songloft#579](https://github.com/songloft-org/songloft/issues/579#issuecomment-7041571686), plugin baseline `41d34b9d0230cd8b359b2f15c6fcf1e67b5eae90`.
+- The reported L17A stopped playing when a second query parameter was added. Log redaction covers parameters after the token, and a successful MiNA acknowledgement cannot confirm which URL reached the speaker.
+- Probe the MP3 path with HEAD on the local host. When it is supported, put transcoding in the path and send only the access token in the query. Older hosts use the existing query parameter. Regression tests cover the emitted URLs for default, FLV, and HLS stations, the old-host fallback, and a song's format, normalization, seek, and playback speed. Actual output from the L17A is pending validation.
+- Device follow-up: installed an instrumented MIoT package with `npm run dev -- --once` against Docker backend dev `6c7a9a23d8cce6779be7dedde2e3e3892e796325`. On the OH2, `player_play_music` preserved `a=1&b=2` in the decoded form sent by the plugin. The MP3 server received `a=1%20b=2`, and playback worked over both HTTP and the configured HTTPS endpoint. The HTTPS comparison used equal 318-character URLs and device progress. Through `player_play_url` the OH2 made no media request with either one or two parameters, leaving direct playback query handling unverified. The host middleware test confirmed that a leading access token allows it to recover space-separated transcode and seek parameters. The installed MIoT package was restored and its checksum verified.
+- Seen 1× (2026-11-21).
+
 ### UI-005: Omit desktop-only text nodes from narrow layouts
 
 - Scope is the song list and settings menu in the iOS Lynx client. The reporter used `v2026.11.19.1` from `b1f685d8fffaf3d91e6bd9b0c948f608cc7a6c95`. See [songloft-org/songloft-plugin-miot#144](https://github.com/songloft-org/songloft-plugin-miot/issues/144#issuecomment-7001389689).
