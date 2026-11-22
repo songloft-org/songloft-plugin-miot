@@ -42,7 +42,7 @@ Node 22 的类型擦除参数用于直接导入 TS 的测试。构建会先生�
 
 ## 服务端播放接口的插件侧约定
 
-- 电台转为 MP3 时，先通过宿主本机接口探测 `/play.mp3`。支持时只给音箱下发一个 `access_token` 查询参数，避免固件丢失后续参数；旧宿主使用 `radio_transcode=mp3`。
+- 电台转为 MP3 时，直接向音箱下发 `/play.mp3`，查询串只携带 `access_token`。此功能要求宿主提供该播放路径，续流由宿主处理。
 - 给音箱下发配置宿主的歌曲播放地址时，`access_token` 放在首位。用 `%20` 分隔可往返还原的播放选项。两个 MiNA 接口共用这一步，外链和签名地址保留原始查询串。
 - 音量均衡：设置页 `volume_normalize` → `URLBuilder.buildSongURL` 追加 `normalize=1&format=mp3`；预热下一首必须携带相同转码参数。
 - 不入库直链遇到音箱不支持的 webm/opus 等格式，使用父仓库 `/api/v1/proxy/transcode` 转码代理（`songloft-org/songloft#394`）；token 放在首个查询参数，避免设备固件错误处理 `&`。

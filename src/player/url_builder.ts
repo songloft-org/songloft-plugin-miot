@@ -1,7 +1,7 @@
 // MIoT 智能音箱插件 - URL构造器
 // 翻译自 Go 源码: plugins/songloft-plugin-xiaomi/player/url_builder.go
 
-import { getHostAPIBaseUrl, getHostBaseUrl, httpFetch } from '../utils/http';
+import { getHostBaseUrl } from '../utils/http';
 
 function isLoopbackUrl(url: string): boolean {
   const protoIdx = url.indexOf('://');
@@ -66,13 +66,11 @@ export class URLBuilder {
   /**
    * 构造歌曲播放URL（带access_token认证）
    *
-   * 新架构(2026):后端 MarshalJSON 已统一处理 song.url 字段:
-   * - 所有类型(local/remote/radio): /api/v1/songs/{id}/play
+   * song.url 由后端提供。普通歌曲使用 /play，电台还可能使用 /play.flv 或 /play.m3u8。
    *
    * @param song 歌曲对象（需要 id 和 url 字段；type 用于电台转码判定）
    * @param options.forceMp3 是否追加 format=mp3 强制服务端转码（本地/网络歌曲）
-   * @param options.radioForceMp3 通过 play.mp3 让服务端把电台流实时转码为 MP3，
-   *   兼容无法保留多个查询参数的音箱。旧宿主继续使用 radio_transcode=mp3。
+   * @param options.radioForceMp3 通过 /play.mp3 让服务端把电台流实时转码为 MP3。
    * @param options.seekSeconds 从第 N 秒起播：追加 seek=N，服务端产出以该位置为开头的 MP3 流。
    *   音箱只会从头拉 URL，续播位置只能这样表达（songloft-org/songloft-plugin-miot#60）。
    *   电台（直播）无位置概念，自动忽略。
@@ -100,43 +98,16 @@ export class URLBuilder {
       return songUrl;
     }
 
-    // 相对路径（/api/v1/songs/{id}/play）需要附加 access_token。
-    // 注意参数顺序：access_token 必须始终是第一个参数。部分音箱固件会把 URL 里的 & 替换成空格，
-    // 导致后续参数被合并进 access_token 的值；服务端认证中间件（internal/middleware/auth.go）
-    // 依赖「JWT 不含空格」按空格把 token 剥离、再逐个 k=v 还原后续参数。若把 access_token 挪到
-    // 后面，这个还原前提就会被破坏。故 format / radio_transcode 等一律追加在 access_token 之后。
+    // access_token 放在首位，供服务端还原 MiNA 下发时以 %20 分隔的附加选项。
     const serverHost = options?.baseUrl ?? getHostBaseUrl();
     const accessToken = await songloft.plugin.getToken();
     const radioForceMp3 = options?.radioForceMp3 && song.type === 'radio';
-    let playPath = songUrl;
-    const radioPath = radioForceMp3 && songUrl.match(/^(\/api\/v1\/songs\/\d+\/play)(?:\.flv|\.m3u8)?$/);
-    let probeStatus = 'not_attempted';
-    if (radioPath) {
-      const mp3Path = radioPath[1] + '.mp3';
-      try {
-        // Probe the local host so a public speaker URL or old backend cannot break discovery.
-        const probe = await httpFetch((await getHostAPIBaseUrl()) + mp3Path, {
-          method: 'HEAD',
-          headers: { Authorization: 'Bearer ' + accessToken, 'X-Fetch-Timeout-Ms': '1500' },
-        });
-        probeStatus = String(probe.status);
-        if (probe.ok && probe.headers.get('content-type')?.startsWith('audio/mpeg')) {
-          playPath = mp3Path;
-        }
-      } catch {
-        // Keep the legacy query if the host does not expose the MP3 path.
-        probeStatus = 'failed';
-      }
-    }
+    const playPath = radioForceMp3
+      ? songUrl.replace(/^(\/api\/v1\/songs\/\d+\/play)(?:\.flv|\.m3u8)?$/, '$1.mp3')
+      : songUrl;
     const separator = playPath.includes('?') ? '&' : '?';
     let url = serverHost + playPath + separator + 'access_token=' + accessToken;
-    if (radioForceMp3) {
-      const transport = playPath === songUrl ? 'query' : 'path';
-      songloft.log.info('[URLBuilder] radio MP3 songId=' + (song.id ?? '') + ' transport=' + transport + ' probeStatus=' + probeStatus);
-      if (transport === 'query') {
-        url += '&radio_transcode=mp3';
-      }
-    } else if (options?.forceMp3) {
+    if (!radioForceMp3 && options?.forceMp3) {
       url += '&format=mp3';
     }
     // 音量均衡：服务端 loudnorm 滤镜统一音量，需要转码（未指定 format 时服务端默认 mp3）。
