@@ -62,23 +62,34 @@ const height = Number(process.env.MIOT_TEST_HEIGHT || 740);
     if (url.pathname.startsWith(prefix)) {
       const path = url.pathname.slice(prefix.length),
         method = request.method();
-      if (path === "/mina/last-selection" && method === "POST") data = {};
+      if (path === "/mina/last_selection" && method === "POST") data = {};
       if (path === "/auth/status")
-        data = [{ id: "fixture", account: "fixture" }];
+        data = [
+          { id: "unmanaged", account: "unmanaged" },
+          { id: "fixture", account: "fixture" },
+        ];
       if (path === "/mina/devices")
-        data = deviceCount
-          ? [
-              {
-                account_id: "fixture",
-                account_name: "测试账号",
-                devices: Array.from({ length: deviceCount }, (_, i) => ({
-                  device_id: i ? "speaker-" + i : "speaker",
-                  name: "测试播放设备 " + (i + 1),
-                  managed: true,
-                })),
-              },
-            ]
-          : [];
+        data = [
+          {
+            account_id: "unmanaged",
+            account_name: "未勾选账号",
+            last_selected_device_id: "unmanaged-0",
+            devices: Array.from({ length: 9 }, (_, i) => ({
+              device_id: "unmanaged-" + i,
+              name: "未勾选设备 " + (i + 1),
+              managed: false,
+            })),
+          },
+          {
+            account_id: "fixture",
+            account_name: "测试账号",
+            devices: Array.from({ length: deviceCount }, (_, i) => ({
+              device_id: i ? "speaker-" + i : "speaker",
+              name: "测试播放设备 " + (i + 1),
+              managed: true,
+            })),
+          },
+        ];
       if (path === "/playlists") data = playlists;
       if (/^\/playlists\/\d+\/songs$/.test(path))
         data = songs.map((song) => ({
@@ -163,7 +174,9 @@ const height = Number(process.env.MIOT_TEST_HEIGHT || 740);
         bottom: r.bottom,
         listHeight: list.getBoundingClientRect().height,
         scrollHeight: list.scrollHeight,
-        choices: card.querySelectorAll(".device-picker-choice").length,
+        choices: card.querySelectorAll(".device-picker-name").length,
+        accounts: card.querySelectorAll(".device-picker-account").length,
+        searchable: !!card.querySelector("x-input"),
       };
     });
     assert.ok(
@@ -172,6 +185,9 @@ const height = Number(process.env.MIOT_TEST_HEIGHT || 740);
     );
     assert.equal(geometry.w, Math.min(420, width - 32));
     assert.ok(Math.abs(geometry.x - (width - geometry.w) / 2) <= 1);
+    assert.equal(geometry.choices, deviceCount);
+    assert.equal(geometry.accounts, deviceCount ? 1 : 0);
+    assert.equal(geometry.searchable, deviceCount > 8);
     if (deviceCount <= 1)
       assert.ok(
         geometry.h < 280,

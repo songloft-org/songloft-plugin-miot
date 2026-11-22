@@ -180,8 +180,17 @@ export function playlistLabel(playlist: Playlist): string {
   return `${playlist.name} (${playlist.song_count ?? 0})`;
 }
 
+export const managedAccounts = computed(() =>
+  state.devices
+    .map((account) => ({
+      ...account,
+      devices: account.devices.filter((device) => device.managed),
+    }))
+    .filter((account) => account.devices.length > 0),
+);
+
 export const currentDevice = computed(() => {
-  const account = state.devices.find(
+  const account = managedAccounts.value.find(
     (item) => item.account_id === state.currentAccountId,
   );
   return (
@@ -192,14 +201,12 @@ export const currentDevice = computed(() => {
 });
 
 export const managedDevices = computed(() =>
-  state.devices.flatMap((account) =>
-    account.devices
-      .filter((device) => device.managed)
-      .map((device) => ({
-        accountId: account.account_id,
-        accountName: account.account_name || account.account_id,
-        device,
-      })),
+  managedAccounts.value.flatMap((account) =>
+    account.devices.map((device) => ({
+      accountId: account.account_id,
+      accountName: account.account_name || account.account_id,
+      device,
+    })),
   ),
 );
 
@@ -431,51 +438,38 @@ export function retryConfigSave(): Promise<void> {
   return saveConfig({});
 }
 
-export async function loadAccountsAndDevices(): Promise<void> {
+let managedRevision = 0;
+export async function loadAccountsAndDevices(): Promise<boolean> {
+  const revision = managedRevision;
   const [accounts, devices] = await Promise.all([
     get<Account[]>("/auth/status"),
     get<AccountDevices[]>("/mina/devices"),
   ]);
+  // 设置页刷新可能先于一次勾选保存发出，保存后只应用重新读取的设备状态。
+  if (revision !== managedRevision) return loadAccountsAndDevices();
   state.accounts = accounts || [];
   state.devices = devices || [];
-  ensureCurrentDevice();
   state.deviceError = "";
+  return ensureCurrentDevice();
 }
 
-function ensureCurrentDevice(): void {
-  const currentExists = state.devices.some(
-    (account) =>
-      account.account_id === state.currentAccountId &&
-      account.devices.some(
-        (device) => deviceId(device) === state.currentDeviceId,
-      ),
-  );
-  if (currentExists) return;
-  if (state.currentDeviceId) resetPlayerTarget();
-  for (const account of state.devices) {
-    const selected =
-      account.devices.find(
-        (device) => deviceId(device) === account.last_selected_device_id,
-      ) ||
-      account.devices.find((device) => device.managed) ||
-      account.devices[0];
-    if (selected) {
-      state.currentAccountId = account.account_id;
-      state.currentDeviceId = deviceId(selected);
-      return;
-    }
-  }
-  state.currentAccountId = "";
-  state.currentDeviceId = "";
+function ensureCurrentDevice(): boolean {
+  if (currentDevice.value) return false;
+  const account = managedAccounts.value[0];
+  const selected =
+    account?.devices.find(
+      (device) => deviceId(device) === account.last_selected_device_id,
+    ) ?? account?.devices[0];
+  if (!selected && !state.currentAccountId && !state.currentDeviceId)
+    return false;
+  setPlayerTarget(account?.account_id ?? "", selected ? deviceId(selected) : "");
+  void refreshPlayerStatus();
+  return true;
 }
 
 let selectionRevision = 0;
-export async function selectDevice(
-  accountId: string,
-  selectedDeviceId: string,
-): Promise<void> {
+function setPlayerTarget(accountId: string, selectedDeviceId: string): void {
   selectionRevision += 1;
-  const revision = selectionRevision;
   state.currentAccountId = accountId;
   state.currentDeviceId = selectedDeviceId;
   resetPlayerTarget();
@@ -483,6 +477,19 @@ export async function selectDevice(
   state.playlistProgress = null;
   void refreshPlaylistProgress();
   connectStatusStream();
+}
+
+export async function selectDevice(
+  accountId: string,
+  selectedDeviceId: string,
+): Promise<void> {
+  const account = managedAccounts.value.find(
+    (item) => item.account_id === accountId,
+  );
+  if (!account?.devices.some((device) => deviceId(device) === selectedDeviceId))
+    return;
+  setPlayerTarget(accountId, selectedDeviceId);
+  const revision = selectionRevision;
   try {
     await post("/mina/last_selection", {
       account_id: accountId,
@@ -504,11 +511,13 @@ export async function toggleManaged(
     device_id: selectedDeviceId,
     managed,
   });
+  managedRevision++;
   const account = state.devices.find((item) => item.account_id === accountId);
   const device = account?.devices.find(
     (item) => deviceId(item) === selectedDeviceId,
   );
   if (device) device.managed = managed;
+  ensureCurrentDevice();
   notify(managed ? "已启用设备管理" : "已停用设备管理", "success");
 }
 
@@ -1344,7 +1353,7 @@ export async function refreshAll(): Promise<void> {
   if (state.refreshing) return;
   state.refreshing = true;
   try {
-    await Promise.all([
+    const [, targetChanged] = await Promise.all([
       loadConfig(),
       loadAccountsAndDevices(),
       loadPlaylists(),
@@ -1352,7 +1361,7 @@ export async function refreshAll(): Promise<void> {
       loadProgressGroups(),
     ]);
     savedConfig = configFingerprint();
-    connectStatusStream();
+    if (!targetChanged) connectStatusStream();
     await Promise.all([refreshPlayerStatus(), refreshPlaylistProgress()]);
     notify("内容已刷新", "success");
   } catch (error) {
@@ -1428,9 +1437,8 @@ export const retryInitialDevices = sharePending(async () => {
   state.deviceConnecting = true;
   state.deviceError = "";
   try {
-    await loadAccountsAndDevices();
-    connectStatusStream();
-    if (state.currentDeviceId) {
+    if (!(await loadAccountsAndDevices())) {
+      connectStatusStream();
       void refreshPlayerStatus();
       void refreshPlaylistProgress();
     }

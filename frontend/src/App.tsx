@@ -1827,18 +1827,19 @@ function Player({ lyricCache }: { lyricCache: Map<number, LyricLine[]> }) {
 function DevicePicker() {
   const { width, height } = useContext(Viewport);
   useObservedFields(() => [
-    state.devices,
+    store.managedAccounts.value,
+    state.accounts.length,
     state.currentAccountId,
     state.currentDeviceId,
   ]);
   const [search, setSearch] = useState("");
-  const count = state.devices.reduce(
+  const count = store.managedAccounts.value.reduce(
     (sum, account) => sum + account.devices.length,
     0,
   );
   const searchable = count > 8;
   const keyword = search.trim().toLowerCase();
-  const accounts = state.devices
+  const accounts = store.managedAccounts.value
     .map((account) => ({
       ...account,
       devices: account.devices.filter((device) =>
@@ -1926,7 +1927,7 @@ function DevicePicker() {
         {!count && (
           <SlButton
             className="device-picker-choice"
-            label="添加账号与设备"
+            label={state.accounts.length ? "管理播放设备" : "添加账号与设备"}
             onClick={() => {
               navigation.devicePickerOpen = false;
               openPage("settings");

@@ -10,6 +10,14 @@ Include rule, scope, full owner/repo#number, failure/fix commit SHAs, actual val
 
 ## Entries
 
+### MIOT-038 Use the managed device list for both the home picker and the playback target
+
+- Scope covers the MIoT home speaker picker, playback target restoration, and device settings. The reproduction baseline is `c90ac06bff7deecefd89a287ecfb2d43368f35e5`.
+- The old build saved `managed=false` but still listed and restored unchecked speakers. With one device checked, the browser fixture listed ten. A delayed device response also overwrote a saved change in a test.
+- Use the filtered devices for the picker, target restoration, and manual selection. When the active device is unchecked, reconnect status and reload playlist progress for the replacement device. Clear the target when the last device is unchecked. Retry a device read that overlaps a successful save. Keep all devices available in settings so they can be checked again.
+- Three Node regressions failed against the isolated baseline and passed with the fix. Docker Chromium, using simulated device APIs, exercised the checkbox, home navigation, and page reload, and verified the saved values and status request targets. Native clients and physical speakers were Not run. [Status regression](frontend/tests/status_recovery.test.mjs), [picker regression](frontend/tests/device_picker.browser.cjs)
+- Seen 1× (2026-11-22).
+
 ### UI-006: Keep dialog geometry stable during asynchronous status updates
 
 - Scope covers the MIoT player's sleep timer dialog. The reproduction baseline is `72e26dd539fcfe340814cb7e72ccde363c544f81`.

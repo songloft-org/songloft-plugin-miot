@@ -126,6 +126,132 @@ function statusStore({
   return { store, document, sockets, requests, timers, visible, online };
 }
 
+test("device loading restores only managed playback targets", async () => {
+  const devices = [
+    {
+      account_id: "hidden-account",
+      last_selected_device_id: "device",
+      devices: [{ device_id: "device", managed: false }],
+    },
+    {
+      account_id: "account",
+      last_selected_device_id: "hidden",
+      devices: [
+        { device_id: "hidden", managed: false },
+        { device_id: "device", managed: true },
+        { device_id: "other", managed: true },
+      ],
+    },
+  ];
+  const { store, requests } = statusStore({
+    paged: true,
+    reactivity: vue,
+    get: async (path) => (path === "/mina/devices" ? structuredClone(devices) : []),
+  });
+  store.state.currentAccountId = "hidden-account";
+  await store.retryInitialDevices();
+  assert.equal(store.state.currentAccountId, "account");
+  assert.equal(store.currentDevice.value?.device_id, "device");
+  assert.equal(store.state.devices[0].devices.length, 1);
+  assert.ok(
+    requests.includes("/player/status?account_id=account&device_id=device"),
+  );
+  await store.selectDevice("account", "hidden");
+  assert.equal(store.currentDevice.value?.device_id, "device");
+
+  devices[1].last_selected_device_id = "other";
+  store.state.currentDeviceId = "";
+  await store.loadAccountsAndDevices();
+  assert.equal(store.currentDevice.value?.device_id, "other");
+});
+
+test("after a management change playback follows the remaining managed devices", async () => {
+  const writes = [];
+  let oldStatus, oldProgress;
+  const { store, sockets } = statusStore({
+    paged: true,
+    reactivity: vue,
+    get: (path) => {
+      if (path.endsWith("device_id=device")) {
+        return new Promise((resolve) => {
+          if (path.startsWith("/player/status")) oldStatus = resolve;
+          else oldProgress = resolve;
+        });
+      }
+      return path.startsWith("/player/status")
+        ? { position: 5 }
+        : { song_id: 7 };
+    },
+    post: async (path, body) => writes.push({ path, body }),
+  });
+  store.state.devices = [
+    {
+      account_id: "account",
+      last_selected_device_id: "device",
+      devices: [
+        { device_id: "device", managed: true },
+        { device_id: "other", managed: true },
+      ],
+    },
+  ];
+  store.state.selectedPlaylistId = "1";
+  store.connectStatusStream();
+  const status = store.refreshPlayerStatus();
+  const progress = store.refreshPlaylistProgress();
+  await store.toggleManaged("account", "device", false);
+  assert.equal(store.currentDevice.value?.device_id, "other");
+  assert.equal(sockets[0].readyState, sockets[0].CLOSED);
+  assert.equal(sockets.length, 2);
+  oldStatus({ position: 90 });
+  oldProgress({ song_id: 99 });
+  await Promise.all([status, progress]);
+  assert.equal(store.playerProgress.position, 5);
+  assert.equal(store.state.playlistProgress?.song_id, 7);
+
+  await store.toggleManaged("account", "other", false);
+  assert.equal(store.currentDevice.value, null);
+  assert.equal(store.state.currentAccountId, "");
+  assert.equal(store.state.currentDeviceId, "");
+  assert.equal(store.state.playlistProgress, null);
+  assert.equal(store.playerProgress.position, undefined);
+  assert.equal(sockets[1].readyState, sockets[1].CLOSED);
+  assert.equal(sockets.length, 2);
+
+  await store.toggleManaged("account", "device", true);
+  assert.equal(store.currentDevice.value?.device_id, "device");
+  assert.equal(sockets.length, 3);
+  assert.deepEqual(
+    writes.map(({ path }) => path),
+    Array(3).fill("/mina/device/managed"),
+  );
+});
+
+test("an older device refresh cannot undo a saved management change", async () => {
+  let resolveOldDevices;
+  let deviceReads = 0;
+  const makeDevices = (managed) => [
+    { account_id: "account", devices: [{ device_id: "device", managed }] },
+  ];
+  const { store } = statusStore({
+    reactivity: vue,
+    get: (path) => {
+      if (path !== "/mina/devices") return [];
+      if (++deviceReads === 1)
+        return new Promise((resolve) => {
+          resolveOldDevices = resolve;
+        });
+      return makeDevices(false);
+    },
+  });
+  store.state.devices = makeDevices(true);
+  const refresh = store.loadAccountsAndDevices();
+  await store.toggleManaged("account", "device", false);
+  resolveOldDevices(makeDevices(true));
+  await refresh;
+  assert.equal(store.state.devices[0].devices[0].managed, false);
+  assert.equal(store.currentDevice.value, null);
+});
+
 test("clearing a playlist invalidates pending songs and progress", async () => {
   let songs, progress;
   const s = statusStore({
@@ -619,7 +745,9 @@ test("startup exposes playlists before other resources and a manual clear wins",
   await s.store.selectPlaylist("3");
   assert.equal(s.store.state.songs[0].id, 12);
   await s.store.selectPlaylist("");
-  devices([{ account_id: "account", devices: [{ device_id: "device" }] }]);
+  devices([
+    { account_id: "account", devices: [{ device_id: "device", managed: true }] },
+  ]);
   config({});
   await startup;
   status({ playlist_id: 4, current_song: { id: 13 } });
@@ -635,7 +763,10 @@ test("startup prefers the first matching device snapshot and bounds the wait for
       get: (path) => {
         if (path === "/mina/devices")
           return [
-            { account_id: "account", devices: [{ device_id: "device" }] },
+            {
+              account_id: "account",
+              devices: [{ device_id: "device", managed: true }],
+            },
           ];
         if (path === "/player/status")
           return new Promise((resolve) => {
