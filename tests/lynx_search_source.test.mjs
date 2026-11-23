@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { loader } from './chat_loader.mjs';
+import { flush, loader } from './chat_loader.mjs';
 import { storageOf } from './chat_fixture.mjs';
 function fixture(t, fetchResponse) {
   storageOf(t);
@@ -125,4 +125,23 @@ test('provider failures remain errors instead of displaying a successful test', 
   assert.equal(result.status, 502);
   assert.equal(result.body.success, false);
   assert.match(result.body.error, /503/);
+});
+
+test('a source test timeout names the configured deadline and where to adjust it', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const h = fixture(t, () => new Promise(() => {}));
+  await h.manager.saveConfig({
+    ...(await h.manager.getConfig()),
+    external_search_timeout: 12,
+    external_search_sources: [
+      { id: 'saved', enabled: true, url: 'https://provider.test', token: 'test-only' },
+    ],
+  });
+  const result = h.request({ keyword: '单车', source_id: 'saved' });
+  await flush();
+  t.mock.timers.tick(12000);
+  const { status, body } = await result;
+  assert.equal(status, 502);
+  assert.equal(body.success, false);
+  assert.match(body.error, /12 秒.*歌曲搜索.*超时（秒）/);
 });

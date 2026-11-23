@@ -537,6 +537,10 @@ export function registerConfigHandlers(
         { success: false, error: '搜索源不存在或未启用' },
         400,
       );
+    const timeoutSeconds = Math.max(
+      1,
+      Math.min(60, config.external_search_timeout || 6),
+    );
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
       const result = await Promise.race([
@@ -565,9 +569,11 @@ export function registerConfigHandlers(
         })(),
         new Promise<never>((_resolve, reject) => {
           timer = setTimeout(
-            () => reject(new Error('搜索源请求超时')),
-            Math.max(1, Math.min(60, config.external_search_timeout || 6)) *
-              1000,
+            () =>
+              reject(new Error(
+                `搜索源请求超时（${timeoutSeconds} 秒）。请检查搜索源，或调整「歌曲搜索」中的「超时（秒）」后重试。`,
+              )),
+            timeoutSeconds * 1000,
           );
         }),
       ]);

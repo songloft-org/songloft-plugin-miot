@@ -10,6 +10,13 @@ Include rule, scope, full owner/repo#number, failure/fix commit SHAs, actual val
 
 ## Entries
 
+### Test external search latency and the deadline at each layer
+
+- Scope covers MIoT external search and its settings test. The reporter confirmed that the yt-dlp test returned an audio URL for «单车» while the MIoT test still timed out. [hanxi/songloft-plugin-ytdlp#9](https://github.com/hanxi/songloft-plugin-ytdlp/issues/9#issuecomment-7104014247)
+- Installed MIoT `v2026.11.23.1` and yt-dlp `v2026.11.23.0` on Linux amd64 host `bdea92f` and ran a fixture with controlled latency through QuickJS and the command bridge. With an eight-second flat search, MIoT timed out at its six-second default and returned song metadata in about 8.1 seconds with a 15-second setting. In a separate no-import check with 32 seconds of audio resolution, the yt-dlp test succeeded in about 33 seconds. MIoT received a yt-dlp timeout in about 28 seconds with a 45-second setting.
+- Delay search and audio resolution independently and check the deadlines at the caller, host, and provider. The updated settings test reports the configured timeout and where to change it. Docker Chromium at a 390px viewport verified the real request and visible error after clicking Test. The reporter's network, server configuration, and speaker still need verification.
+- Seen 1× (2026-11-23).
+
 ### MIOT-038 Use the managed device list for both the home picker and the playback target
 
 - Scope covers the MIoT home speaker picker, playback target restoration, and device settings. The reproduction baseline is `c90ac06bff7deecefd89a287ecfb2d43368f35e5`.
