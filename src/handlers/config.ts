@@ -553,6 +553,9 @@ export function registerConfigHandlers(
               Authorization: token.startsWith('Bearer ')
                 ? token
                 : `Bearer ${token}`,
+              ...(!config.external_search_no_import && {
+                'X-Songloft-Resolve-Url': 'false',
+              }),
             },
             body: JSON.stringify({ keyword, quality: '320k' }),
           });

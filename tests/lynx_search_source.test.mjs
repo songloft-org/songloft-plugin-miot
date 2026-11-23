@@ -71,10 +71,25 @@ test('saved source test uses server credentials and returns provider JSON withou
     'http://host.test/api/v1/jsplugin/source/api/search',
   );
   assert.equal(calls[0].options.headers.Authorization, 'Bearer test-only');
+  assert.equal(calls[0].options.headers['X-Songloft-Resolve-Url'], 'false');
   assert.deepEqual(JSON.parse(calls[0].options.body), {
     keyword: '测试',
     quality: '320k',
   });
+});
+test('saved source test requests a direct URL when no-import playback is enabled', async (t) => {
+  const h = fixture(t, async (_url, options) => ({
+    ok: true,
+    json: async () => options.headers,
+  }));
+  await h.manager.saveConfig({
+    ...(await h.manager.getConfig()),
+    external_search_no_import: true,
+    external_search_sources: [{ id: 'saved', enabled: true, url: 'https://provider.test', token: 'test-only' }],
+  });
+  const result = await h.request({ keyword: '测试', source_id: 'saved' });
+  assert.equal(result.status, 200);
+  assert.equal(result.body.data['X-Songloft-Resolve-Url'], undefined);
 });
 test('unknown or disabled sources and empty queries never issue a request', async (t) => {
   let count = 0;

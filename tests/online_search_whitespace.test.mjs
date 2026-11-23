@@ -8,24 +8,36 @@ const load = loader({
 const { OnlineSearcher } = load('../src/voicecmd/online_searcher.ts');
 const song = { title: '山峰山峰 等等我', artist: '小甜甜', url: 'https://music.test/song.mp3' };
 const response = (code = 0, data = song) => ({ status: 200, text: async () => JSON.stringify({ code, data }) });
-function fixture(t, respond, sources = ['primary']) {
+function fixture(t, respond, sources = ['primary'], noImport = false) {
   const previous = globalThis.songloft;
   globalThis.songloft = { log: { info() { }, warn() { }, error() { } } };
   t.after(() => { globalThis.songloft = previous; });
   const requests = [];
   t.mock.method(globalThis, 'fetch', async (url, init) => {
-    const request = { url, body: JSON.parse(init.body) };
+    const request = { url, body: JSON.parse(init.body), headers: init.headers };
     requests.push(request);
     return respond(request, requests.length);
   });
   const searcher = new OnlineSearcher({
     getConfig: async () => ({
-      external_search_enabled: true, external_search_timeout: 1,
+      external_search_enabled: true, external_search_timeout: 1, external_search_no_import: noImport,
       external_search_sources: sources.map(name => ({ name, enabled: true, url: `https://${name}.test/search`, token: 'fixture' })),
     })
   });
   return { searcher, requests };
 }
+
+test('voice searches request deferred resolution only when results can be imported', async t => {
+  const importing = fixture(t, () => response());
+  await importing.searcher.search('单车', null);
+  assert.equal(importing.requests[0].headers['X-Songloft-Resolve-Url'], 'false');
+});
+
+test('voice search in no-import mode keeps requesting direct URLs', async t => {
+  const direct = fixture(t, () => response(), ['primary'], true);
+  await direct.searcher.search('单车', null);
+  assert.equal(direct.requests[0].headers['X-Songloft-Resolve-Url'], undefined);
+});
 
 for (const gap of [' ', '  ', '\t', '\n', '\u3000', '\u00a0']) {
   test(`topone miss retries the keyword and hints without whitespace: ${JSON.stringify(gap)}`, async t => {
