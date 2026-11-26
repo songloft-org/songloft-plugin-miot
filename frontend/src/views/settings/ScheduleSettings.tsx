@@ -706,20 +706,12 @@ export default function ScheduleSettings(props: any) {
                 </NativeView>
                 <NativeView className="day-grid">
                   {renderItems([1, 2, 3, 4, 5, 6, 0], (day) => (
-                    <NativeView
+                    <SlButton
                       key={day}
-                      className={classes({ active: vm.weekdays.includes(day) })}
-                      bindtap={($event: any) => {
-                        vm.toggleDay(vm.weekdays, day);
-                      }}
-                      button
-                    >
-                      <text>
-                        {displayText(
-                          ['日', '一', '二', '三', '四', '五', '六'][day],
-                        )}
-                      </text>
-                    </NativeView>
+                      label={['日', '一', '二', '三', '四', '五', '六'][day]}
+                      variant={vm.weekdays.includes(day) ? 'filled' : 'outlined'}
+                      onClick={() => vm.toggleDay(vm.weekdays, day)}
+                    />
                   ))}
                 </NativeView>
                 <NativeView className="field-actions">
@@ -772,18 +764,12 @@ export default function ScheduleSettings(props: any) {
                   style={styleObject('grid-template-columns:repeat(7,1fr)')}
                 >
                   {renderItems(31, (day) => (
-                    <NativeView
+                    <SlButton
                       key={day}
-                      className={classes({
-                        active: vm.monthdays.includes(day),
-                      })}
-                      bindtap={($event: any) => {
-                        vm.toggleDay(vm.monthdays, day);
-                      }}
-                      button
-                    >
-                      <text>{displayText(day)}</text>
-                    </NativeView>
+                      label={displayText(day)}
+                      variant={vm.monthdays.includes(day) ? 'filled' : 'outlined'}
+                      onClick={() => vm.toggleDay(vm.monthdays, day)}
+                    />
                   ))}
                 </NativeView>
               </>

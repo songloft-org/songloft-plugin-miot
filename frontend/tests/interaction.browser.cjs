@@ -1,4 +1,6 @@
 const assert = require("node:assert/strict");
+const { tmpdir } = require("node:os");
+const { join } = require("node:path");
 const puppeteer = require(process.env.BROWSER_PUPPETEER || "puppeteer");
 const base = process.env.MIOT_TEST_BASE_URL || "http://127.0.0.1:30617";
 (async () => {
@@ -215,6 +217,30 @@ const base = process.env.MIOT_TEST_BASE_URL || "http://127.0.0.1:30617";
     };
     const taskName = "Lynx browser " + Date.now();
     const editedName = taskName + " edited";
+    const dayButtons = ".schedule-editor .day-grid > *";
+    const checkSelectedDays = async (step, expected) => {
+      stage = step;
+      await page.waitForFunction(
+        ({ selector, expected }) => {
+          const root = document.getElementById("plugin-view").shadowRoot;
+          const save = root.querySelector(
+            '.schedule-editor [accessibility-label="保存任务"]',
+          );
+          const selectedColor = getComputedStyle(save).backgroundColor;
+          const days = [...root.querySelectorAll(selector)]
+            .filter(
+              (day) => getComputedStyle(day).backgroundColor === selectedColor,
+            )
+            .map((day) => day.textContent.trim());
+          return (
+            days.length === expected.length &&
+            days.every((day, index) => day === expected[index])
+          );
+        },
+        { timeout: 2000 },
+        { selector: dayButtons, expected },
+      );
+    };
     stage = "schedule create";
     await page.waitForFunction(() =>
       document
@@ -228,6 +254,16 @@ const base = process.env.MIOT_TEST_BASE_URL || "http://127.0.0.1:30617";
     await click(".sl-button", "新建任务");
     await fill("任务名称", taskName);
     await select("动作", "关闭对话监听");
+    await checkSelectedDays("new task defaults", ["一", "二", "三", "四", "五"]);
+    await click(".sl-button", "每天");
+    await checkSelectedDays("every day", [
+      "一", "二", "三", "四", "五", "六", "日",
+    ]);
+    await click(".sl-button", "工作日");
+    await checkSelectedDays("workdays", ["一", "二", "三", "四", "五"]);
+    await click(dayButtons, "一");
+    await click(dayButtons, "日");
+    await checkSelectedDays("manual weekdays", ["二", "三", "四", "五", "日"]);
     let saved = page.waitForResponse(
       (response) =>
         response.url().endsWith("/api/schedules") &&
@@ -241,9 +277,15 @@ const base = process.env.MIOT_TEST_BASE_URL || "http://127.0.0.1:30617";
     const taskId = task.id;
     assert.equal(task.action, "disable_monitor");
     assert.deepEqual(task.params, {});
+    assert.deepEqual([...task.schedule.weekdays].sort(), [0, 2, 3, 4, 5]);
     stage = "schedule update";
     await click(".schedule-task-row .sl-button", taskName, 0);
+    await checkSelectedDays("reopened task", ["二", "三", "四", "五", "日"]);
     await fill("任务名称", editedName);
+    await click(".sl-button", "工作日");
+    await checkSelectedDays("workdays override manual selection", [
+      "一", "二", "三", "四", "五",
+    ]);
     saved = page.waitForResponse(
       (response) =>
         response.url().endsWith("/api/schedules/update") &&
@@ -254,6 +296,13 @@ const base = process.env.MIOT_TEST_BASE_URL || "http://127.0.0.1:30617";
     tasks = (await api("/schedules")).tasks;
     task = tasks.find((item) => item.id === taskId);
     assert.equal(task.name, editedName);
+    assert.deepEqual(task.schedule.weekdays, [1, 2, 3, 4, 5]);
+    stage = "monthly selection";
+    await click(".schedule-task-row .sl-button", editedName, 0);
+    await select("调度类型", "每月");
+    await click(dayButtons, "15");
+    await checkSelectedDays("manual monthly date", ["15"]);
+    await click(".sl-button", "取消");
     stage = "schedule delete";
     await click(".schedule-task-row .sl-button", taskName, 1);
     saved = page.waitForResponse(
@@ -370,13 +419,16 @@ const base = process.env.MIOT_TEST_BASE_URL || "http://127.0.0.1:30617";
       JSON.stringify({
         passed: true,
         schedule: ["create", "update", "delete"],
+        scheduleSelection: true,
         multiline: true,
         backLayers: 4,
       }),
     );
   } catch (error) {
     console.error("stage:", stage, "page errors:", errors);
-    await page.screenshot({ path: "/tmp/miot-interaction-failure.png" });
+    await page
+      .screenshot({ path: join(tmpdir(), "miot-interaction-failure.png") })
+      .catch(console.error);
     throw error;
   } finally {
     await browser.close();

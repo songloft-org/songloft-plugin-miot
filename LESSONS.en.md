@@ -10,6 +10,12 @@ Include rule, scope, full owner/repo#number, failure/fix commit SHAs, actual val
 
 ## Entries
 
+### Check both highlighting and saved values for scheduled dates
+
+- Scope covers the MIoT schedule editor at baseline `21efa9e`. After the Lynx migration, the date button's `active` class lacked a selected style. Individual weekdays and the workday preset saved correctly in the old package. Selected and unselected buttons looked identical.
+- Weekly and monthly date options use the existing filled style for selected buttons and the outlined style for unselected buttons. The [browser interaction regression](frontend/tests/interaction.browser.cjs) checks the rendered background for defaults, manual picks, both presets, saved values when reopening the editor, and monthly dates. It also reads the saved weekdays back through the real API.
+- Seen 1× (2026-11-26). In Docker Chromium 121, the regression failed on the default workday highlight with the old package and passed with the fixed package. Weekday clicks and preset highlighting also passed in the nested plugin view in Songloft Web. Native clients and physical speakers were Not run.
+
 ### Test external search latency and the deadline at each layer
 
 - Scope covers MIoT external search and its settings test. The reporter confirmed that the yt-dlp test returned an audio URL for «单车» while the MIoT test still timed out. [hanxi/songloft-plugin-ytdlp#9](https://github.com/hanxi/songloft-plugin-ytdlp/issues/9#issuecomment-7104014247)
