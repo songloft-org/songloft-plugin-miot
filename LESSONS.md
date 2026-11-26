@@ -10,6 +10,12 @@
 
 ## 条目
 
+### 按播放接口和升级时间核对音箱复发日志
+
+- [songloft-org/songloft-plugin-miot#150](https://github.com/songloft-org/songloft-plugin-miot/issues/150) 的 X08E 通过 `player_play_music` 收到指令。两首歌各在约 1.2 秒内被完整取流 10 次，HTTP 均为 200。设备回读 `status=2` 后触发起播失败熔断。`v2026.11.26.0` 安装于这些失败之后，附件截止时还没有新版的播放请求。
+- 用同一首歌对照 Music API 和直链下发，按时间对齐发令、HTTP 取流、设备回读和实际出声。报告人曾在 [songloft-org/songloft-plugin-miot#107](https://github.com/songloft-org/songloft-plugin-miot/issues/107#issuecomment-5690558745) 确认直链正常。Node 22 夹具在 `b34b34f` 验证了配置保存、重载及实际下发载荷。取消勾选 X08E 后改用 `player_play_url`，载荷省略 `startaudioid`。新版 X08E 实机对照为 Not run。
+- Seen 1× (2026-11-26)。
+
 ### 定时任务的日期选择要同时核对高亮和保存结果
 
 - 范围为 MIoT 定时任务编辑器，基线 `21efa9e`。Lynx 迁移后，日期按钮的 `active` 类名缺少对应的选中样式。旧包中单选星期和「工作日」都能保存正确值。选中与未选中的按钮外观相同。

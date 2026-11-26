@@ -10,6 +10,12 @@ Include rule, scope, full owner/repo#number, failure/fix commit SHAs, actual val
 
 ## Entries
 
+### Correlate speaker recurrence logs with the playback API and upgrade time
+
+- In [songloft-org/songloft-plugin-miot#150](https://github.com/songloft-org/songloft-plugin-miot/issues/150), the X08E received `player_play_music` commands. The speaker fetched each of two songs in full ten times within about 1.2 seconds, with HTTP 200 each time. The device reported `status=2`, and the plugin stopped playback after consecutive startup failures. The user installed `v2026.11.26.0` after those failures, and the attachment ends before any playback request on the new version.
+- Compare Music API and direct URL playback with the same song. Correlate the command, HTTP requests, device status, and audible playback. The reporter previously confirmed direct URL playback in [songloft-org/songloft-plugin-miot#107](https://github.com/songloft-org/songloft-plugin-miot/issues/107#issuecomment-5690558745). A Node 22 fixture on `b34b34f` verified saving and reloading the setting and checked the outgoing payload. Clearing the X08E checkbox selected `player_play_url`, whose payload omitted `startaudioid`. Testing both modes on the physical X08E with the new version was Not run.
+- Seen 1× (2026-11-26).
+
 ### Check both highlighting and saved values for scheduled dates
 
 - Scope covers the MIoT schedule editor at baseline `21efa9e`. After the Lynx migration, the date button's `active` class lacked a selected style. Individual weekdays and the workday preset saved correctly in the old package. Selected and unselected buttons looked identical.
