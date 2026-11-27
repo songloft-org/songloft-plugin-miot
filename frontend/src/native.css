@@ -207,22 +207,16 @@ text {
   height: 56px;
   padding: 0 24px;
   flex-shrink: 0;
+  gap: 8px;
+}
+.page-toolbar {
   display: flex;
   flex-direction: row;
   align-items: center;
-  gap: 8px;
 }
 .wide-display .library-heading,
 .wide-display .library-body {
   max-width: none;
-}
-.library-heading .appbar-copy {
-  flex: 1;
-  align-items: flex-start;
-}
-.appbar-copy {
-  flex: 1;
-  min-width: 0;
 }
 .page-title {
   font-size: 28px;
@@ -2319,12 +2313,9 @@ text {
 
 /* First settings refinement: quiet saves and a visible playback destination. */
 .device-target-row {
-  width: 100%;
-  flex-direction: row;
-  align-items: center;
-  gap: 8px;
+  flex: 1;
   min-width: 0;
-  margin-top: 0;
+  gap: 8px;
 }
 .narrow .device-target-row {
   gap: 4px;

@@ -18,10 +18,11 @@ function loadSource(path, dependencies) {
 }
 const constants = loadSource('../src/mina/constants.ts', { '../data/tts-commands.json': {} });
 const http = { fetchWithRedirects: async () => { throw new Error('unconfigured'); } };
+let debugLogging = false;
 const { MinaHTTPClient } = loadSource('../src/mina/client.ts', {
   '../playback/device_state': loadSource('../src/playback/device_state.ts', {}),
   '../utils/cookie': { CookieJar: class { } }, '../utils/http': http,
-  '../utils/crypto': {}, '../utils/debug': { isDebugLog: () => false },
+  '../utils/crypto': {}, '../utils/debug': { isDebugLog: () => debugLogging },
   './constants': constants, '../miio/client': {},
 });
 const { MinaService } = loadSource('../src/service/service.ts', {
@@ -70,6 +71,32 @@ async function withClient(run) {
     http.fetchWithRedirects = original.fetch;
   }
 }
+
+test('debug status reports device fields beyond a long media payload without logging its metadata', async () => {
+  await withClient(async h => {
+    const marker = 'private-media-metadata';
+    const detail = { title: marker.repeat(100), position: 0, duration: 60029 };
+    h.setFetch(async () => response(200, { code: 0, data: {
+      info: JSON.stringify({ extra_track_list: [{ title: marker.repeat(100) }], status: 2, play_song_detail: detail }),
+    } }));
+
+    debugLogging = true;
+    try {
+      const state = await h.service.getPlayState('account', 'speaker');
+      assert.equal(state.status, 2);
+      assert.equal(state.position, 0);
+      assert.equal(state.duration, 60.029);
+      assert.ok(h.logs.some(({ message }) => message.includes('status sample device=speaker status=2 position_ms=0 duration_ms=60029')));
+      assert.ok(h.logs.every(({ message }) => !message.includes(marker)));
+
+      h.setFetch(async () => response(200, { code: 0, data: { info: JSON.stringify({ status: 2 }) } }));
+      await h.client.getPlayerStatus('speaker', { verify: true });
+      assert.ok(h.logs.some(({ message }) => message.includes('status sample device=speaker status=2 position_ms=missing duration_ms=missing')));
+    } finally {
+      debugLogging = false;
+    }
+  });
+});
 
 test('UI and all playback probes share one request and a five-second sample', async () => {
   await withClient(async h => {

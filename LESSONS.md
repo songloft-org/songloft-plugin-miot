@@ -14,6 +14,17 @@
 
 - [songloft-org/songloft-plugin-miot#150](https://github.com/songloft-org/songloft-plugin-miot/issues/150) 的 X08E 通过 `player_play_music` 收到指令。两首歌各在约 1.2 秒内被完整取流 10 次，HTTP 均为 200。设备回读 `status=2` 后触发起播失败熔断。`v2026.11.26.0` 安装于这些失败之后，附件截止时还没有新版的播放请求。
 - 用同一首歌对照 Music API 和直链下发，按时间对齐发令、HTTP 取流、设备回读和实际出声。报告人曾在 [songloft-org/songloft-plugin-miot#107](https://github.com/songloft-org/songloft-plugin-miot/issues/107#issuecomment-5690558745) 确认直链正常。Node 22 夹具在 `b34b34f` 验证了配置保存、重载及实际下发载荷。取消勾选 X08E 后改用 `player_play_url`，载荷省略 `startaudioid`。新版 X08E 实机对照为 Not run。
+- 同日复测：Songloft 从 v2.13.9 升至 v2.13.13（`57a9f6b`），插件为 v2026.11.26.0（`9ea3b9e`），网页已能读取设备和歌单。17 点时段 26 次 `player_play_url` 均获云端成功回执，其中 24 次是曲库歌曲；服务端没有对应的歌曲 GET，11 次回读 `status=2` 后跳歌，3 次连续失败停止队列。17:33:46 的暂停有对应的 `POST /player/toggle`，语音点播后的停播仍待单独对照。
+- 用同一台音箱和可访问的普通 MP3 对照直链，分别检查已知可播地址及 Songloft 所在局域网的短地址。记录实际出声、固件和取流到达情况。云端成功回执只证明指令已被代理。 [复测日志与截图](https://github.com/songloft-org/songloft-plugin-miot/issues/150#issuecomment-7188278180)
+- 11 月 27 日继续复测同一问题。X08E 固件为稳定版 20260514。26 次直链下发获云端和设备成功回执，包括 6 次工具箱测试及 20 次曲库下发。Songloft v2.13.13 没有对应的歌曲取流记录；两轮连续起播失败分别在 10:35:45、10:42:06 停止队列。9 次裸 `play` 续播中，7 次回读被判为外来媒体并触发重推，与报告的短暂出声时间吻合。音箱拒绝或未能取流的原因仍待真机对照。 [11 月 27 日复测](https://github.com/songloft-org/songloft-plugin-miot/issues/150#issuecomment-7208383604)
+- 直链排查应记录解析后的状态、位置和流长，并区分真实零位置和字段缺失。插件基线 `e67b0e8` 在长媒体列表处截断状态响应，导致暂停和续播前后的关键字段缺失。本地回归用长列表验证调试日志仍能记录三个字段，并省略媒体详情。新版日志真机复测为 Not run。
+- Seen 1× (2026-11-26)。
+
+### 窄屏设备栏要校验按钮边界与实际点击
+
+- 范围：[MIoT #150 的 iPhone 截图](https://github.com/songloft-org/songloft-plugin-miot/issues/150#issuecomment-7188278180)。v2026.11.26.0（`9ea3b9e`）出现定位、设置按钮向下叠到歌单及搜索区。
+- 在设备栏、设备信息和操作区显式指定横向布局，减少设备栏的嵌套。回归应检查设备、状态及按钮位于同一行、彼此无重叠且在歌单之前，并实际点击进入设置。
+- Linux x86_64、隔离宿主 `6c7a9a2`、Chrome 121。对两个包施加相同的列布局样式，旧正式包在 428px 下按钮超出设备栏，`e67b0e8` 加本轮工作树的构建中两个 44px 按钮均在栏内，点击设置成功。常规播放器回归在 320/1100px 通过，428px 定位回归及 36 组设置检查通过。iPhone 原生为 Not run。
 - Seen 1× (2026-11-26)。
 
 ### 定时任务的日期选择要同时核对高亮和保存结果

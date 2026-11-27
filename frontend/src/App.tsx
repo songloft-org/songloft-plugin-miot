@@ -51,6 +51,11 @@ import { PopupMaterial } from "./ui/PopupMaterial";
 import { ThemeContext } from "./ui/theme";
 import { measurePopover, placePopover } from "./ui/position";
 const { state, playerProgress } = store;
+const libraryHeaderRow = {
+  display: "flex",
+  flexDirection: "row",
+  alignItems: "center",
+} as const;
 const Viewport = createContext({
   locateSong: { current: null } as { current: (() => Promise<void>) | null },
   width: 390,
@@ -562,45 +567,43 @@ function SongList() {
   }
   return (
     <view className="main-page">
-      <view className="library-heading">
-        <view className="appbar-copy">
-          <view className="device-target-row">
-            <SlButton
-              className="device-target"
-              variant="text"
-              icon="speaker_group"
-              iconSize={16}
-              title="选择设备"
-              disabled={state.deviceConnecting}
-              onClick={() => {
-                navigation.devicePickerOpen = true;
-              }}
-            >
-              {!narrow && <text className="device-target-prefix">播放到</text>}
-              <text className="device-target-name" text-maxline="1">
-                {device ? store.deviceName(device) : "选择设备"}
+      <view className="library-heading" style={libraryHeaderRow}>
+        <view className="device-target-row" style={libraryHeaderRow}>
+          <SlButton
+            className="device-target"
+            variant="text"
+            icon="speaker_group"
+            iconSize={16}
+            title="选择设备"
+            disabled={state.deviceConnecting}
+            onClick={() => {
+              navigation.devicePickerOpen = true;
+            }}
+          >
+            {!narrow && <text className="device-target-prefix">播放到</text>}
+            <text className="device-target-name" text-maxline="1">
+              {device ? store.deviceName(device) : "选择设备"}
+            </text>
+            <SlIcon name="expand_more" size={14} color="muted" />
+          </SlButton>
+          <view className="device-play-state-slot">
+            {device && (
+              <text
+                className={classes([
+                  "device-play-state",
+                  state.playerStatusState === "error" && "error",
+                ])}
+                accessibility-label={deviceStatus}
+                text-maxline="1"
+              >
+                {narrow
+                  ? shortStatus[deviceStatus] || deviceStatus
+                  : deviceStatus}
               </text>
-              <SlIcon name="expand_more" size={14} color="muted" />
-            </SlButton>
-            <view className="device-play-state-slot">
-              {device && (
-                <text
-                  className={classes([
-                    "device-play-state",
-                    state.playerStatusState === "error" && "error",
-                  ])}
-                  accessibility-label={deviceStatus}
-                  text-maxline="1"
-                >
-                  {narrow
-                    ? shortStatus[deviceStatus] || deviceStatus
-                    : deviceStatus}
-                </text>
-              )}
-            </view>
+            )}
           </view>
         </view>
-        <view className="appbar-actions row">
+        <view className="appbar-actions" style={libraryHeaderRow}>
           {narrow &&
             (state.player.current_song && state.selectedPlaylistId ? (
               <SlButton

@@ -242,6 +242,39 @@ const height = Number(process.env.MIOT_TEST_HEIGHT || 740);
       // 20 seconds into the 240-second fixture, rounded like the Lynx client.
       return Math.abs(ratio - 0.08) < 0.01;
     });
+    await page.waitForFunction(() =>
+      document
+        .getElementById("plugin-view")
+        .shadowRoot.querySelector(".library-heading .device-play-state"),
+    );
+    const header = await page.evaluate(() => {
+      const root = document.getElementById("plugin-view").shadowRoot;
+      const bounds = (selector) =>
+        root.querySelector(selector).getBoundingClientRect().toJSON();
+      return {
+        row: bounds(".library-heading"),
+        playlist: bounds(".library-tools"),
+        device: bounds(".device-target"),
+        status: bounds(".device-play-state-slot"),
+        actions: [...root.querySelectorAll(".appbar-actions .sl-button")].map(
+          (button) => button.getBoundingClientRect().toJSON(),
+        ),
+      };
+    });
+    const headerItems = [header.device, header.status, ...header.actions];
+    for (const [i, item] of headerItems.entries()) {
+      assert.ok(
+        item.width > 0 &&
+          item.height > 0 &&
+          item.top >= header.row.top &&
+          item.bottom <= header.row.bottom &&
+          item.left >= header.row.left &&
+          item.right <= header.row.right &&
+          item.bottom <= header.playlist.top &&
+          (!i || item.left >= headerItems[i - 1].right - 1),
+        JSON.stringify(header),
+      );
+    }
     if (width >= 600) {
       const shortcuts = await page.evaluate(() => {
         const root = document.getElementById("plugin-view").shadowRoot;

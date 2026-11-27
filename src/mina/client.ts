@@ -37,6 +37,7 @@ const INTERRUPT_VERIFY_ATTEMPTS = 2;
 const INTERRUPT_VERIFY_DELAY_MS = 700;
 
 const UBUS_TIMEOUT_MS = 5000;
+const STATUS_LOG_LABEL = 'status';
 const STATUS_INTERVAL_MS = 5000;
 const STATUS_MIN_INTERVAL_MS = 3000;
 const STATUS_TAIL_INTERVAL_MS = 1000;
@@ -733,12 +734,21 @@ export class MinaHTTPClient {
       // 只计实际提前发出的请求；缓存命中和普通五秒查询不消耗/补充额度。
       // 额度跟随控制上下文，不随播放器重排结束定时器或页面轮询而重置。
       if (fastTail && Date.now() < query.nextAt) query.tailFastQueries++;
+      const logLabel = isDebugLog() ? STATUS_LOG_LABEL : '';
       let result: UbusResponse | null = null;
       try {
-        result = await this.doUbusRequest(deviceId, 'player_get_play_status', 'mediaplayer', {}, isDebugLog() ? 'status' : '');
+        result = await this.doUbusRequest(deviceId, 'player_get_play_status', 'mediaplayer', {}, logLabel);
         const data = result?.data as { info?: string } | undefined;
         const info = JSON.parse(data?.info || '{}');
-        if (typeof info.status !== 'number' || !Number.isFinite(info.status) || info.status < 0) result = null;
+        if (!Number.isFinite(info.status) || info.status < 0) {
+          result = null;
+        } else if (logLabel && revision === query.revision) {
+          // 设备可能先返回很长的媒体列表。记录播放器使用的字段，保留实际的零位置。
+          const { position, duration } = info.play_song_detail ?? {};
+          const positionMs = Number.isFinite(position) && position >= 0 ? position : 'missing';
+          const durationMs = Number.isFinite(duration) && duration > 0 ? duration : 'missing';
+          songloft.log.info(`[MinaClient] status sample device=${deviceId} status=${info.status} position_ms=${positionMs} duration_ms=${durationMs}`);
+        }
       } catch {
         result = null;
       }
@@ -913,12 +923,13 @@ export class MinaHTTPClient {
     // 检查响应码
     if (result.code !== 0) {
       if (logLabel) {
-        songloft.log.warn(`[MinaClient] ${logLabel} ubus non-zero code=${result.code} message=${result.message || ''} data=${this.summarizeForLog(result.data)}`);
+        const detail = logLabel === STATUS_LOG_LABEL ? '' : ` data=${this.summarizeForLog(result.data)}`;
+        songloft.log.warn(`[MinaClient] ${logLabel} ubus non-zero code=${result.code} message=${result.message || ''}${detail}`);
       }
       return preserveErrors ? result : null;
     }
 
-    if (logLabel) {
+    if (logLabel && logLabel !== STATUS_LOG_LABEL) {
       songloft.log.info(`[MinaClient] ${logLabel} ubus success code=${result.code} message=${result.message || ''} data=${this.summarizeForLog(result.data)}`);
     }
     return result;
@@ -1089,13 +1100,14 @@ export class MinaHTTPClient {
 
     try {
       const text = response.text() as string;
-      if (logLabel) {
+      if (logLabel && logLabel !== STATUS_LOG_LABEL) {
         songloft.log.info(`[MinaClient] ${logLabel} HTTP POST response=${this.summarizeForLog(text)}`);
       }
       return JSON.parse(transformResponseText ? transformResponseText(text) : text) as T;
     } catch (e) {
       if (logLabel) {
-        songloft.log.warn(`[MinaClient] ${logLabel} HTTP POST parse failed: ${String(e)}`);
+        const detail = logLabel === STATUS_LOG_LABEL ? '' : `: ${String(e)}`;
+        songloft.log.warn(`[MinaClient] ${logLabel} HTTP POST parse failed${detail}`);
       }
       return null;
     }
